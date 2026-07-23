@@ -1,0 +1,351 @@
+erDiagram
+
+    %% ========== NHÓM 1: USER & PHÂN QUYỀN ==========
+    USERS {
+        uuid id PK
+        string email UK
+        string password_hash
+        string full_name
+        string avatar_url
+        string status "active | disabled"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    WORKSPACES {
+        uuid id PK
+        string name
+        string description
+        uuid owner_id FK
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    ROLES {
+        uuid id PK
+        string name "admin | editor | viewer"
+        jsonb permissions
+    }
+
+    WORKSPACE_MEMBERS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid user_id FK
+        uuid role_id FK
+        timestamp joined_at
+    }
+
+    %% ========== NHÓM 2: TÀI LIỆU & VERSIONING ==========
+    DOCUMENTS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid current_version_id FK
+        string title
+        string file_type "pdf|docx|xlsx|pptx|txt"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    DOCUMENT_VERSIONS {
+        uuid id PK
+        uuid document_id FK
+        uuid uploaded_by FK
+        int version_number
+        string storage_path
+        bigint file_size_bytes
+        string checksum_sha256
+        int page_count
+        string status "processing|ready|failed"
+        boolean is_current
+        timestamp created_at
+    }
+
+    %% ========== NHÓM 3: RAG PIPELINE (OBSERVABILITY) ==========
+    PIPELINE_RUNS {
+        uuid id PK
+        uuid document_version_id FK
+        string status "pending|running|completed|failed"
+        int retry_count
+        text error_message
+        timestamp started_at
+        timestamp completed_at
+    }
+
+    PIPELINE_STAGE_LOGS {
+        uuid id PK
+        uuid pipeline_run_id FK
+        string stage "ocr_cleaning|chunking|embedding|graph_extraction|indexing"
+        string status "pending|running|completed|failed"
+        int duration_ms
+        jsonb metadata
+        text error_message
+        timestamp started_at
+        timestamp completed_at
+    }
+
+    %% ========== NHÓM 4: EMBEDDING & KNOWLEDGE BASE ==========
+    EMBEDDINGS {
+        uuid id PK
+        string model_name
+        int dimension
+        string vector_store "qdrant|pgvector"
+        string vector_id
+        string index_name
+        timestamp created_at
+    }
+
+    DOCUMENT_CHUNKS {
+        uuid id PK
+        uuid document_version_id FK
+        uuid embedding_id FK
+        int chunk_index
+        text content
+        int page_number
+        int token_count
+        timestamp created_at
+    }
+
+    ENTITIES {
+        uuid id PK
+        uuid workspace_id FK
+        uuid source_version_id FK
+        string name
+        string type
+        text description
+        timestamp created_at
+    }
+
+    ENTITY_RELATIONS {
+        uuid id PK
+        uuid source_entity_id FK
+        uuid target_entity_id FK
+        string relation_type
+        text description
+        float weight
+    }
+
+    TOPICS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid embedding_id FK
+        uuid parent_topic_id FK
+        int level
+        string name
+        text summary
+    }
+
+    TOPIC_CHUNKS {
+        uuid topic_id FK
+        uuid chunk_id FK
+    }
+
+    %% ========== NHÓM 5: CHAT, RETRIEVAL & CITATION ==========
+    CHAT_SESSIONS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid user_id FK
+        string title
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    CHAT_MESSAGES {
+        uuid id PK
+        uuid session_id FK
+        string role "user|assistant"
+        text content
+        timestamp created_at
+    }
+
+    MESSAGE_GENERATIONS {
+        uuid id PK
+        uuid message_id FK
+        string route_type "cache_hit|metadata|factoid|complex"
+        string model_used
+        int prompt_tokens
+        int completion_tokens
+        int total_tokens
+        decimal cost_usd
+        int latency_ms
+        float temperature
+        float top_p
+        string finish_reason "stop|length|content_filter|tool_calls"
+        timestamp created_at
+    }
+
+    RETRIEVALS {
+        uuid id PK
+        uuid message_id FK
+        uuid chunk_id FK
+        uuid entity_id FK
+        string retrieval_method "vector|bm25|knowledge_graph|rerank"
+        float score
+        int rank
+        timestamp created_at
+    }
+
+    CITATIONS {
+        uuid id PK
+        uuid message_id FK
+        uuid retrieval_id FK
+        text text_snippet
+        boolean verified
+        int order_index
+    }
+
+    %% ========== NHÓM 6: TÓM TẮT / TRÍCH XUẤT / SO SÁNH ==========
+    SUMMARIES {
+        uuid id PK
+        uuid document_id FK
+        uuid created_by FK
+        string type "short|detailed|topic|bullet"
+        text content
+        timestamp created_at
+    }
+
+    EXTRACTIONS {
+        uuid id PK
+        uuid document_id FK
+        uuid created_by FK
+        string extraction_type "table|entity|timeline|number"
+        jsonb result_json
+        timestamp created_at
+    }
+
+    COMPARISONS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid created_by FK
+        string title
+        jsonb result
+        timestamp created_at
+    }
+
+    COMPARISON_DOCUMENTS {
+        uuid comparison_id FK
+        uuid document_id FK
+    }
+
+    %% ========== NHÓM 7: BÁO CÁO ==========
+    REPORTS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid created_by FK
+        string title
+        string format "pdf|docx|markdown"
+        string file_path
+        timestamp created_at
+    }
+
+    REPORT_ITEMS {
+        uuid id PK
+        uuid report_id FK
+        string source_type "summary|extraction|comparison|chat_message"
+        uuid source_id
+        int order_index
+    }
+
+    %% ========== NHÓM 8: QUERY ROUTER, CACHE & LỊCH SỬ TRUY VẤN ==========
+    QUERY_CACHE {
+        uuid id PK
+        uuid workspace_id FK
+        uuid query_embedding_id FK
+        string query_hash
+        text query_text
+        text answer
+        jsonb citation_refs
+        float similarity_threshold
+        int hit_count
+        int ttl_seconds
+        timestamp expires_at
+        timestamp created_at
+        timestamp last_used_at
+    }
+
+    QUERY_LOGS {
+        uuid id PK
+        uuid workspace_id FK
+        uuid user_id FK
+        uuid message_id FK
+        uuid cache_id FK
+        text query_text
+        string route_type "cache_hit|metadata|factoid|complex"
+        int llm_calls_count
+        string model_used
+        int latency_ms
+        timestamp created_at
+    }
+
+    SEARCH_HISTORY {
+        uuid id PK
+        uuid workspace_id FK
+        uuid user_id FK
+        uuid clicked_document_id FK
+        text query_text
+        jsonb filters
+        int results_count
+        timestamp created_at
+    }
+
+    %% ===================== RELATIONSHIPS =====================
+    USERS ||--o{ WORKSPACES : owns
+    USERS ||--o{ WORKSPACE_MEMBERS : "is member"
+    WORKSPACES ||--o{ WORKSPACE_MEMBERS : has
+    ROLES ||--o{ WORKSPACE_MEMBERS : "assigned as"
+
+    WORKSPACES ||--o{ DOCUMENTS : contains
+    DOCUMENTS ||--o{ DOCUMENT_VERSIONS : has
+    USERS ||--o{ DOCUMENT_VERSIONS : uploads
+
+    DOCUMENT_VERSIONS ||--o{ PIPELINE_RUNS : "processed by"
+    PIPELINE_RUNS ||--o{ PIPELINE_STAGE_LOGS : contains
+
+    DOCUMENT_VERSIONS ||--o{ DOCUMENT_CHUNKS : "split into"
+    EMBEDDINGS ||--o{ DOCUMENT_CHUNKS : embeds
+    EMBEDDINGS ||--o{ TOPICS : embeds
+    EMBEDDINGS ||--o{ QUERY_CACHE : embeds
+
+    WORKSPACES ||--o{ ENTITIES : contains
+    DOCUMENT_VERSIONS ||--o{ ENTITIES : "extracted from"
+    ENTITIES ||--o{ ENTITY_RELATIONS : "source of"
+    ENTITIES ||--o{ ENTITY_RELATIONS : "target of"
+
+    WORKSPACES ||--o{ TOPICS : contains
+    TOPICS ||--o{ TOPICS : "parent of"
+    TOPICS ||--o{ TOPIC_CHUNKS : groups
+    DOCUMENT_CHUNKS ||--o{ TOPIC_CHUNKS : "belongs to"
+
+    WORKSPACES ||--o{ CHAT_SESSIONS : contains
+    USERS ||--o{ CHAT_SESSIONS : owns
+    CHAT_SESSIONS ||--o{ CHAT_MESSAGES : contains
+    CHAT_MESSAGES ||--o| MESSAGE_GENERATIONS : "has metrics"
+
+    CHAT_MESSAGES ||--o{ RETRIEVALS : retrieves
+    DOCUMENT_CHUNKS ||--o{ RETRIEVALS : "retrieved as"
+    ENTITIES ||--o{ RETRIEVALS : "retrieved as"
+    RETRIEVALS ||--o{ CITATIONS : "cited as"
+    CHAT_MESSAGES ||--o{ CITATIONS : has
+
+    DOCUMENTS ||--o{ SUMMARIES : has
+    USERS ||--o{ SUMMARIES : creates
+    DOCUMENTS ||--o{ EXTRACTIONS : has
+    USERS ||--o{ EXTRACTIONS : creates
+
+    WORKSPACES ||--o{ COMPARISONS : has
+    USERS ||--o{ COMPARISONS : creates
+    COMPARISONS ||--o{ COMPARISON_DOCUMENTS : includes
+    DOCUMENTS ||--o{ COMPARISON_DOCUMENTS : "included in"
+
+    WORKSPACES ||--o{ REPORTS : has
+    USERS ||--o{ REPORTS : creates
+    REPORTS ||--o{ REPORT_ITEMS : contains
+
+    WORKSPACES ||--o{ QUERY_CACHE : caches
+    QUERY_CACHE ||--o{ QUERY_LOGS : "hit by"
+    CHAT_MESSAGES ||--o| QUERY_LOGS : "routed as"
+    WORKSPACES ||--o{ QUERY_LOGS : logs
+    USERS ||--o{ QUERY_LOGS : generates
+
+    WORKSPACES ||--o{ SEARCH_HISTORY : logs
+    USERS ||--o{ SEARCH_HISTORY : searches
+    DOCUMENTS ||--o{ SEARCH_HISTORY : clicked
