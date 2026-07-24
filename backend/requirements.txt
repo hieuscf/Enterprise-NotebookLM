@@ -13,10 +13,11 @@ httpx>=0.28.0,<1.0.0
 python-multipart>=0.0.17,<1.0.0
 structlog>=24.4.0,<26.0.0
 
-# Observability (wired in Step 4)
+# Observability (FR13 foundation)
 opentelemetry-api>=1.28.0,<2.0.0
 opentelemetry-sdk>=1.28.0,<2.0.0
 opentelemetry-instrumentation-fastapi>=0.49b0
+opentelemetry-instrumentation-sqlalchemy>=0.49b0
 opentelemetry-exporter-otlp>=1.28.0,<2.0.0
 
 # Dev / CI

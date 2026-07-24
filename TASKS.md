@@ -23,10 +23,10 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline OCR→Chunk→Embedding→Index. Chưa có Chat/AI.
 
 ### 1.1 Hạ tầng & DevOps
-- [ ] [BE] Khởi tạo repo monorepo (backend FastAPI, frontend Next.js), Docker Compose (Postgres, Redis, Qdrant/pgvector, Elasticsearch, MinIO, Neo4j).
-- [ ] [BE] Cấu hình `.env`/secrets, CI cơ bản (lint + test on push).
-- [ ] [BE] Alembic (migration) khởi tạo schema PostgreSQL từ `database-design-enterprise-notebooklm.md` (toàn bộ bảng v2: `workspaces`, `users`, `roles`, `workspace_members`, `documents`, `document_versions`, `embeddings`, `pipeline_runs`, `pipeline_stage_logs`, `entities`, `entity_relations`, `topics`, `topic_chunks`, `document_chunks`, `query_cache`, `chat_sessions`, `chat_messages`, `message_generations`, `retrievals`, `citations`, `search_history`, `query_logs`, `summaries`, `extractions`, `comparisons`, `comparison_documents`, `reports`, `report_items`).
-- [ ] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry hoặc tương đương) — nền cho FR13.
+- [x] [BE] Khởi tạo repo monorepo (backend FastAPI, frontend Next.js), Docker Compose (Postgres, Redis, Qdrant/pgvector, Elasticsearch, MinIO, Neo4j).
+- [x] [BE] Cấu hình `.env`/secrets, CI cơ bản (lint + test on push).
+- [x] [BE] Alembic (migration) khởi tạo schema PostgreSQL từ `database-design-enterprise-notebooklm.md` (toàn bộ bảng v2: `workspaces`, `users`, `roles`, `workspace_members`, `documents`, `document_versions`, `embeddings`, `pipeline_runs`, `pipeline_stage_logs`, `entities`, `entity_relations`, `topics`, `topic_chunks`, `document_chunks`, `query_cache`, `chat_sessions`, `chat_messages`, `message_generations`, `retrievals`, `citations`, `search_history`, `query_logs`, `summaries`, `extractions`, `comparisons`, `comparison_documents`, `reports`, `report_items`).
+- [x] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry hoặc tương đương) — nền cho FR13.
 
 ### 1.2 Auth & RBAC (FR12)
 - [ ] [BE] `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me` (OAuth2/JWT).
