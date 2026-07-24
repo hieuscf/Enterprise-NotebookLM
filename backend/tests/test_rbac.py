@@ -26,6 +26,7 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
+from app.core.rate_limit import InMemoryWorkspaceRateLimiter, get_workspace_rate_limiter
 from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.dependencies.rbac import (
@@ -87,6 +88,7 @@ def _http_request(workspace_id: uuid.UUID, method: str = "GET") -> Request:
 @pytest.fixture
 async def client():
     app.dependency_overrides[get_db_session] = _fake_db_session
+    app.dependency_overrides[get_workspace_rate_limiter] = lambda: InMemoryWorkspaceRateLimiter()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

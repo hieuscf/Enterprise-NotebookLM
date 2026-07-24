@@ -2,12 +2,12 @@
 # File: workspaces.py
 # Module/Service: Workspace Service (RBAC demo)
 # Layer: Presentation
-# Purpose: Minimal workspace routes to prove require_workspace_role (FR12 Step 2).
+# Purpose: Minimal workspace routes to prove RBAC + rate limit (FR12 Steps 2–3).
 # Responsibilities:
-#   - GET /workspaces/{workspaceId} — any member (viewer+)
+#   - GET /workspaces/{workspaceId} — any member (viewer+) + workspace rate limit
 #   - DELETE /workspaces/{workspaceId} — admin only (RBAC gate; no real delete yet)
 # Dependencies:
-#   - app.dependencies.rbac, app.repositories.workspaces, app.schemas.workspaces
+#   - app.dependencies.rate_limit, app.repositories.workspaces, app.schemas.workspaces
 # Public Exports:
 #   - router
 # Database/Table: workspaces, workspace_members
@@ -15,6 +15,7 @@
 # Important Notes:
 #   - Full Workspace CRUD / member management is phase 1.3 — DELETE is RBAC-only
 #     stub (204 when allowed) so middleware can be tested without mutating data.
+#   - Rate limit is API-layer (FR12), not LLM call quota (phase 2).
 # =============================================================================
 
 from __future__ import annotations
@@ -25,11 +26,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
-from app.dependencies.rbac import (
-    WorkspaceAccess,
-    require_workspace_admin,
-    require_workspace_member,
+from app.dependencies.rate_limit import (
+    require_workspace_admin_rl,
+    require_workspace_member_rl,
 )
+from app.dependencies.rbac import WorkspaceAccess
 from app.repositories.workspaces import WorkspaceRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.workspaces import WorkspaceResponse
@@ -44,11 +45,12 @@ router = APIRouter(prefix="/workspaces", tags=["Workspaces"])
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
     },
 )
 async def get_workspace(
     workspaceId: uuid.UUID,
-    access: WorkspaceAccess = Depends(require_workspace_member),
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
     session: AsyncSession = Depends(get_db_session),
 ) -> WorkspaceResponse:
     """Chi tiết Workspace — allowed for admin | editor | viewer members."""
@@ -77,11 +79,12 @@ async def get_workspace(
     responses={
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
     },
 )
 async def delete_workspace(
     workspaceId: uuid.UUID,
-    access: WorkspaceAccess = Depends(require_workspace_admin),
+    access: WorkspaceAccess = Depends(require_workspace_admin_rl),
 ) -> None:
     """Xoá Workspace (Admin) — RBAC demo only.
 

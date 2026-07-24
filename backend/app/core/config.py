@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # FR12 — API-layer rate limit per workspace (not LLM call quota; see phase 2).
+    rate_limit_requests_per_minute: int = 60
+    rate_limit_window_seconds: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
