@@ -69,8 +69,17 @@ Workflow: `.github/workflows/ci.yml` — chạy trên `push` / `pull_request` v�
 
 Pip/npm được cache qua `actions/setup-python` và `actions/setup-node`.
 
+## Database (Alembic schema v2)
+
+```bash
+docker compose exec backend-api alembic upgrade head
+docker compose exec postgres psql -U notebooklm -d notebooklm -c "\dt"
+```
+
+Migration: `backend/alembic/versions/6ebf6936f6c1_initial_schema_v2.py` — 28 bảng (+ `alembic_version`).
+
 ## Ghi chú kiến trúc
 
 - `backend-api` và `celery-worker` **cùng image**, khác command — scale độc lập.
 - Chỉ `backend-api` được gọi Anthropic API (GĐ sau); worker/frontend không gọi LLM.
-- Alembic schema v2 + structlog/OTel: các bước còn lại của Giai đoạn 1.1.
+- structlog/OTel: Bước 4 còn lại của Giai đoạn 1.1.

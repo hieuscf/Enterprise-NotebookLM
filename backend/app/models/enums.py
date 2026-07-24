@@ -1,0 +1,135 @@
+# =============================================================================
+# File: enums.py
+# Module/Service: Models
+# Layer: Schema
+# Purpose: PostgreSQL ENUM value definitions for schema v2.
+# Responsibilities:
+#   - Centralize all DB enum types used by SQLAlchemy models
+# Dependencies:
+#   - database-design-enterprise-notebooklm.md, erd-enterprise-notebooklm.mermaid,
+#     Enterprise notebooklm openapi.yaml
+# Public Exports:
+#   - All *Enum classes listed below
+# Database/Table: N/A (type definitions only)
+# Related Modules: app.models.*
+# Important Notes: Values must match docs; do not invent new enum members.
+# =============================================================================
+
+import enum
+
+
+class UserStatus(enum.StrEnum):
+    active = "active"
+    disabled = "disabled"
+
+
+class RoleName(enum.StrEnum):
+    admin = "admin"
+    editor = "editor"
+    viewer = "viewer"
+
+
+class FileType(enum.StrEnum):
+    pdf = "pdf"
+    docx = "docx"
+    xlsx = "xlsx"
+    pptx = "pptx"
+    txt = "txt"
+
+
+class DocumentVersionStatus(enum.StrEnum):
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+
+
+class PipelineStatus(enum.StrEnum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class PipelineStage(enum.StrEnum):
+    ocr_cleaning = "ocr_cleaning"
+    chunking = "chunking"
+    embedding = "embedding"
+    graph_extraction = "graph_extraction"
+    indexing = "indexing"
+
+
+class VectorStore(enum.StrEnum):
+    qdrant = "qdrant"
+    pgvector = "pgvector"
+
+
+class MessageRole(enum.StrEnum):
+    user = "user"
+    assistant = "assistant"
+
+
+class RouteType(enum.StrEnum):
+    cache_hit = "cache_hit"
+    metadata = "metadata"
+    factoid = "factoid"
+    complex = "complex"
+
+
+class FinishReason(enum.StrEnum):
+    stop = "stop"
+    length = "length"
+    content_filter = "content_filter"
+    tool_calls = "tool_calls"
+
+
+class RetrievalMethod(enum.StrEnum):
+    vector = "vector"
+    bm25 = "bm25"
+    knowledge_graph = "knowledge_graph"
+    rerank = "rerank"
+
+
+class SummaryType(enum.StrEnum):
+    """Aligned with OpenAPI Summary.style (by_topic / bullet_points)."""
+
+    short = "short"
+    detailed = "detailed"
+    by_topic = "by_topic"
+    bullet_points = "bullet_points"
+
+
+class ExtractionType(enum.StrEnum):
+    """Aligned with OpenAPI Extraction.extraction_type."""
+
+    table = "table"
+    figures = "figures"
+    entities = "entities"
+    timeline = "timeline"
+
+
+class ExtractionOutputFormat(enum.StrEnum):
+    json = "json"
+    table = "table"
+
+
+class ReportFormat(enum.StrEnum):
+    pdf = "pdf"
+    docx = "docx"
+    markdown = "markdown"
+
+
+class ReportStatus(enum.StrEnum):
+    """From OpenAPI Report.status (not listed in ERD; required by API contract)."""
+
+    pending = "pending"
+    ready = "ready"
+    failed = "failed"
+
+
+class ReportSourceType(enum.StrEnum):
+    """Aligned with OpenAPI ReportItemInput.source_type (chat_session)."""
+
+    summary = "summary"
+    extraction = "extraction"
+    comparison = "comparison"
+    chat_session = "chat_session"

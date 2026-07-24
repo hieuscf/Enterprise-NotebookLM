@@ -2,14 +2,68 @@
 # File: __init__.py
 # Module/Service: Models
 # Layer: Schema
-# Purpose: Package marker for SQLAlchemy ORM models matching schema v2.
+# Purpose: Export all SQLAlchemy ORM models for Alembic metadata discovery.
 # Responsibilities:
-#   - Define ORM classes (PascalCase singular) mapped to snake_case tables
+#   - Import every model so Base.metadata contains the full schema v2
 # Dependencies:
-#   - SQLAlchemy
+#   - All app.models.* modules
 # Public Exports:
-#   - N/A
-# Database/Table: schema v2 (Alembic Step 3)
-# Related Modules: app.repositories, alembic/
-# Important Notes: Phase 1.1 placeholder — models added with Alembic migration.
+#   - All ORM model classes (27 tables)
+# Database/Table: Full schema v2
+# Related Modules: alembic/env.py, database-design-enterprise-notebooklm.md
+# Important Notes: Import order does not affect FK resolution (string FKs).
 # =============================================================================
+
+from app.models.artifacts import (
+    Comparison,
+    ComparisonDocument,
+    Extraction,
+    Report,
+    ReportItem,
+    Summary,
+)
+from app.models.chat import ChatMessage, ChatSession, MessageGeneration
+from app.models.documents import Document, DocumentVersion
+from app.models.identity import Role, User, Workspace, WorkspaceMember
+from app.models.knowledge import (
+    DocumentChunk,
+    Embedding,
+    Entity,
+    EntityRelation,
+    Topic,
+    TopicChunk,
+)
+from app.models.pipeline import PipelineRun, PipelineStageLog
+from app.models.query import QueryCache, QueryLog, SearchHistory
+from app.models.retrieval import Citation, Retrieval
+
+__all__ = [
+    "User",
+    "Workspace",
+    "Role",
+    "WorkspaceMember",
+    "Document",
+    "DocumentVersion",
+    "PipelineRun",
+    "PipelineStageLog",
+    "Embedding",
+    "DocumentChunk",
+    "Entity",
+    "EntityRelation",
+    "Topic",
+    "TopicChunk",
+    "QueryCache",
+    "ChatSession",
+    "ChatMessage",
+    "MessageGeneration",
+    "Retrieval",
+    "Citation",
+    "SearchHistory",
+    "QueryLog",
+    "Summary",
+    "Extraction",
+    "Comparison",
+    "ComparisonDocument",
+    "Report",
+    "ReportItem",
+]
