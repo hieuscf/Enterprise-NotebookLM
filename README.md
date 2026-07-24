@@ -42,35 +42,35 @@ docker compose ps
 `docker-compose.override.yml` bật volume mount + `uvicorn --reload` + `next dev`.
 Chạy không override: `docker compose -f docker-compose.yml up -d`.
 
-## Vector store: Qdrant (mặc định) vs pgvector
-
-Mặc định stack dùng **Qdrant** (`VECTOR_STORE=qdrant` trong `.env`).
-
-Để chuyển sang **pgvector** trên Postgres chính (khi triển khai adapter ở GĐ sau):
-
-1. Đổi image Postgres sang biến thể có pgvector, ví dụ `pgvector/pgvector:pg16`.
-2. Set `VECTOR_STORE=pgvector` trong `.env`.
-3. Tắt / bỏ phụ thuộc service `qdrant` trong `docker-compose.yml` nếu không còn dùng.
-4. Cập nhật adapter Vector DB (GĐ RAG) để ghi/đọc embedding qua Postgres thay vì Qdrant HTTP API.
-
-Bảng `embeddings.vector_store` trong schema v2 hỗ trợ ENUM `qdrant` | `pgvector`.
+## Vector store: Qdrant (mặc định)
 
 ## Checklist kiểm tra dịch vụ
 
-| Service | Kiểm tra nhanh |
-|---------|----------------|
-| postgres | `docker compose exec postgres pg_isready -U notebooklm` |
-| redis | `docker compose exec redis redis-cli ping` → PONG |
-| qdrant | `curl http://localhost:6333/readyz` |
-| elasticsearch | `curl http://localhost:9200/_cluster/health` |
-| minio | `curl http://localhost:9000/minio/health/live` |
-| neo4j | mở http://localhost:7474 |
-| backend-api | `curl http://localhost:8000/health` |
-| celery-worker | `docker compose logs celery-worker --tail 20` |
-| frontend | mở http://localhost:3000 |
+| Service       | Kiểm tra nhanh                                          |
+| ------------- | ------------------------------------------------------- |
+| postgres      | `docker compose exec postgres pg_isready -U notebooklm` |
+| redis         | `docker compose exec redis redis-cli ping` → PONG       |
+| qdrant        | `curl http://localhost:6333/readyz`                     |
+| elasticsearch | `curl http://localhost:9200/_cluster/health`            |
+| minio         | `curl http://localhost:9000/minio/health/live`          |
+| neo4j         | mở http://localhost:7474                                |
+| backend-api   | `curl http://localhost:8000/health`                     |
+| celery-worker | `docker compose logs celery-worker --tail 20`           |
+| frontend      | mở http://localhost:3000                                |
+
+## CI (GitHub Actions)
+
+Workflow: `.github/workflows/ci.yml` — chạy trên `push` / `pull_request` vào `main`.
+
+| Job | Lệnh chính |
+|-----|------------|
+| backend | `ruff check` + `black --check` + `pytest` (smoke `GET /health`) |
+| frontend | `npm ci` + `npm run lint` + `npm run build` |
+
+Pip/npm được cache qua `actions/setup-python` và `actions/setup-node`.
 
 ## Ghi chú kiến trúc
 
 - `backend-api` và `celery-worker` **cùng image**, khác command — scale độc lập.
 - Chỉ `backend-api` được gọi Anthropic API (GĐ sau); worker/frontend không gọi LLM.
-- Secrets/CI, Alembic schema v2, structlog+OTel: các bước còn lại của Giai đoạn 1.1.
+- Alembic schema v2 + structlog/OTel: các bước còn lại của Giai đoạn 1.1.
