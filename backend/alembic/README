@@ -1,0 +1,18 @@
+# =============================================================================
+# File: README
+# Module/Service: Alembic
+# Layer: Schema
+# Purpose: Placeholder for Alembic migration tooling (initialized in Step 3).
+# Responsibilities:
+#   - Reserve backend/alembic/ for schema v2 migrations
+# Dependencies:
+#   - Alembic, SQLAlchemy, PostgreSQL
+# Public Exports:
+#   - N/A
+# Database/Table: All schema v2 tables
+# Related Modules: database-design-enterprise-notebooklm.md
+# Important Notes: Full initial migration is Giai đoạn 1.1 Step 3 — do not
+#   invent tables outside the official design docs.
+# =============================================================================
+
+Alembic will be initialized in Phase 1.1 Step 3.

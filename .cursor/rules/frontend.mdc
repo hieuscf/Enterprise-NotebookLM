@@ -1,0 +1,38 @@
+---
+description: Frontend architecture, React/Next.js conventions, and component design
+globs: "frontend/**/*"
+alwaysApply: false
+---
+
+# Frontend Development Rules (Next.js / React)
+
+## 1. Directory Structure Standard
+
+frontend/
+├── app/ # Next.js App Router
+│ ├── (workspace)/ # Workspace-scoped pages
+│ │ ├── chat/
+│ │ ├── search/
+│ │ ├── documents/
+│ │ └── reports/
+│ └── admin/ # Admin pages
+├── components/ # Shared UI components (shadcn/ui)
+├── features/ # Feature modules (chat, search, documents, citation, report)
+├── lib/ # API clients, custom hooks, utilities
+└── types/ # TypeScript types (khớp OpenAPI schemas)
+
+---
+
+## 2. Naming & Coding Conventions
+
+- **React Components**: `PascalCase.tsx` (vd: `ChatMessageBubble.tsx`).
+- **Custom Hooks**: `useCamelCase.ts` (vd: `useWorkspace.ts`).
+- **Next.js Routes**: Tuân theo quy ước App Router (`page.tsx`, `route.ts`). Không tự đặt tên ngẫu nhiên.
+- **Type Definitions**: Đặt trong `types/`, định nghĩa phải khớp với Pydantic schemas/OpenAPI contract.
+
+---
+
+## 3. Data Fetching & State
+
+- Mọi lệnh gọi API đến backend phải thông qua module `lib/api-client`.
+- Không gọi trực tiếp LLM Provider SDK từ Frontend. Everything goes through Backend API.

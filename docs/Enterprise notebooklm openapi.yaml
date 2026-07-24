@@ -1,0 +1,1208 @@
+openapi: 3.0.3
+info:
+  title: Enterprise NotebookLM API
+  version: "1.0.0"
+  description: >
+    API contract cho hệ thống Enterprise NotebookLM (LLM + RAG).
+    Bao gồm Workspace Management, Knowledge Base/Document Versioning,
+    Intelligent Search, AI Chat với Citation, AI Summary, Information Extraction,
+    Multi-document Comparison, Report Generation, và Observability.
+    Ánh xạ FR1–FR13 (Business_Context.md) và schema v2 (database-design-enterprise-notebooklm.md).
+servers:
+  - url: https://api.notebooklm.example.com/v1
+    description: Production
+  - url: https://staging-api.notebooklm.example.com/v1
+    description: Staging
+
+tags:
+  - name: Auth
+  - name: Workspaces
+  - name: Documents
+  - name: Search
+  - name: Chat
+  - name: Summaries
+  - name: Extractions
+  - name: Comparisons
+  - name: Reports
+  - name: Admin/Observability
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------
+  # AUTH (FR12)
+  # ---------------------------------------------------------------------
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Đăng nhập, trả về JWT (OAuth2 password/SSO flow tuỳ IdP)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthToken" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Làm mới access token bằng refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Token mới
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthToken" }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Lấy thông tin user hiện tại + danh sách workspace/role
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  # ---------------------------------------------------------------------
+  # WORKSPACES (FR1)
+  # ---------------------------------------------------------------------
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      summary: Danh sách Workspace mà user hiện tại có quyền truy cập
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceListResponse" }
+    post:
+      tags: [Workspaces]
+      summary: Tạo Workspace mới (Admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+
+  /workspaces/{workspaceId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Workspaces]
+      summary: Chi tiết Workspace
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+    patch:
+      tags: [Workspaces]
+      summary: Cập nhật Workspace (Admin)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+      responses:
+        "200":
+          description: Đã cập nhật
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+    delete:
+      tags: [Workspaces]
+      summary: Xoá Workspace (Admin)
+      responses:
+        "204": { description: Đã xoá }
+
+  /workspaces/{workspaceId}/members:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Workspaces]
+      summary: Danh sách thành viên + vai trò (RBAC)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WorkspaceMember" }
+    post:
+      tags: [Workspaces]
+      summary: Thêm thành viên vào Workspace (Admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: { type: string, format: uuid }
+                role: { type: string, enum: [admin, editor, viewer] }
+      responses:
+        "201":
+          description: Đã thêm
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceMember" }
+
+  /workspaces/{workspaceId}/members/{userId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Workspaces]
+      summary: Đổi vai trò thành viên (Admin)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [admin, editor, viewer] }
+      responses:
+        "200":
+          description: Đã cập nhật
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceMember" }
+    delete:
+      tags: [Workspaces]
+      summary: Xoá thành viên khỏi Workspace (Admin)
+      responses:
+        "204": { description: Đã xoá }
+
+  # ---------------------------------------------------------------------
+  # DOCUMENTS & VERSIONING (FR2)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/documents:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Documents]
+      summary: Danh sách tài liệu trong Workspace
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+        - name: file_type
+          in: query
+          schema: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentListResponse" }
+    post:
+      tags: [Documents]
+      summary: Upload tài liệu mới (tạo document + version 1, enqueue pipeline)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title]
+              properties:
+                file: { type: string, format: binary }
+                title: { type: string }
+      responses:
+        "202":
+          description: Đã nhận, pipeline đang xử lý bất đồng bộ
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentVersion" }
+
+  /workspaces/{workspaceId}/documents/{documentId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Documents]
+      summary: Chi tiết tài liệu (kèm current_version)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+    delete:
+      tags: [Documents]
+      summary: Xoá tài liệu (mọi version)
+      responses:
+        "204": { description: Đã xoá }
+
+  /workspaces/{workspaceId}/documents/{documentId}/versions:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Documents]
+      summary: Lịch sử version của tài liệu
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DocumentVersion" }
+    post:
+      tags: [Documents]
+      summary: Upload lại (thay thế nội dung) → tạo version mới, enqueue pipeline
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: Version mới đang xử lý
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentVersion" }
+
+  /workspaces/{workspaceId}/documents/{documentId}/versions/{versionId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+      - { $ref: "#/components/parameters/VersionId" }
+    get:
+      tags: [Documents]
+      summary: Chi tiết 1 version (status, checksum, page_count...)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentVersion" }
+
+  /workspaces/{workspaceId}/documents/{documentId}/versions/{versionId}/set-current:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+      - { $ref: "#/components/parameters/VersionId" }
+    post:
+      tags: [Documents]
+      summary: Đặt version này làm current_version_id (rollback/chuyển version)
+      responses:
+        "200":
+          description: Đã cập nhật current version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+
+  /workspaces/{workspaceId}/documents/{documentId}/versions/{versionId}/pipeline-status:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+      - { $ref: "#/components/parameters/VersionId" }
+    get:
+      tags: [Documents]
+      summary: Trạng thái pipeline_run + từng pipeline_stage_log (OCR/Chunking/Embedding/Graph/Indexing)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineRun" }
+
+  # ---------------------------------------------------------------------
+  # SEARCH (FR3, Module 3)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/search:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    post:
+      tags: [Search]
+      summary: Tìm kiếm ngữ nghĩa (Hybrid Retrieval Vector+BM25+KG, ghi search_history)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query_text]
+              properties:
+                query_text: { type: string }
+                filters:
+                  type: object
+                  description: Lọc theo file_type, khoảng thời gian, tag...
+                top_k: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Kết quả đã rerank
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResultResponse" }
+
+  /workspaces/{workspaceId}/search/history:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Search]
+      summary: Lịch sử tìm kiếm của user hiện tại trong Workspace
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SearchHistoryItem" }
+
+  # ---------------------------------------------------------------------
+  # CHAT (FR4, FR5, FR10, FR11)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/chat/sessions:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Chat]
+      summary: Danh sách phiên chat của user (Conversation Memory)
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChatSession" }
+    post:
+      tags: [Chat]
+      summary: Tạo phiên chat mới
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+
+  /workspaces/{workspaceId}/chat/sessions/{sessionId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/SessionId" }
+    get:
+      tags: [Chat]
+      summary: Chi tiết phiên chat (để tiếp tục ngữ cảnh cũ)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+    delete:
+      tags: [Chat]
+      summary: Xoá phiên chat
+      responses:
+        "204": { description: Đã xoá }
+
+  /workspaces/{workspaceId}/chat/sessions/{sessionId}/messages:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/SessionId" }
+    get:
+      tags: [Chat]
+      summary: Lịch sử tin nhắn trong phiên
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChatMessage" }
+    post:
+      tags: [Chat]
+      summary: >
+        Gửi câu hỏi. Đi qua Query Router (cache_hit/metadata/factoid/complex).
+        Response mặc định là SSE stream (text/event-stream); đặt header
+        Accept: application/json để nhận non-streaming.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+      responses:
+        "200":
+          description: >
+            Streaming answer (SSE) hoặc JSON đầy đủ nếu Accept=application/json.
+            Kèm route_type, citations, message_generation metrics.
+          content:
+            text/event-stream:
+              schema: { type: string }
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatMessage" }
+
+  /workspaces/{workspaceId}/chat/messages/{messageId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/MessageId" }
+    get:
+      tags: [Chat]
+      summary: Chi tiết 1 message (kèm message_generation nếu role=assistant)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatMessage" }
+
+  /workspaces/{workspaceId}/chat/messages/{messageId}/citations:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/MessageId" }
+    get:
+      tags: [Chat]
+      summary: Danh sách citation đã verify cho message (để highlight trên tài liệu gốc)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Citation" }
+
+  # ---------------------------------------------------------------------
+  # SUMMARIES (FR6)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/documents/{documentId}/summaries:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Summaries]
+      summary: Danh sách summary đã sinh cho tài liệu
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Summary" }
+    post:
+      tags: [Summaries]
+      summary: Yêu cầu tóm tắt mới
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [style]
+              properties:
+                style: { type: string, enum: [short, detailed, by_topic, bullet_points] }
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Summary" }
+
+  /workspaces/{workspaceId}/summaries/{summaryId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: summaryId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Summaries]
+      summary: Chi tiết summary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Summary" }
+    delete:
+      tags: [Summaries]
+      summary: Xoá summary
+      responses:
+        "204": { description: Đã xoá }
+
+  # ---------------------------------------------------------------------
+  # EXTRACTIONS (FR7)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/documents/{documentId}/extractions:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Extractions]
+      summary: Danh sách extraction đã thực hiện
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Extraction" }
+    post:
+      tags: [Extractions]
+      summary: Trích xuất thông tin có cấu trúc (bảng/số liệu/entity/mốc thời gian)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                extraction_type:
+                  type: string
+                  enum: [table, figures, entities, timeline]
+                output_format:
+                  type: string
+                  enum: [json, table]
+                  default: json
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Extraction" }
+
+  /workspaces/{workspaceId}/extractions/{extractionId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: extractionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Extractions]
+      summary: Chi tiết extraction
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Extraction" }
+    delete:
+      tags: [Extractions]
+      summary: Xoá extraction
+      responses:
+        "204": { description: Đã xoá }
+
+  # ---------------------------------------------------------------------
+  # COMPARISONS (FR8)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/comparisons:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Comparisons]
+      summary: Danh sách comparison đã thực hiện trong Workspace
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comparison" }
+    post:
+      tags: [Comparisons]
+      summary: So sánh ≥2 tài liệu, làm nổi bật điểm giống/khác
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_ids]
+              properties:
+                document_ids:
+                  type: array
+                  minItems: 2
+                  items: { type: string, format: uuid }
+                focus: { type: string, description: Chủ đề trọng tâm khi so sánh (tuỳ chọn) }
+      responses:
+        "201":
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comparison" }
+
+  /workspaces/{workspaceId}/comparisons/{comparisonId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: comparisonId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Comparisons]
+      summary: Chi tiết comparison
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comparison" }
+    delete:
+      tags: [Comparisons]
+      summary: Xoá comparison
+      responses:
+        "204": { description: Đã xoá }
+
+  # ---------------------------------------------------------------------
+  # REPORTS (FR9)
+  # ---------------------------------------------------------------------
+  /workspaces/{workspaceId}/reports:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Reports]
+      summary: Danh sách báo cáo trong Workspace
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Report" }
+    post:
+      tags: [Reports]
+      summary: Tạo báo cáo tổng hợp từ summary/extraction/comparison/chat đã có
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, items, export_format]
+              properties:
+                title: { type: string }
+                export_format: { type: string, enum: [pdf, docx, markdown] }
+                items:
+                  type: array
+                  items: { $ref: "#/components/schemas/ReportItemInput" }
+      responses:
+        "202":
+          description: Đang sinh báo cáo (bất đồng bộ)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Report" }
+
+  /workspaces/{workspaceId}/reports/{reportId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: reportId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Reports]
+      summary: Chi tiết báo cáo + trạng thái sinh file
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Report" }
+    delete:
+      tags: [Reports]
+      summary: Xoá báo cáo
+      responses:
+        "204": { description: Đã xoá }
+
+  /workspaces/{workspaceId}/reports/{reportId}/export:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: reportId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Reports]
+      summary: Tải file báo cáo (PDF/DOCX/Markdown)
+      responses:
+        "200":
+          description: Binary file
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema: { type: string, format: binary }
+            text/markdown: { schema: { type: string, format: binary } }
+
+  # ---------------------------------------------------------------------
+  # ADMIN / OBSERVABILITY (FR12, FR13)
+  # ---------------------------------------------------------------------
+  /admin/workspaces/{workspaceId}/query-logs:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Admin/Observability]
+      summary: Log định tuyến truy vấn (route_type, llm_calls_count, latency) — audit chi phí
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+        - name: route_type
+          in: query
+          schema: { type: string, enum: [cache_hit, metadata, factoid, complex] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/QueryLog" }
+
+  /admin/workspaces/{workspaceId}/pipeline-runs:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Admin/Observability]
+      summary: Danh sách pipeline_run (debug OCR/Chunking/Embedding/Graph/Indexing)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, running, completed, failed] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PipelineRun" }
+
+  /admin/workspaces/{workspaceId}/cost-summary:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Admin/Observability]
+      summary: Tổng hợp chi phí LLM theo model/route_type (từ message_generations)
+      parameters:
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CostSummary" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, default: 1 }
+    PageSizeParam:
+      name: page_size
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+
+  responses:
+    Unauthorized:
+      description: Không xác thực được (token thiếu/hết hạn)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Không đủ quyền (RBAC theo Workspace)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+    AuthToken:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, example: bearer }
+        expires_in: { type: integer, example: 3600 }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+        workspaces:
+          type: array
+          items:
+            type: object
+            properties:
+              workspace_id: { type: string, format: uuid }
+              role: { type: string, enum: [admin, editor, viewer] }
+
+    Workspace:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WorkspaceListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Workspace" }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    WorkspaceMember:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        email: { type: string }
+        role: { type: string, enum: [admin, editor, viewer] }
+        joined_at: { type: string, format: date-time }
+
+    Document:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        title: { type: string }
+        file_type: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        current_version_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DocumentListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Document" }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    DocumentVersion:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        uploaded_by: { type: string, format: uuid }
+        version_number: { type: integer }
+        file_size_bytes: { type: integer }
+        checksum_sha256: { type: string }
+        page_count: { type: integer }
+        status: { type: string, enum: [processing, ready, failed] }
+        is_current: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    PipelineRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_version_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, completed, failed] }
+        retry_count: { type: integer }
+        error_message: { type: string, nullable: true }
+        stages:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineStageLog" }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+
+    PipelineStageLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        stage:
+          type: string
+          enum: [ocr_cleaning, chunking, embedding, graph_extraction, indexing]
+        status: { type: string, enum: [pending, running, completed, failed] }
+        duration_ms: { type: integer }
+        metadata: { type: object }
+        error_message: { type: string, nullable: true }
+
+    SearchResultResponse:
+      type: object
+      properties:
+        results_count: { type: integer }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              chunk_id: { type: string, format: uuid, nullable: true }
+              entity_id: { type: string, format: uuid, nullable: true }
+              document_id: { type: string, format: uuid }
+              text_snippet: { type: string }
+              retrieval_method:
+                type: string
+                enum: [vector, bm25, knowledge_graph, rerank]
+              score: { type: number, format: float }
+              rank: { type: integer }
+
+    SearchHistoryItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        query_text: { type: string }
+        filters: { type: object }
+        results_count: { type: integer }
+        clicked_document_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ChatSession:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        title: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        generation:
+          $ref: "#/components/schemas/MessageGeneration"
+          nullable: true
+        citations:
+          type: array
+          items: { $ref: "#/components/schemas/Citation" }
+        created_at: { type: string, format: date-time }
+
+    MessageGeneration:
+      type: object
+      properties:
+        route_type:
+          type: string
+          enum: [cache_hit, metadata, factoid, complex]
+        model_used: { type: string, nullable: true }
+        prompt_tokens: { type: integer }
+        completion_tokens: { type: integer }
+        total_tokens: { type: integer }
+        cost_usd: { type: number, format: double }
+        latency_ms: { type: integer }
+        finish_reason:
+          type: string
+          enum: [stop, length, content_filter, tool_calls]
+
+    Citation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        retrieval_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        text_snippet: { type: string }
+        verified: { type: boolean }
+        order_index: { type: integer }
+
+    Summary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        style: { type: string, enum: [short, detailed, by_topic, bullet_points] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Extraction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        extraction_type: { type: string, enum: [table, figures, entities, timeline] }
+        output_format: { type: string, enum: [json, table] }
+        result: { type: object }
+        created_at: { type: string, format: date-time }
+
+    Comparison:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        document_ids:
+          type: array
+          items: { type: string, format: uuid }
+        result:
+          type: object
+          properties:
+            similarities: { type: array, items: { type: string } }
+            differences: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+
+    ReportItemInput:
+      type: object
+      properties:
+        source_type:
+          type: string
+          enum: [summary, extraction, comparison, chat_session]
+        source_id: { type: string, format: uuid }
+        order_index: { type: integer }
+
+    Report:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        title: { type: string }
+        export_format: { type: string, enum: [pdf, docx, markdown] }
+        status: { type: string, enum: [pending, ready, failed] }
+        file_url: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    QueryLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid, nullable: true }
+        cache_id: { type: string, format: uuid, nullable: true }
+        query_text: { type: string }
+        route_type: { type: string, enum: [cache_hit, metadata, factoid, complex] }
+        llm_calls_count: { type: integer }
+        model_used: { type: string, nullable: true }
+        latency_ms: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    CostSummary:
+      type: object
+      properties:
+        total_cost_usd: { type: number, format: double }
+        total_llm_calls: { type: integer }
+        by_model:
+          type: array
+          items:
+            type: object
+            properties:
+              model_used: { type: string }
+              calls: { type: integer }
+              cost_usd: { type: number, format: double }
+        by_route_type:
+          type: array
+          items:
+            type: object
+            properties:
+              route_type: { type: string }
+              count: { type: integer }

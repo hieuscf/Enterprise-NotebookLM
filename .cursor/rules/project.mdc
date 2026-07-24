@@ -1,0 +1,44 @@
+---
+description: Master rules and project-wide context for Enterprise NotebookLM
+globs: "*.*"
+alwaysApply: true
+---
+
+# Enterprise NotebookLM — Master Rules & Context
+
+## 1. Required Context & Source of Truth
+
+Agent PHẢI coi các tài liệu trong `docs/` là căn cứ bắt buộc trước khi sinh code/đề xuất thay đổi:
+
+- `Business_Context.md`: Mục tiêu, phạm vi, 12 Use Case, 13 Functional Requirements (FR1–FR13).
+- `System_Architecture_Enterprise_NotebookLM.md`: C4 Component Diagram + Sequence Diagram.
+- `database-design-enterprise-notebooklm.md`: Schema chính thức (bảng, cột, FK).
+- `Enterprise_notebooklm_openapi.yaml`: Hợp đồng API chính thức (endpoints, schemas).
+- `Enterprise_NotebookLM.md`: Mô tả 10 module chức năng & Query Router / Citation Verification.
+
+> **Quy tắc**: Không tự ý thêm bảng, endpoint, service, hoặc đổi luồng xử lý ngoài các tài liệu trên. Nếu có mâu thuẫn, nêu rõ với người dùng trước khi triển khai.
+
+---
+
+## 2. Mandatory File Header Policy
+
+Mọi file mã nguồn mới được tạo PHẢI bắt đầu bằng header chuẩn hoá (comment style phù hợp với ngôn ngữ):
+
+```text
+# =============================================================================
+# File: <tên_file>
+# Module/Service: <vd. Chat Service | Query Router | Document Ingestion Service>
+# Layer: <Presentation | Service | Repository | Adapter | Worker | Schema | UI>
+# Purpose: <mục đích chính của file, 1-2 câu>
+# Responsibilities:
+#   - <trách nhiệm 1>
+#   - <trách nhiệm 2>
+# Dependencies:
+#   - <module/service khác mà file này phụ thuộc>
+# Public Exports:
+#   - <function/class được export ra ngoài>
+# Database/Table: <tên bảng liên quan, nếu có>
+# Related Modules: <router/service/schema liên quan trực tiếp>
+# Important Notes: <ràng buộc đặc biệt, vd. "chỉ gọi tối đa 1 LLM call">
+# =============================================================================
+```
