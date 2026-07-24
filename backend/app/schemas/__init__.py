@@ -8,8 +8,24 @@
 # Dependencies:
 #   - Pydantic
 # Public Exports:
-#   - N/A
+#   - Auth and User schemas (Phase 1.2)
 # Database/Table: N/A
-# Related Modules: docs/Enterprise notebooklm openapi.yaml, app.routers
-# Important Notes: Phase 1.1 placeholder — no business schemas yet.
+# Related Modules: docs/Enterprise notebooklm openapi.yaml, app.api
+# Important Notes: OpenAPI YAML not checked into repo yet; schemas follow FR12 brief.
 # =============================================================================
+
+from app.schemas.auth import AuthToken, LoginRequest, RefreshRequest, Unauthorized
+from app.schemas.common import ErrorResponse
+from app.schemas.users import UserResponse, WorkspaceMembership
+from app.schemas.workspaces import WorkspaceResponse
+
+__all__ = [
+    "AuthToken",
+    "LoginRequest",
+    "RefreshRequest",
+    "Unauthorized",
+    "ErrorResponse",
+    "UserResponse",
+    "WorkspaceMembership",
+    "WorkspaceResponse",
+]

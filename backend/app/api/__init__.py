@@ -8,9 +8,13 @@
 # Dependencies:
 #   - FastAPI, app.services
 # Public Exports:
-#   - N/A
+#   - auth.router
 # Database/Table: N/A
 # Related Modules: docs/Enterprise notebooklm openapi.yaml
-# Important Notes: Phase 1.1 — empty; business routers added from GĐ 1.2+.
-#   Maps to "routers/" in architecture rules (folder name: api/).
+# Important Notes: Maps to "routers/" in architecture rules (folder name: api/).
 # =============================================================================
+
+from app.api.auth import router as auth_router
+from app.api.workspaces import router as workspaces_router
+
+__all__ = ["auth_router", "workspaces_router"]

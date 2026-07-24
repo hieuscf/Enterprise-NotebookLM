@@ -6,9 +6,9 @@
 # Responsibilities:
 #   - Create and configure the FastAPI app instance
 #   - Wire structlog request logging and OpenTelemetry instrumentation (FR13)
-#   - Expose health/readiness endpoints for Docker and orchestration
+#   - Mount auth routers (FR12) and health/readiness probes
 # Dependencies:
-#   - FastAPI, app.core.logging, app.core.middleware, app.core.tracing, app.db
+#   - FastAPI, app.api.auth, app.core.*, app.db
 # Public Exports:
 #   - app
 # Database/Table: N/A
@@ -20,6 +20,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.auth import router as auth_router
+from app.api.workspaces import router as workspaces_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestLoggingMiddleware
@@ -49,12 +51,14 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Enterprise NotebookLM API",
     version="0.1.0",
-    description="Backend API System — Phase 1.1 infrastructure skeleton.",
+    description="Backend API System — Phase 1.2 Auth & RBAC foundation.",
     lifespan=lifespan,
 )
 
 app.add_middleware(RequestLoggingMiddleware)
 instrument_app(app)
+app.include_router(auth_router)
+app.include_router(workspaces_router)
 
 
 @app.get("/health", tags=["Health"])

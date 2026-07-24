@@ -12,6 +12,11 @@ redis>=5.2.0,<6.0.0
 httpx>=0.28.0,<1.0.0
 python-multipart>=0.0.17,<1.0.0
 structlog>=24.4.0,<26.0.0
+email-validator>=2.2.0,<3.0.0
+
+# Auth (FR12)
+PyJWT>=2.9.0,<3.0.0
+argon2-cffi>=23.1.0,<26.0.0
 
 # Observability (FR13 foundation)
 opentelemetry-api>=1.28.0,<2.0.0
