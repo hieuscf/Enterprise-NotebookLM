@@ -113,7 +113,7 @@ async def test_under_limit_allows_requests(
             new=AsyncMock(return_value=RoleName.viewer),
         ),
         patch(
-            "app.api.workspaces.WorkspaceRepository.get_by_id",
+            "app.services.workspaces.WorkspaceRepository.get_by_id",
             new=AsyncMock(return_value=FakeWorkspace()),
         ),
     ):
@@ -147,7 +147,7 @@ async def test_over_limit_returns_429_with_retry_after(
             new=AsyncMock(return_value=RoleName.viewer),
         ),
         patch(
-            "app.api.workspaces.WorkspaceRepository.get_by_id",
+            "app.services.workspaces.WorkspaceRepository.get_by_id",
             new=AsyncMock(return_value=FakeWorkspace()),
         ),
     ):
@@ -193,7 +193,7 @@ async def test_reset_window_allows_again(
             new=AsyncMock(return_value=RoleName.viewer),
         ),
         patch(
-            "app.api.workspaces.WorkspaceRepository.get_by_id",
+            "app.services.workspaces.WorkspaceRepository.get_by_id",
             new=AsyncMock(return_value=FakeWorkspace()),
         ),
     ):

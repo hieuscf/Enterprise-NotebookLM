@@ -23,23 +23,27 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline OCR→Chunk→Embedding→Index. Chưa có Chat/AI.
 
 ### 1.1 Hạ tầng & DevOps
+
 - [x] [BE] Khởi tạo repo monorepo (backend FastAPI, frontend Next.js), Docker Compose (Postgres, Redis, Qdrant/pgvector, Elasticsearch, MinIO, Neo4j).
 - [x] [BE] Cấu hình `.env`/secrets, CI cơ bản (lint + test on push).
 - [x] [BE] Alembic (migration) khởi tạo schema PostgreSQL từ `database-design-enterprise-notebooklm.md` (toàn bộ bảng v2: `workspaces`, `users`, `roles`, `workspace_members`, `documents`, `document_versions`, `embeddings`, `pipeline_runs`, `pipeline_stage_logs`, `entities`, `entity_relations`, `topics`, `topic_chunks`, `document_chunks`, `query_cache`, `chat_sessions`, `chat_messages`, `message_generations`, `retrievals`, `citations`, `search_history`, `query_logs`, `summaries`, `extractions`, `comparisons`, `comparison_documents`, `reports`, `report_items`).
 - [x] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry hoặc tương đương) — nền cho FR13.
 
 ### 1.2 Auth & RBAC (FR12)
-- [ ] [BE] `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me` (OAuth2/JWT).
-- [ ] [BE] Middleware RBAC theo Workspace (role admin/editor/viewer) — API Gateway/Auth Middleware component.
-- [ ] [BE] Rate limiting theo Workspace (Redis token bucket) — chuẩn bị cho FR12.
-- [ ] [FE] Trang Login, lưu token, route guard theo role.
+
+- [x] [BE] `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me` (OAuth2/JWT).
+- [x] [BE] Middleware RBAC theo Workspace (role admin/editor/viewer) — API Gateway/Auth Middleware component.
+- [x] [BE] Rate limiting theo Workspace (Redis token bucket) — chuẩn bị cho FR12.
+- [x] [FE] Trang Login, lưu token, route guard theo role.
 
 ### 1.3 Workspace Management (FR1, UC1)
+
 - [ ] [BE] CRUD Workspace: `GET/POST /workspaces`, `GET/PATCH/DELETE /workspaces/{id}`.
 - [ ] [BE] Quản lý thành viên: `GET/POST /workspaces/{id}/members`, `PATCH/DELETE /workspaces/{id}/members/{userId}`.
 - [ ] [FE] UI danh sách Workspace, tạo/sửa/xoá, quản lý thành viên + phân quyền (UC10).
 
 ### 1.4 Document Ingestion & Versioning (FR2, UC2)
+
 - [ ] [BE] `POST /workspaces/{id}/documents` — upload, tạo `documents` + `document_versions` (version_number=1), lưu file vào MinIO, tính `checksum_sha256`, enqueue Celery job.
 - [ ] [BE] `POST /.../versions` (upload lại) — tạo version mới, giữ lịch sử, cập nhật `current_version_id`.
 - [ ] [BE] `POST /.../versions/{versionId}/set-current` — rollback/chuyển version.
@@ -63,6 +67,7 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng sequence diagram Complex Query), tối ưu số lần gọi LLM (FR11).
 
 ### 2.1 Intelligent Search (FR3, UC3, Module 3)
+
 - [ ] [AI] Hybrid Retrieval: Vector Search (Qdrant/pgvector) + BM25 (Elasticsearch) + Knowledge Graph query (Neo4j).
 - [ ] [AI] Re-ranking Layer bằng cross-encoder (non-LLM).
 - [ ] [BE] `POST /workspaces/{id}/search` — trả kết quả đã rerank, ghi `search_history` (query_text, filters, results_count, clicked_document_id).
@@ -70,6 +75,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [FE] UI tìm kiếm ngữ nghĩa: input query, filter (file_type, thời gian, tag), hiển thị kết quả kèm score/rank.
 
 ### 2.2 Query Router (FR11, UC12)
+
 - [ ] [AI] Rule-based classifier cho 4 nhóm: cache_hit / metadata / factoid / complex (không dùng LLM).
 - [ ] [BE] Bảng `query_cache`: check `query_hash` (exact) trước, sau đó so cosine similarity qua `query_embedding_id`.
 - [ ] [AI] Nhánh Metadata Query — map câu hỏi liệt kê/thống kê sang query DB trực tiếp (0 LLM call).
@@ -78,6 +84,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [BE] Job dọn cache hết hạn theo `expires_at` (cron/Celery beat).
 
 ### 2.3 AI Chat + Prompt Construction (FR4, FR10, UC4, UC9)
+
 - [ ] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory).
 - [ ] [BE] `GET .../sessions/{id}/messages`.
 - [ ] [BE] `POST .../sessions/{id}/messages` — nhận câu hỏi, ghi `chat_messages` (role=user), gọi Query Router.
@@ -87,6 +94,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [FE] UI Chat: gửi câu hỏi, hiển thị streaming answer, hiển thị session list (tiếp tục ngữ cảnh cũ).
 
 ### 2.4 Citation & Verification (FR5, UC4, UC11)
+
 - [ ] [AI] Ghi toàn bộ ứng viên retrieval vào bảng `retrievals` (chunk_id/entity_id, retrieval_method, score, rank) trước khi lọc.
 - [ ] [AI] Citation Verification Layer — đối chiếu deterministic `citation_ids` LLM trả về với `retrievals` đã lưu; set `verified=true/false`.
 - [ ] [AI] Cơ chế fallback "không đủ căn cứ trong tài liệu" khi citation không hợp lệ, hoặc sinh lại tối đa 1 lần.
@@ -100,27 +108,32 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 ## GIAI ĐOẠN 3 (P2 + P3) — Modules mở rộng, bảo mật, quan sát, hoàn thiện
 
 ### 3.1 AI Summary (FR6, UC5, Module 6)
+
 - [ ] [AI] Sinh tóm tắt 4 dạng: short/detailed/by_topic/bullet_points.
 - [ ] [BE] `GET/POST /workspaces/{id}/documents/{id}/summaries`, `GET/DELETE /workspaces/{id}/summaries/{id}`.
 - [ ] [FE] UI chọn dạng tóm tắt, hiển thị kết quả, lưu lịch sử.
 
 ### 3.2 Information Extraction (FR7, UC6, Module 7)
+
 - [ ] [AI] Trích xuất table/figures/entities/timeline → JSON có cấu trúc.
 - [ ] [BE] `GET/POST .../documents/{id}/extractions`, `GET/DELETE /workspaces/{id}/extractions/{id}`.
 - [ ] [FE] UI hiển thị kết quả dạng bảng/JSON, export.
 
 ### 3.3 Multi-document Comparison (FR8, UC7, Module 8)
+
 - [ ] [AI] So sánh ≥2 tài liệu (similarities/differences), tuỳ chọn `focus`.
 - [ ] [BE] `GET/POST /workspaces/{id}/comparisons`, `GET/DELETE .../comparisons/{id}`.
 - [ ] [FE] UI chọn ≥2 tài liệu, hiển thị bảng so sánh highlight giống/khác.
 
 ### 3.4 Report Generation & Export (FR9, UC8, Module 9)
+
 - [ ] [BE] `POST /workspaces/{id}/reports` — gộp summary/extraction/comparison/chat_session theo `items[]`, xử lý bất đồng bộ.
 - [ ] [BE] Sinh file PDF/DOCX/Markdown (dùng thư viện tương ứng theo từng format).
 - [ ] [BE] `GET .../reports/{id}`, `GET .../reports/{id}/export`, `DELETE .../reports/{id}`.
 - [ ] [FE] UI tạo báo cáo (chọn nguồn), theo dõi trạng thái, tải file.
 
 ### 3.5 Observability & Reliability (FR13, UC11 phần hệ thống)
+
 - [ ] [BE] `GET /admin/workspaces/{id}/query-logs` (filter route_type).
 - [ ] [BE] `GET /admin/workspaces/{id}/pipeline-runs` (filter status).
 - [ ] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type).
@@ -128,11 +141,13 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [FE] Dashboard admin cơ bản: cost summary, pipeline status, query log.
 
 ### 3.6 Bảo mật & Đa tenant (hoàn thiện FR12)
+
 - [ ] [BE] Rà soát RBAC toàn bộ endpoint theo `workspaceId` (không rò rỉ chéo workspace).
 - [ ] [BE] Mã hoá dữ liệu khi truyền (TLS Nginx + internal TLS/overlay network nếu multi-node) và tại chỗ (encryption at rest cho MinIO/Postgres).
 - [ ] [BE] Audit lại rate limiting theo Workspace dưới tải thực tế.
 
 ### 3.7 Kiểm thử & Chất lượng
+
 - [ ] [BE][AI] Unit test cho Query Router (đúng phân loại 4 nhóm), Citation Verification (đúng verified true/false).
 - [ ] [BE] Integration test luồng end-to-end: upload → pipeline → chat → citation → report.
 - [ ] [FE] Test UI luồng chính (Chat, Upload, Search, Report) — Playwright/Cypress.
@@ -140,6 +155,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [BE] Load test Query Router + Chat endpoint (đảm bảo cache giảm tải LLM đúng như bảng so sánh mục 6.3 tài liệu gốc).
 
 ### 3.8 Triển khai (Deployment)
+
 - [ ] [BE] Tách container `backend-api` và `celery-worker` để scale độc lập.
 - [ ] [BE] Docker Compose/K8s manifest production, healthcheck, autoscaling cơ bản cho pipeline worker.
 - [ ] [BE] Backup/restore Postgres + MinIO.
@@ -151,18 +167,17 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 
 ## Phụ lục — Ánh xạ nhanh Module ↔ FR ↔ Bảng DB chính
 
-| Module | FR | Bảng DB chính | Endpoint chính |
-|---|---|---|---|
-| 1. Workspace | FR1 | workspaces, workspace_members, roles | `/workspaces/*` |
-| 2. Knowledge Base | FR2 | documents, document_versions, pipeline_runs, pipeline_stage_logs, embeddings, entities, topics, document_chunks | `/workspaces/{id}/documents/*` |
-| 3. Search | FR3 | search_history | `/workspaces/{id}/search` |
-| 4. Chat | FR4, FR10 | chat_sessions, chat_messages, message_generations | `/workspaces/{id}/chat/*` |
-| 5. Citation | FR5 | retrievals, citations | `/chat/messages/{id}/citations` |
-| 6. Summary | FR6 | summaries | `/documents/{id}/summaries` |
-| 7. Extraction | FR7 | extractions | `/documents/{id}/extractions` |
-| 8. Comparison | FR8 | comparisons, comparison_documents | `/workspaces/{id}/comparisons` |
-| 9. Report | FR9 | reports, report_items | `/workspaces/{id}/reports` |
-| 10. Query Router | FR11 | query_cache, query_logs | (internal, xuyên suốt Chat) |
-| Auth/RBAC | FR12 | users | `/auth/*` |
-| Observability | FR13 | query_logs, pipeline_stage_logs, message_generations | `/admin/workspaces/{id}/*` |
-
+| Module            | FR        | Bảng DB chính                                                                                                   | Endpoint chính                  |
+| ----------------- | --------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| 1. Workspace      | FR1       | workspaces, workspace_members, roles                                                                            | `/workspaces/*`                 |
+| 2. Knowledge Base | FR2       | documents, document_versions, pipeline_runs, pipeline_stage_logs, embeddings, entities, topics, document_chunks | `/workspaces/{id}/documents/*`  |
+| 3. Search         | FR3       | search_history                                                                                                  | `/workspaces/{id}/search`       |
+| 4. Chat           | FR4, FR10 | chat_sessions, chat_messages, message_generations                                                               | `/workspaces/{id}/chat/*`       |
+| 5. Citation       | FR5       | retrievals, citations                                                                                           | `/chat/messages/{id}/citations` |
+| 6. Summary        | FR6       | summaries                                                                                                       | `/documents/{id}/summaries`     |
+| 7. Extraction     | FR7       | extractions                                                                                                     | `/documents/{id}/extractions`   |
+| 8. Comparison     | FR8       | comparisons, comparison_documents                                                                               | `/workspaces/{id}/comparisons`  |
+| 9. Report         | FR9       | reports, report_items                                                                                           | `/workspaces/{id}/reports`      |
+| 10. Query Router  | FR11      | query_cache, query_logs                                                                                         | (internal, xuyên suốt Chat)     |
+| Auth/RBAC         | FR12      | users                                                                                                           | `/auth/*`                       |
+| Observability     | FR13      | query_logs, pipeline_stage_logs, message_generations                                                            | `/admin/workspaces/{id}/*`      |

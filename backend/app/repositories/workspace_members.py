@@ -4,32 +4,44 @@
 # Layer: Repository
 # Purpose: Data access for workspace_members joined with roles.
 # Responsibilities:
-#   - List memberships (workspace_id, role name) for a user
+#   - List / resolve active memberships (deleted_at IS NULL)
+#   - Add / update / soft-delete members; count admins
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.identity
 # Public Exports:
-#   - WorkspaceMemberRepository, MembershipRow
-# Database/Table: workspace_members, roles
-# Related Modules: app.services.auth, app.dependencies.auth
-# Important Notes: Always source of truth for RBAC (do not trust JWT alone).
+#   - WorkspaceMemberRepository, MembershipRow, MemberDetailRow
+# Database/Table: workspace_members, roles, users
+# Related Modules: app.services.auth, app.services.workspaces, app.services.members
+# Important Notes:
+#   - role_id is FK → roles.id; role name comes from JOIN (OpenAPI string enum).
+#   - Soft-delete: active queries filter deleted_at IS NULL (RBAC + lists).
 # =============================================================================
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import RoleName
-from app.models.identity import Role, WorkspaceMember
+from app.models.identity import Role, User, WorkspaceMember
 
 
 @dataclass(frozen=True, slots=True)
 class MembershipRow:
     workspace_id: uuid.UUID
     role: RoleName
+
+
+@dataclass(frozen=True, slots=True)
+class MemberDetailRow:
+    user_id: uuid.UUID
+    email: str
+    role: RoleName
+    joined_at: datetime
 
 
 class WorkspaceMemberRepository:
@@ -40,7 +52,10 @@ class WorkspaceMemberRepository:
         stmt = (
             select(WorkspaceMember.workspace_id, Role.name)
             .join(Role, Role.id == WorkspaceMember.role_id)
-            .where(WorkspaceMember.user_id == user_id)
+            .where(
+                WorkspaceMember.user_id == user_id,
+                WorkspaceMember.deleted_at.is_(None),
+            )
             .order_by(WorkspaceMember.joined_at.asc())
         )
         result = await self._session.execute(stmt)
@@ -49,10 +64,11 @@ class WorkspaceMemberRepository:
     async def get_role_for_user(
         self, *, user_id: uuid.UUID, workspace_id: uuid.UUID
     ) -> RoleName | None:
-        """Return the user's role in a workspace, or None if not a member.
+        """Return the user's active role in a workspace, or None if not a member.
 
         Always query DB — do not trust JWT workspace claims (may be omitted when
-        membership count exceeds JWT_WORKSPACE_EMBED_LIMIT).
+        membership count exceeds JWT_WORKSPACE_EMBED_LIMIT). Soft-deleted rows
+        are ignored so DELETE workspace / remove-member revoke access immediately.
         """
         stmt = (
             select(Role.name)
@@ -60,8 +76,136 @@ class WorkspaceMemberRepository:
             .where(
                 WorkspaceMember.user_id == user_id,
                 WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.deleted_at.is_(None),
             )
             .limit(1)
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def list_for_workspace(self, workspace_id: uuid.UUID) -> list[MemberDetailRow]:
+        stmt = (
+            select(
+                WorkspaceMember.user_id,
+                User.email,
+                Role.name,
+                WorkspaceMember.joined_at,
+            )
+            .join(User, User.id == WorkspaceMember.user_id)
+            .join(Role, Role.id == WorkspaceMember.role_id)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.deleted_at.is_(None),
+            )
+            .order_by(WorkspaceMember.joined_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [
+            MemberDetailRow(
+                user_id=row.user_id,
+                email=row.email,
+                role=row.name,
+                joined_at=row.joined_at,
+            )
+            for row in result.all()
+        ]
+
+    async def get_active_member(
+        self, *, workspace_id: uuid.UUID, user_id: uuid.UUID
+    ) -> WorkspaceMember | None:
+        stmt = (
+            select(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == user_id,
+                WorkspaceMember.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_any_member_row(
+        self, *, workspace_id: uuid.UUID, user_id: uuid.UUID
+    ) -> WorkspaceMember | None:
+        """Active or soft-deleted row (for re-invite / 409 duplicate checks)."""
+        stmt = (
+            select(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == user_id,
+            )
+            .order_by(WorkspaceMember.joined_at.desc())
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def add_member(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID,
+        role_id: uuid.UUID,
+    ) -> WorkspaceMember:
+        member = WorkspaceMember(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            role_id=role_id,
+        )
+        self._session.add(member)
+        await self._session.flush()
+        return member
+
+    async def revive_member(
+        self,
+        member: WorkspaceMember,
+        *,
+        role_id: uuid.UUID,
+    ) -> WorkspaceMember:
+        """Re-activate a soft-deleted membership (re-invite after remove)."""
+        member.role_id = role_id
+        member.deleted_at = None
+        member.joined_at = datetime.now(UTC)
+        await self._session.flush()
+        return member
+
+    async def update_role(
+        self,
+        member: WorkspaceMember,
+        *,
+        role_id: uuid.UUID,
+    ) -> WorkspaceMember:
+        member.role_id = role_id
+        await self._session.flush()
+        return member
+
+    async def soft_delete(self, member: WorkspaceMember) -> None:
+        member.deleted_at = datetime.now(UTC)
+        await self._session.flush()
+
+    async def soft_delete_all_for_workspace(self, workspace_id: uuid.UUID) -> int:
+        """Soft-delete every active member of a workspace (used with workspace soft-delete)."""
+        stmt = (
+            update(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.deleted_at.is_(None),
+            )
+            .values(deleted_at=datetime.now(UTC))
+        )
+        result = await self._session.execute(stmt)
+        return int(result.rowcount or 0)
+
+    async def count_active_admins(self, workspace_id: uuid.UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(WorkspaceMember)
+            .join(Role, Role.id == WorkspaceMember.role_id)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.deleted_at.is_(None),
+                Role.name == RoleName.admin,
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one())

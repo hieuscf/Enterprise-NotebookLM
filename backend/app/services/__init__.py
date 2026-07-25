@@ -11,5 +11,5 @@
 #   - N/A
 # Database/Table: N/A
 # Related Modules: System_Architecture_Enterprise_NotebookLM.md
-# Important Notes: Phase 1.1 placeholder — no business logic in this phase.
+# Important Notes: WorkspaceService (FR1) lives in app.services.workspaces.
 # =============================================================================

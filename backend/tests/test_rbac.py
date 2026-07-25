@@ -168,7 +168,7 @@ async def test_get_workspace_viewer_200(
             new=AsyncMock(return_value=RoleName.viewer),
         ),
         patch(
-            "app.api.workspaces.WorkspaceRepository.get_by_id",
+            "app.services.workspaces.WorkspaceRepository.get_by_id",
             new=AsyncMock(return_value=FakeWorkspace()),
         ),
     ):
@@ -189,12 +189,37 @@ async def test_delete_workspace_admin_204(
     current_user: CurrentUser,
     workspace_id: uuid.UUID,
 ) -> None:
+    """Admin soft-deletes successfully (phase 1.3 — no longer a 204 stub)."""
     app.dependency_overrides[get_current_user] = _override_user(current_user)
 
-    with patch.object(
-        WorkspaceMemberRepository,
-        "get_role_for_user",
-        new=AsyncMock(return_value=RoleName.admin),
+    now = datetime.now(UTC)
+
+    class FakeWorkspace:
+        id = workspace_id
+        name = "Demo WS"
+        description = "rbac demo"
+        created_at = now
+        updated_at = now
+        deleted_at = None
+
+    with (
+        patch.object(
+            WorkspaceMemberRepository,
+            "get_role_for_user",
+            new=AsyncMock(return_value=RoleName.admin),
+        ),
+        patch(
+            "app.services.workspaces.WorkspaceRepository.get_by_id",
+            new=AsyncMock(return_value=FakeWorkspace()),
+        ),
+        patch(
+            "app.services.workspaces.WorkspaceRepository.soft_delete",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.workspaces.WorkspaceMemberRepository.soft_delete_all_for_workspace",
+            new=AsyncMock(return_value=1),
+        ),
     ):
         response = await client.delete(
             f"/workspaces/{workspace_id}",

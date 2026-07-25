@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +61,12 @@ class Workspace(Base):
     )
     created_at: Mapped[datetime] = created_at_col()
     updated_at: Mapped[datetime] = updated_at_col()
+    # Soft-delete (phase 1.3 extension beyond schema v2): DELETE sets deleted_at
+    # instead of removing the row so FK children (documents, chat_sessions, …)
+    # are preserved. Active lists filter deleted_at IS NULL.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
 
 class Role(Base):
@@ -73,9 +79,9 @@ class Role(Base):
 
 class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
-    __table_args__ = (
-        UniqueConstraint("workspace_id", "user_id", name="uq_workspace_members_workspace_user"),
-    )
+    # Plain UniqueConstraint replaced by partial unique index in migration
+    # a1b2c3d4e5f6 (active rows only: deleted_at IS NULL) so re-invite works.
+    __table_args__ = ()
 
     id: Mapped[uuid.UUID] = uuid_pk()
     workspace_id: Mapped[uuid.UUID] = mapped_column(
@@ -84,9 +90,16 @@ class WorkspaceMember(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    # FK → roles.id (NOT an inline ENUM). API/OpenAPI expose role as string enum
+    # via JOIN roles.name; require_workspace_role compares that RoleName value.
     role_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False
     )
     joined_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Soft-delete (phase 1.3 extension): set when member removed or workspace
+    # soft-deleted. Active RBAC queries filter deleted_at IS NULL.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )

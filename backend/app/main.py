@@ -51,7 +51,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Enterprise NotebookLM API",
     version="0.1.0",
-    description="Backend API System — Phase 1.2 Auth & RBAC foundation.",
+    description="Backend API System — Phase 1.3 Workspace Management (FR1).",
     lifespan=lifespan,
 )
 
