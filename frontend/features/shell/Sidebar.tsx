@@ -16,8 +16,9 @@
  *   - Sidebar, type SidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
- * Important Notes: Only "home" and "workspaces" are real routes today (Phase 1.3).
- *   Everything else must stay visibly disabled — never link to a page that 404s.
+ * Important Notes: Only "home", "workspaces" and "members" (when a workspaceId
+ *   is in context) are real routes today (Phase 1.3). Everything else must
+ *   stay visibly disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -47,14 +48,17 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
-export type SidebarActiveKey = "home" | "workspaces";
+export type SidebarActiveKey = "home" | "workspaces" | "members";
 
 type NavItem = {
   key?: SidebarActiveKey;
   label: string;
   icon: LucideIcon;
   href?: string;
+  /** Static badge for not-yet-built modules; ignored once `href` resolves. */
   badge?: string;
+  /** Marks the "Thành viên" item — its href depends on the current workspaceId. */
+  contextual?: "members";
 };
 
 type NavGroup = {
@@ -94,7 +98,13 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Layers,
         href: "/workspaces",
       },
-      { label: "Thành viên", icon: Users, badge: "Bước 4" },
+      {
+        key: "members",
+        label: "Thành viên",
+        icon: Users,
+        contextual: "members",
+        badge: "Chọn workspace",
+      },
       { label: "Cài đặt", icon: Settings, badge: "Sắp có" },
     ],
   },
@@ -113,11 +123,19 @@ function initialsOf(name: string): string {
 type Props = {
   active: SidebarActiveKey;
   user: User | null;
+  /** Current workspace in view (detail/members pages) — enables the contextual "Thành viên" link. */
+  workspaceId?: string | null;
   mobileOpen: boolean;
   onClose: () => void;
 };
 
-export function Sidebar({ active, user, mobileOpen, onClose }: Props) {
+export function Sidebar({
+  active,
+  user,
+  workspaceId = null,
+  mobileOpen,
+  onClose,
+}: Props) {
   return (
     <>
       {mobileOpen ? (
@@ -169,12 +187,16 @@ export function Sidebar({ active, user, mobileOpen, onClose }: Props) {
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const Icon = item.icon;
+                  const href =
+                    item.contextual === "members" && workspaceId
+                      ? `/workspaces/${workspaceId}/members`
+                      : item.href;
 
-                  if (item.href) {
+                  if (href) {
                     return (
                       <li key={item.label}>
                         <Link
-                          href={item.href}
+                          href={href}
                           onClick={onClose}
                           className={cn(
                             "flex items-center gap-3 rounded-md px-3 py-2 text-body-sm font-medium transition-colors",

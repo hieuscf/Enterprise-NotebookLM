@@ -28,8 +28,11 @@ export type {
 } from "./auth";
 
 export type {
+  AddMemberInput,
+  UpdateMemberRoleInput,
   Workspace,
   WorkspaceCreateInput,
   WorkspaceListResponse,
+  WorkspaceMember,
   WorkspaceUpdateInput,
 } from "./workspaces";

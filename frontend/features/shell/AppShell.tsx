@@ -15,7 +15,7 @@
  *   - AppShell
  * Database/Table: N/A
  * Related Modules: app/page.tsx, features/workspaces/WorkspaceListView,
- *   features/workspaces/WorkspaceDetailView
+ *   features/workspaces/WorkspaceDetailView, features/workspaces/WorkspaceMembersView
  * Important Notes: Search & notifications are visual placeholders only —
  *   no backend endpoint exists for them yet (Phase 1.3 scope is Workspaces).
  * =============================================================================
@@ -32,10 +32,12 @@ import type { User } from "@/types/auth";
 type Props = {
   active: SidebarActiveKey;
   user: User | null;
+  /** Current workspace in view — forwarded to Sidebar for the contextual "Thành viên" link. */
+  workspaceId?: string | null;
   children: React.ReactNode;
 };
 
-export function AppShell({ active, user, children }: Props) {
+export function AppShell({ active, user, workspaceId, children }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -43,6 +45,7 @@ export function AppShell({ active, user, children }: Props) {
       <Sidebar
         active={active}
         user={user}
+        workspaceId={workspaceId}
         mobileOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}
       />

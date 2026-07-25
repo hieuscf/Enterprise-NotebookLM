@@ -13,7 +13,7 @@
  * Public Exports:
  *   - WorkspaceDetailView
  * Database/Table: N/A
- * Related Modules: app/workspaces/[id]/page.tsx
+ * Related Modules: app/workspaces/[id]/page.tsx, app/workspaces/[id]/members/page.tsx
  * Important Notes: Soft-delete — row remains in DB; list hides it after reload.
  * =============================================================================
  */
@@ -23,6 +23,7 @@
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRight,
   Loader2,
   Pencil,
   Trash2,
@@ -143,7 +144,7 @@ export function WorkspaceDetailView({ workspaceId }: Props) {
   }
 
   return (
-    <AppShell active="workspaces" user={user}>
+    <AppShell active="workspaces" user={user} workspaceId={workspaceId}>
       <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-8">
         <Link
           href="/workspaces"
@@ -248,7 +249,13 @@ export function WorkspaceDetailView({ workspaceId }: Props) {
               </div>
             </dl>
 
-            <div className="mt-8 rounded-md border border-border-default bg-elevated/60 px-4 py-3">
+            <Link
+              href={`/workspaces/${workspaceId}/members`}
+              className={cn(
+                "mt-8 flex items-center justify-between gap-3 rounded-md border border-border-default",
+                "bg-elevated/60 px-4 py-3 transition-colors hover:bg-elevated",
+              )}
+            >
               <div className="flex items-start gap-3">
                 <Users className="mt-0.5 h-4 w-4 shrink-0 text-accent-primary" aria-hidden />
                 <div>
@@ -256,11 +263,15 @@ export function WorkspaceDetailView({ workspaceId }: Props) {
                     Quản lý thành viên
                   </p>
                   <p className="mt-0.5 text-body-sm text-secondary">
-                    UI thành viên + phân quyền sẽ có ở bước tiếp theo (UC10).
+                    Xem, thêm, đổi vai trò hoặc xoá thành viên workspace (UC10).
                   </p>
                 </div>
               </div>
-            </div>
+              <ArrowRight
+                className="h-4 w-4 shrink-0 text-tertiary"
+                aria-hidden
+              />
+            </Link>
           </section>
         ) : null}
       </div>

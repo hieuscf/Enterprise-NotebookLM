@@ -7,12 +7,13 @@
  * Responsibilities:
  *   - Call same-origin /api/proxy and /api/auth/* (httpOnly cookies)
  *   - On 401 from proxy, attempt /api/auth/refresh once then retry / redirect login
- *   - Workspace CRUD helpers (FR1)
+ *   - Workspace CRUD helpers (FR1) + Workspace Member helpers (UC10)
  * Dependencies:
  *   - Next.js Route Handlers under app/api
  * Public Exports:
  *   - apiFetch, authLogin, authLogout, authMe, authRefresh
  *   - listWorkspaces, getWorkspace, createWorkspace, updateWorkspace, deleteWorkspace
+ *   - listWorkspaceMembers, addWorkspaceMember, updateWorkspaceMemberRole, removeWorkspaceMember
  *   - ApiClientError, parseApiError
  * Database/Table: N/A
  * Related Modules: types/auth, types/workspaces, hooks/useAuth
@@ -24,9 +25,12 @@
 
 import type { User } from "@/types/auth";
 import type {
+  AddMemberInput,
+  UpdateMemberRoleInput,
   Workspace,
   WorkspaceCreateInput,
   WorkspaceListResponse,
+  WorkspaceMember,
   WorkspaceUpdateInput,
 } from "@/types/workspaces";
 
@@ -223,4 +227,44 @@ export async function updateWorkspace(
 
 export async function deleteWorkspace(workspaceId: string): Promise<void> {
   await apiJson<void>(`/workspaces/${workspaceId}`, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// Workspace Members (UC10)
+// ---------------------------------------------------------------------------
+
+export async function listWorkspaceMembers(
+  workspaceId: string,
+): Promise<WorkspaceMember[]> {
+  return apiJson<WorkspaceMember[]>(`/workspaces/${workspaceId}/members`);
+}
+
+export async function addWorkspaceMember(
+  workspaceId: string,
+  input: AddMemberInput,
+): Promise<WorkspaceMember> {
+  return apiJson<WorkspaceMember>(`/workspaces/${workspaceId}/members`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateWorkspaceMemberRole(
+  workspaceId: string,
+  userId: string,
+  input: UpdateMemberRoleInput,
+): Promise<WorkspaceMember> {
+  return apiJson<WorkspaceMember>(
+    `/workspaces/${workspaceId}/members/${userId}`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+}
+
+export async function removeWorkspaceMember(
+  workspaceId: string,
+  userId: string,
+): Promise<void> {
+  await apiJson<void>(`/workspaces/${workspaceId}/members/${userId}`, {
+    method: "DELETE",
+  });
 }
