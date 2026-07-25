@@ -19,3 +19,10 @@
 export type HealthResponse = {
   status: string;
 };
+
+export type {
+  AuthToken,
+  User,
+  WorkspaceMembership,
+  WorkspaceRole,
+} from "./auth";

@@ -66,3 +66,6 @@ postgres-data/
 coverage/
 .claude/
 TASKS.md
+.cursor/
+/cursor
+/docs/Enterprise_Notebook.png
