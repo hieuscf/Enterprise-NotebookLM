@@ -184,4 +184,10 @@ mark.highlight-citation {
   .bg-accent-soft {
     background-color: var(--accent-primary-soft);
   }
+  .bg-accent-secondary-soft {
+    background-color: color-mix(in srgb, var(--accent-secondary) 10%, transparent);
+  }
+  .bg-accent-tertiary-soft {
+    background-color: color-mix(in srgb, var(--accent-tertiary) 10%, transparent);
+  }
 }

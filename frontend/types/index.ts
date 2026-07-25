@@ -9,10 +9,10 @@
  * Dependencies:
  *   - docs/Enterprise notebooklm openapi.yaml
  * Public Exports:
- *   - HealthResponse
+ *   - HealthResponse, auth types, workspace types
  * Database/Table: N/A
  * Related Modules: frontend/lib/api-client.ts
- * Important Notes: Phase 1.1 skeleton — expand as OpenAPI schemas are used.
+ * Important Notes: Expand as OpenAPI schemas are used on the client.
  * =============================================================================
  */
 
@@ -26,3 +26,10 @@ export type {
   WorkspaceMembership,
   WorkspaceRole,
 } from "./auth";
+
+export type {
+  Workspace,
+  WorkspaceCreateInput,
+  WorkspaceListResponse,
+  WorkspaceUpdateInput,
+} from "./workspaces";

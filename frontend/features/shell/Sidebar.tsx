@@ -1,0 +1,241 @@
+/**
+ * =============================================================================
+ * File: Sidebar.tsx
+ * Module/Service: Web App shell
+ * Layer: UI
+ * Purpose: Persistent left navigation grouped by product area (Knowledge / AI
+ *          Tools / Management), matching the enterprise reference layout.
+ * Responsibilities:
+ *   - Render brand mark + grouped nav links
+ *   - Disable/badge nav items for modules not yet implemented (honest UI)
+ *   - Render signed-in user footer + logout
+ *   - Support mobile off-canvas drawer (controlled by AppShell)
+ * Dependencies:
+ *   - next/link, lucide-react, lib/utils
+ * Public Exports:
+ *   - Sidebar, type SidebarActiveKey
+ * Database/Table: N/A
+ * Related Modules: features/shell/AppShell.tsx
+ * Important Notes: Only "home" and "workspaces" are real routes today (Phase 1.3).
+ *   Everything else must stay visibly disabled — never link to a page that 404s.
+ * =============================================================================
+ */
+
+"use client";
+
+import {
+  FileBarChart2,
+  FileText,
+  GitCompare,
+  Hash,
+  Home,
+  Layers,
+  LogOut,
+  type LucideIcon,
+  MessageSquare,
+  Network,
+  ScrollText,
+  Search,
+  Settings,
+  Sparkles,
+  Users,
+  Wand2,
+  X,
+} from "lucide-react";
+import Link from "next/link";
+
+import { cn } from "@/lib/utils";
+import type { User } from "@/types/auth";
+
+export type SidebarActiveKey = "home" | "workspaces";
+
+type NavItem = {
+  key?: SidebarActiveKey;
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+  badge?: string;
+};
+
+type NavGroup = {
+  label?: string;
+  items: NavItem[];
+};
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [{ key: "home", label: "Tổng quan", icon: Home, href: "/" }],
+  },
+  {
+    label: "Knowledge",
+    items: [
+      { label: "Tài liệu", icon: FileText, badge: "Sắp có" },
+      { label: "Tìm kiếm", icon: Search, badge: "Sắp có" },
+      { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
+      { label: "Knowledge Graph", icon: Network, badge: "Sắp có" },
+    ],
+  },
+  {
+    label: "AI Tools",
+    items: [
+      { label: "AI Chat", icon: MessageSquare, badge: "Sắp có" },
+      { label: "Tóm tắt", icon: ScrollText, badge: "Sắp có" },
+      { label: "Trích xuất", icon: Wand2, badge: "Sắp có" },
+      { label: "So sánh", icon: GitCompare, badge: "Sắp có" },
+      { label: "Báo cáo", icon: FileBarChart2, badge: "Sắp có" },
+    ],
+  },
+  {
+    label: "Management",
+    items: [
+      {
+        key: "workspaces",
+        label: "Workspaces",
+        icon: Layers,
+        href: "/workspaces",
+      },
+      { label: "Thành viên", icon: Users, badge: "Bước 4" },
+      { label: "Cài đặt", icon: Settings, badge: "Sắp có" },
+    ],
+  },
+];
+
+function initialsOf(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "?";
+  return trimmed
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+type Props = {
+  active: SidebarActiveKey;
+  user: User | null;
+  mobileOpen: boolean;
+  onClose: () => void;
+};
+
+export function Sidebar({ active, user, mobileOpen, onClose }: Props) {
+  return (
+    <>
+      {mobileOpen ? (
+        <div
+          aria-hidden
+          onClick={onClose}
+          className="fixed inset-0 z-30 bg-slate-950/40 md:hidden"
+        />
+      ) : null}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-border-default bg-surface",
+          "transition-transform duration-200 md:static md:translate-x-0",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border-default px-4">
+          <Link href="/" className="flex min-w-0 items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent-primary-soft">
+              <Sparkles className="h-4 w-4 text-accent-primary" aria-hidden />
+            </span>
+            <span className="truncate text-h3 font-semibold text-primary">
+              NotebookLM <span className="text-secondary">Enterprise</span>
+            </span>
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Đóng menu"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-elevated md:hidden"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        </div>
+
+        <nav
+          aria-label="Điều hướng chính"
+          className="flex-1 overflow-y-auto px-3 py-4"
+        >
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.label ?? `group-${gi}`} className={gi > 0 ? "mt-5" : undefined}>
+              {group.label ? (
+                <p className="px-3 pb-1.5 text-caption font-semibold uppercase tracking-wider text-tertiary">
+                  {group.label}
+                </p>
+              ) : null}
+              <ul className="flex flex-col gap-0.5">
+                {group.items.map((item) => {
+                  const isActive = item.key === active;
+                  const Icon = item.icon;
+
+                  if (item.href) {
+                    return (
+                      <li key={item.label}>
+                        <Link
+                          href={item.href}
+                          onClick={onClose}
+                          className={cn(
+                            "flex items-center gap-3 rounded-md px-3 py-2 text-body-sm font-medium transition-colors",
+                            isActive
+                              ? "bg-accent-primary-soft text-accent-primary"
+                              : "text-secondary hover:bg-elevated hover:text-primary",
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                          <span className="truncate">{item.label}</span>
+                        </Link>
+                      </li>
+                    );
+                  }
+
+                  return (
+                    <li key={item.label}>
+                      <div
+                        aria-disabled
+                        title={`${item.label} — ${item.badge}`}
+                        className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-body-sm font-medium text-tertiary/70"
+                      >
+                        <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                        <span className="truncate">{item.label}</span>
+                        {item.badge ? (
+                          <span className="ml-auto shrink-0 rounded-full bg-elevated px-1.5 py-0.5 text-[10px] font-medium text-tertiary">
+                            {item.badge}
+                          </span>
+                        ) : null}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+
+        <div className="shrink-0 border-t border-border-default p-3">
+          <div className="flex items-center gap-2.5 rounded-md px-1 py-1.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-tertiary-soft text-body-sm font-semibold text-accent-tertiary">
+              {user ? initialsOf(user.full_name) : "?"}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-body-sm font-medium text-primary">
+                {user ? user.full_name : "Đang tải…"}
+              </p>
+              <p className="truncate text-caption text-tertiary">
+                {user ? user.email : ""}
+              </p>
+            </div>
+            <Link
+              href="/logout"
+              title="Đăng xuất"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-tertiary hover:bg-elevated hover:text-danger"
+            >
+              <LogOut className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}

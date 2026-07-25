@@ -37,7 +37,7 @@ const inputBaseClass = cn(
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const nextPath = searchParams.get("next") || "/";
+  const nextPath = searchParams.get("next") || "/workspaces";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

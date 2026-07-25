@@ -41,11 +41,23 @@ export async function POST(request: Request) {
     );
   }
 
-  const upstream = await backendFetch("/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: body.email, password: body.password }),
-  });
+  let upstream: Response;
+  try {
+    upstream = await backendFetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: body.email, password: body.password }),
+    });
+  } catch {
+    return NextResponse.json(
+      {
+        code: "backend_unreachable",
+        message:
+          "Không kết nối được backend API. Kiểm tra API_INTERNAL_BASE_URL (Compose: http://backend-api:8000).",
+      },
+      { status: 502 },
+    );
+  }
 
   const payload = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {

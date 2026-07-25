@@ -304,9 +304,12 @@ services:
     container_name: enlm-frontend
     restart: unless-stopped
     environment:
+      # Browser-facing URL (docs / rare client direct calls). Host port mapping.
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
-      # Server-side BFF → backend on Docker network (browser never sees this).
-      API_INTERNAL_BASE_URL: ${API_INTERNAL_BASE_URL:-http://backend-api:8000}
+      # BFF Route Handlers run inside this container — must use Docker DNS name,
+      # not localhost (localhost here is the frontend container itself).
+      # Do NOT interpolate from host .env (often set to localhost for local Next).
+      API_INTERNAL_BASE_URL: http://backend-api:8000
       WATCHPACK_POLLING: "true"
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
