@@ -13,7 +13,7 @@
 #   - TransientPipelineError, DataPipelineError
 # Database/Table: N/A (handlers may write via their own sessions later)
 # Related Modules: app.workers.pipeline
-# Important Notes: Steps 3–6 replace stub bodies only — do not change orchestration.
+# Important Notes: OCR stage is real (Step 3); Steps 4–6 replace remaining stubs.
 # =============================================================================
 
 from __future__ import annotations
