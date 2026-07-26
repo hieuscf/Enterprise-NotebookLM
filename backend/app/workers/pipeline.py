@@ -14,8 +14,9 @@
 # Database/Table: pipeline_runs, pipeline_stage_logs, document_versions
 # Related Modules: Document Ingestion Service, app.workers.stages
 # Important Notes:
-#   - Stage bodies are stubs in Step 2; Steps 3–6 only replace stage modules.
-#   - Workers must NOT call Anthropic/LLM Provider.
+#   - Stage bodies live in app.workers.stages.* (Steps 3–6).
+#   - After stage_indexing succeeds, this module sets pipeline_runs=completed
+#     and document_versions=ready.
 # =============================================================================
 
 from __future__ import annotations

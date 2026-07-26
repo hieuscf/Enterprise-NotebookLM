@@ -252,11 +252,10 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
     assert len(store.stage_logs) == 1
 
 
-def test_remaining_stub_handlers_are_callable() -> None:
-    """Indexing remains a stub until Step 6; graph_extraction is real."""
-    from app.workers.stages import STAGE_HANDLERS
+def test_all_stage_handlers_registered() -> None:
+    """All five STAGE_ORDER handlers are wired (no stubs left after Step 6)."""
+    from app.workers.stages import STAGE_HANDLERS, STAGE_ORDER
 
-    vid = uuid.uuid4()
-    meta = STAGE_HANDLERS[PipelineStage.indexing](vid)
-    assert isinstance(meta, dict)
-    assert meta.get("stub") is True
+    assert set(STAGE_HANDLERS) == set(STAGE_ORDER)
+    for stage in STAGE_ORDER:
+        assert callable(STAGE_HANDLERS[stage])
