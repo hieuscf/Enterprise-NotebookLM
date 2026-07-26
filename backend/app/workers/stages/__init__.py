@@ -13,7 +13,7 @@
 #   - TransientPipelineError, DataPipelineError
 # Database/Table: N/A (handlers may write via their own sessions later)
 # Related Modules: app.workers.pipeline
-# Important Notes: OCR/Chunking/Embedding are real (Steps 3–4); graph/index stubs remain.
+# Important Notes: OCR/Chunking/Embedding/Graph are real (Steps 3–5); indexing stub remains.
 # =============================================================================
 
 from __future__ import annotations

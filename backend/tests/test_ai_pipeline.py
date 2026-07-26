@@ -19,8 +19,10 @@ from __future__ import annotations
 from app.ai.chunking import run_chunking
 from app.ai.embedding import embed_texts
 from app.ai.graph_extraction import extract_graph
+from app.ai.lightrag_extraction import extract_lightrag_knowledge
 from app.ai.ocr import run_ocr_cleaning
 from app.ai.topic_extraction import extract_topics
+from app.core.config import Settings
 from app.models.enums import FileType
 
 
@@ -57,6 +59,13 @@ def test_ocr_chunk_embed_graph_topic_txt_flow() -> None:
     topics = extract_topics(chunks)
     assert len(topics.topics) >= 1
     assert any(t.level == 0 for t in topics.topics)
+
+    combined = extract_lightrag_knowledge(
+        chunks,
+        settings=Settings(graph_llm_enabled=False, anthropic_api_key=None),
+    )
+    assert combined.llm_used is False
+    assert len(combined.topics) >= 1
 
 
 def test_embedding_is_deterministic() -> None:

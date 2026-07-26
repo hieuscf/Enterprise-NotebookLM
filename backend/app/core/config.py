@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     chunk_max_tokens: int = 512
     chunk_overlap_ratio: float = 0.12
 
+    # FR2 Step 5 — Graph Extraction LLM (ONLY ingestion stage with chat LLM cost).
+    # Prefer Haiku-class: structured extraction does not need Sonnet/Opus.
+    # Default enabled=false so local/CI use heuristic fallback without API key.
+    anthropic_api_key: str | None = None
+    anthropic_api_base: str = "https://api.anthropic.com"
+    graph_llm_enabled: bool = False
+    graph_llm_model: str = "claude-3-5-haiku-latest"
+    graph_llm_max_tokens: int = 4096
+    graph_llm_max_input_chars: int = 100_000
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -6,12 +6,13 @@
 # Responsibilities:
 #   - Heuristic NER (proper nouns / acronyms) and co-occurrence relations
 # Dependencies:
-#   - re (local heuristics — Celery must not call Anthropic)
+#   - re (local heuristics — used as no-LLM fallback for graph_extraction)
 # Public Exports:
 #   - ExtractedEntity, ExtractedRelation, extract_graph
 # Database/Table: entities, entity_relations (persisted by worker)
 # Related Modules: app.workers.pipeline (stage_graph_extraction), neo4j_graph
-# Important Notes: LightRAG dual-level — this is Low-Level (Entities) branch.
+# Important Notes: LightRAG dual-level — this is Low-Level (Entities) heuristic branch
+#   used when GRAPH_LLM_ENABLED=false / no API key. Real LLM path is lightrag_extraction.
 # =============================================================================
 
 from __future__ import annotations

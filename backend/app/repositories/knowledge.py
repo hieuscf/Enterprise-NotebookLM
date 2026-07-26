@@ -39,6 +39,7 @@ class KnowledgeSyncRepository:
 
     def clear_version_artifacts(self, document_version_id: uuid.UUID) -> None:
         """Remove prior chunk/entity/topic rows for a re-processed version."""
+        self.clear_version_graph_artifacts(document_version_id)
         chunk_ids = list(
             self._session.scalars(
                 select(DocumentChunk.id).where(
@@ -47,8 +48,50 @@ class KnowledgeSyncRepository:
             ).all()
         )
         if chunk_ids:
-            self._session.execute(delete(TopicChunk).where(TopicChunk.chunk_id.in_(chunk_ids)))
             self._session.execute(delete(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids)))
+        self._session.flush()
+
+    def clear_version_graph_artifacts(self, document_version_id: uuid.UUID) -> None:
+        """Remove entities/topics for a version without deleting document_chunks.
+
+        Used by ``graph_extraction`` re-runs after chunks already exist.
+        """
+        chunk_ids = list(
+            self._session.scalars(
+                select(DocumentChunk.id).where(
+                    DocumentChunk.document_version_id == document_version_id
+                )
+            ).all()
+        )
+        topic_ids: list[uuid.UUID] = []
+        if chunk_ids:
+            topic_ids = list(
+                self._session.scalars(
+                    select(TopicChunk.topic_id).where(TopicChunk.chunk_id.in_(chunk_ids)).distinct()
+                ).all()
+            )
+            self._session.execute(delete(TopicChunk).where(TopicChunk.chunk_id.in_(chunk_ids)))
+
+        if topic_ids:
+            # Drop topics that no longer link to any chunk.
+            still_linked = set(
+                self._session.scalars(
+                    select(TopicChunk.topic_id).where(TopicChunk.topic_id.in_(topic_ids)).distinct()
+                ).all()
+            )
+            orphan_topics = [tid for tid in topic_ids if tid not in still_linked]
+            if orphan_topics:
+                emb_ids = list(
+                    self._session.scalars(
+                        select(Topic.embedding_id).where(
+                            Topic.id.in_(orphan_topics),
+                            Topic.embedding_id.is_not(None),
+                        )
+                    ).all()
+                )
+                self._session.execute(delete(Topic).where(Topic.id.in_(orphan_topics)))
+                if emb_ids:
+                    self._session.execute(delete(Embedding).where(Embedding.id.in_(emb_ids)))
 
         entity_ids = list(
             self._session.scalars(

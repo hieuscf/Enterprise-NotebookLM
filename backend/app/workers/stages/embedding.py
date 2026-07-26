@@ -82,7 +82,8 @@ def stage_embedding(document_version_id: UUID) -> dict[str, Any]:
             raise DataPipelineError("Embedding provider returned unexpected vector count")
 
         try:
-            qdrant.delete_by_document_version(document_version_id)
+            # Only remove chunk vectors — preserve topic embeddings (kind=topic).
+            qdrant.delete_by_document_version(document_version_id, kind="chunk")
         except Exception as exc:
             raise TransientPipelineError(f"Qdrant delete failed: {exc}") from exc
 
@@ -97,6 +98,7 @@ def stage_embedding(document_version_id: UUID) -> dict[str, Any]:
                         # Shared collection: filter retrieval by workspace_id.
                         "workspace_id": str(document.workspace_id),
                         "document_version_id": str(document_version_id),
+                        "kind": "chunk",
                         "chunk_id": str(chunk.id),
                         "chunk_index": chunk.chunk_index,
                         "page_number": chunk.page_number,

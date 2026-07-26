@@ -85,19 +85,35 @@ class QdrantStoreAdapter:
         )
         return len(points)
 
-    def delete_by_document_version(self, document_version_id: UUID) -> None:
+    def delete_by_document_version(
+        self,
+        document_version_id: UUID,
+        *,
+        kind: str | None = None,
+    ) -> None:
+        """Delete points for a version; optionally restrict by payload ``kind``.
+
+        Use ``kind="chunk"`` when re-embedding so topic vectors (kind=topic)
+        written by graph_extraction are preserved.
+        """
         self.ensure_collection()
+        must: list[qmodels.FieldCondition] = [
+            qmodels.FieldCondition(
+                key="document_version_id",
+                match=qmodels.MatchValue(value=str(document_version_id)),
+            )
+        ]
+        if kind is not None:
+            must.append(
+                qmodels.FieldCondition(
+                    key="kind",
+                    match=qmodels.MatchValue(value=kind),
+                )
+            )
         self._client.delete(
             collection_name=self._collection,
             points_selector=qmodels.FilterSelector(
-                filter=qmodels.Filter(
-                    must=[
-                        qmodels.FieldCondition(
-                            key="document_version_id",
-                            match=qmodels.MatchValue(value=str(document_version_id)),
-                        )
-                    ]
-                )
+                filter=qmodels.Filter(must=must)
             ),
         )
 

@@ -223,6 +223,8 @@ def test_stage_embedding_batch_updates_embedding_id(monkeypatch: pytest.MonkeyPa
     payload = qdrant.upsert_chunk_vectors.call_args.args[0][0]["payload"]
     assert payload["workspace_id"] == str(workspace_id)
     assert payload["section"] == "S"
+    assert payload["kind"] == "chunk"
+    qdrant.delete_by_document_version.assert_called_once_with(version_id, kind="chunk")
 
 
 def test_stage_chunking_fails_without_ocr_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
