@@ -2,14 +2,14 @@
 # File: __init__.py
 # Module/Service: Pipeline Worker
 # Layer: Worker
-# Purpose: Package marker for Celery tasks (OCR, chunking, embedding, indexing).
+# Purpose: Package marker for Celery document pipeline tasks (FR2).
 # Responsibilities:
-#   - Host async pipeline stage tasks (stage_* naming)
+#   - Host run_pipeline orchestration (OCR→Index)
 # Dependencies:
-#   - Celery, Redis
+#   - Celery, Redis, app.ai.*, app.adapters.*
 # Public Exports:
 #   - N/A
 # Database/Table: pipeline_runs, pipeline_stage_logs
 # Related Modules: Document Ingestion Service (FR2, FR13)
-# Important Notes: Phase 1.1 placeholder — workers must NOT call LLM Provider.
+# Important Notes: Workers must NOT call LLM Provider (Anthropic).
 # =============================================================================

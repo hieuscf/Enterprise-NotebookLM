@@ -38,23 +38,23 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 
 ### 1.3 Workspace Management (FR1, UC1)
 
-- [ ] [BE] CRUD Workspace: `GET/POST /workspaces`, `GET/PATCH/DELETE /workspaces/{id}`.
-- [ ] [BE] Quản lý thành viên: `GET/POST /workspaces/{id}/members`, `PATCH/DELETE /workspaces/{id}/members/{userId}`.
-- [ ] [FE] UI danh sách Workspace, tạo/sửa/xoá, quản lý thành viên + phân quyền (UC10).
+- [x] [BE] CRUD Workspace: `GET/POST /workspaces`, `GET/PATCH/DELETE /workspaces/{id}`.
+- [x] [BE] Quản lý thành viên: `GET/POST /workspaces/{id}/members`, `PATCH/DELETE /workspaces/{id}/members/{userId}`.
+- [x] [FE] UI danh sách Workspace, tạo/sửa/xoá, quản lý thành viên + phân quyền (UC10).
 
 ### 1.4 Document Ingestion & Versioning (FR2, UC2)
 
-- [ ] [BE] `POST /workspaces/{id}/documents` — upload, tạo `documents` + `document_versions` (version_number=1), lưu file vào MinIO, tính `checksum_sha256`, enqueue Celery job.
-- [ ] [BE] `POST /.../versions` (upload lại) — tạo version mới, giữ lịch sử, cập nhật `current_version_id`.
-- [ ] [BE] `POST /.../versions/{versionId}/set-current` — rollback/chuyển version.
-- [ ] [BE] `GET /.../versions/{versionId}/pipeline-status` — trả `pipeline_runs` + `pipeline_stage_logs`.
-- [ ] [AI] Pipeline Worker (Celery task) — OCR & Cleaning (Unstructured.io/PyMuPDF/python-docx/openpyxl) cho PDF/DOCX/XLSX/PPTX/TXT.
-- [ ] [AI] Chunking strategy (theo cấu trúc tài liệu, giữ metadata trang/section).
-- [ ] [AI] Embedding tài liệu (model theo `embeddings.model_name`), ghi `document_chunks.embedding_id`.
-- [ ] [AI] Graph Extraction (entities + entity_relations) qua LightRAG — Low-Level Retrieval.
-- [ ] [AI] Topic extraction phân cấp (`topics.parent_topic_id`, `level`) — High-Level Retrieval.
-- [ ] [BE] Index BM25 vào Elasticsearch song song với indexing vector.
-- [ ] [BE] Ghi `pipeline_stage_logs` cho từng bước (status, duration_ms, metadata, error_message) — FR13.
+- [x] [BE] `POST /workspaces/{id}/documents` — upload, tạo `documents` + `document_versions` (version_number=1), lưu file vào MinIO, tính `checksum_sha256`, enqueue Celery job.
+- [x] [BE] `POST /.../versions` (upload lại) — tạo version mới, giữ lịch sử, cập nhật `current_version_id`.
+- [x] [BE] `POST /.../versions/{versionId}/set-current` — rollback/chuyển version.
+- [x] [BE] `GET /.../versions/{versionId}/pipeline-status` — trả `pipeline_runs` + `pipeline_stage_logs`.
+- [x] [AI] Pipeline Worker (Celery task) — OCR & Cleaning (Unstructured.io/PyMuPDF/python-docx/openpyxl) cho PDF/DOCX/XLSX/PPTX/TXT.
+- [x] [AI] Chunking strategy (theo cấu trúc tài liệu, giữ metadata trang/section).
+- [x] [AI] Embedding tài liệu (model theo `embeddings.model_name`), ghi `document_chunks.embedding_id`.
+- [x] [AI] Graph Extraction (entities + entity_relations) qua LightRAG — Low-Level Retrieval.
+- [x] [AI] Topic extraction phân cấp (`topics.parent_topic_id`, `level`) — High-Level Retrieval.
+- [x] [BE] Index BM25 vào Elasticsearch song song với indexing vector.
+- [x] [BE] Ghi `pipeline_stage_logs` cho từng bước (status, duration_ms, metadata, error_message) — FR13.
 - [ ] [FE] UI Upload tài liệu (drag-drop, hiển thị trạng thái pipeline realtime theo `status`).
 - [ ] [FE] UI danh sách tài liệu + lịch sử version + nút "Set as current"/rollback.
 

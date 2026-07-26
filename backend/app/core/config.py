@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://notebooklm:notebooklm@localhost:5432/notebooklm"
     redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
 
     # FR12 — JWT (override JWT_SECRET_KEY in every non-local environment)
     jwt_secret_key: str = Field(
@@ -50,6 +52,27 @@ class Settings(BaseSettings):
     # FR12 — API-layer rate limit per workspace (not LLM call quota; see phase 2).
     rate_limit_requests_per_minute: int = 60
     rate_limit_window_seconds: int = 60
+
+    # FR2 — Object storage / search / vector / graph adapters
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "notebooklm-documents"
+    minio_secure: bool = False
+
+    vector_store: str = "qdrant"
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "document_chunks"
+    elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_index: str = "document_chunks"
+
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "notebooklm"
+
+    # Local deterministic embedding (no Anthropic from Celery — architecture rule)
+    embedding_model_name: str = "local-hash-embedding-v1"
+    embedding_dimension: int = 384
 
 
 @lru_cache

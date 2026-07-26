@@ -2,17 +2,17 @@
 # File: celery_app.py
 # Module/Service: Pipeline Worker
 # Layer: Worker
-# Purpose: Celery application skeleton for document pipeline workers.
+# Purpose: Celery application for document pipeline workers (FR2).
 # Responsibilities:
-#   - Define Celery app instance bound to Redis broker/backend
-#   - Autodiscover tasks under app.workers (tasks added in later phases)
+#   - Define Celery app bound to Redis broker/backend
+#   - Include pipeline task module
 # Dependencies:
 #   - Celery, Redis (via Docker Compose)
 # Public Exports:
 #   - celery_app
 # Database/Table: N/A
-# Related Modules: app.workers, docker-compose.yml
-# Important Notes: Phase 1.1 skeleton only — no pipeline stage tasks yet.
+# Related Modules: app.workers.pipeline, docker-compose.yml
+# Important Notes: Workers must NOT call LLM Provider (Anthropic).
 # =============================================================================
 
 import os
@@ -26,7 +26,7 @@ celery_app = Celery(
     "enterprise_notebooklm",
     broker=BROKER_URL,
     backend=RESULT_BACKEND,
-    include=[],
+    include=["app.workers.pipeline"],
 )
 
 celery_app.conf.update(
@@ -36,4 +36,6 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
 )
