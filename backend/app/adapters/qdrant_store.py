@@ -2,17 +2,20 @@
 # File: qdrant_store.py
 # Module/Service: Pipeline Worker / Vector Retrieval
 # Layer: Adapter
-# Purpose: Qdrant client for chunk vector upsert (FR2 Dual-level Vector Index).
+# Purpose: Qdrant client for chunk vectors — shared collection + workspace filter.
 # Responsibilities:
-#   - Ensure collection exists with configured dimension
-#   - Upsert chunk vectors; return vector point ids for embeddings.vector_id
+#   - Ensure one shared collection; upsert points with workspace_id payload
+#   - Batch upsert; delete by document_version_id
 # Dependencies:
 #   - qdrant-client, app.core.config.Settings
 # Public Exports:
 #   - QdrantStoreAdapter, get_qdrant_store
 # Database/Table: embeddings (metadata only — vectors live here)
-# Related Modules: app.ai.embedding, app.workers.pipeline
-# Important Notes: embeddings table must not store raw vectors.
+# Related Modules: app.workers.stages.embedding
+# Important Notes:
+#   - Ops choice: ONE shared collection (settings.qdrant_collection) for all
+#     workspaces. Multi-tenant isolation uses payload.workspace_id filter at
+#     query time — simpler than per-workspace collections.
 # =============================================================================
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from app.core.config import Settings, get_settings
 
 class QdrantStoreAdapter:
     def __init__(self, settings: Settings) -> None:
+        # Shared collection for all tenants; filter by payload.workspace_id.
         self._collection = settings.qdrant_collection
         self._dimension = settings.embedding_dimension
         self._client = QdrantClient(url=settings.qdrant_url, prefer_grpc=False)
@@ -52,18 +56,34 @@ class QdrantStoreAdapter:
         vector: list[float],
         payload: dict[str, Any],
     ) -> str:
+        self.upsert_chunk_vectors(
+            [
+                {"point_id": point_id, "vector": vector, "payload": payload},
+            ]
+        )
+        return point_id
+
+    def upsert_chunk_vectors(self, points: list[dict[str, Any]]) -> int:
+        """Batch upsert points into the shared collection.
+
+        Each item: ``{point_id, vector, payload}``. Payload SHOULD include
+        ``workspace_id`` and ``document_version_id`` for tenant filters.
+        """
+        if not points:
+            return 0
         self.ensure_collection()
         self._client.upsert(
             collection_name=self._collection,
             points=[
                 qmodels.PointStruct(
-                    id=point_id,
-                    vector=vector,
-                    payload=payload,
+                    id=p["point_id"],
+                    vector=p["vector"],
+                    payload=p.get("payload") or {},
                 )
+                for p in points
             ],
         )
-        return point_id
+        return len(points)
 
     def delete_by_document_version(self, document_version_id: UUID) -> None:
         self.ensure_collection()

@@ -37,6 +37,8 @@ Mỗi lần upload lại/thay thế tài liệu → 1 version mới, giữ nguy�
 
 > **Tác động dây chuyền:** `document_chunks` và `entities` giờ trỏ theo `document_version_id`/`source_version_id` thay vì `document_id` — đảm bảo khi tài liệu được cập nhật, chunk/entity cũ của version trước không bị lẫn với version mới, và có thể rollback hoặc so sánh giữa các version.
 
+**`document_chunks` (cột chính):** `document_version_id`, `embedding_id`, `chunk_index`, `content`, `page_number`, `section` (VARCHAR, nullable — heading/sheet/slide từ OCR), `token_count`, `created_at`.
+
 ---
 
 ## 2. RAG Pipeline & Observability (mới)

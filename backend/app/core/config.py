@@ -70,9 +70,14 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "notebooklm"
 
-    # Local deterministic embedding (no Anthropic from Celery — architecture rule)
+    # Local / remote embedding (Celery may call Voyage/OpenAI embed APIs; not Anthropic LLM)
     embedding_model_name: str = "local-hash-embedding-v1"
     embedding_dimension: int = 384
+    embedding_provider: str = "local"  # local | openai | voyage
+    embedding_api_key: str | None = None
+    embedding_batch_size: int = 32
+    chunk_max_tokens: int = 512
+    chunk_overlap_ratio: float = 0.12
 
 
 @lru_cache

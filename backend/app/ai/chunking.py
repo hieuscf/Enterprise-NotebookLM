@@ -65,22 +65,20 @@ class TextChunk:
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count with a lightweight heuristic.
+    """Estimate token count (tiktoken when installed, else char heuristic).
 
-    Uses ~4 characters per token, which is adequate for budget checks in the
-    ingestion pipeline. Replace this function body with tiktoken (or another
-    encoder) when exact counts are required — callers should import
-    ``estimate_tokens``, not re-implement the ratio.
+    Delegates to ``app.ai.tokens.count_tokens`` so chunking and embedding share
+    one tokenizer policy.
 
     Args:
         text: Input string.
 
     Returns:
-        Estimated token count, at least 1 for non-empty text and 0 for empty.
+        Token count (0 for empty text).
     """
-    if not text:
-        return 0
-    return max(1, len(text) // 4)
+    from app.ai.tokens import count_tokens
+
+    return count_tokens(text)
 
 
 # Keep private alias used historically inside this module / tests.
@@ -709,3 +707,131 @@ def _make_chunk(
         token_count=estimate_tokens(content),
         metadata=meta,
     )
+
+
+# ---------------------------------------------------------------------------
+# Segment-based API (OCR Step 3 → Chunking Step 4)
+# ---------------------------------------------------------------------------
+
+
+def run_chunking_from_segments(
+    segments: list[Any],
+    *,
+    max_tokens: int = 512,
+    overlap_ratio: float = 0.12,
+) -> list[TextChunk]:
+    """Chunk OCR segments while preserving section/page boundaries.
+
+    Strategy:
+        1. Never merge segments across different ``section`` values
+           (heading / sheet / slide boundaries from OCR).
+        2. Within a section, pack consecutive segments until ``max_tokens``.
+        3. Oversized segments are split with token overlap (``overlap_ratio``).
+
+    Args:
+        segments: ``OcrSegment`` instances or dicts with keys
+            ``text``, ``page_number``, ``section``, ``order_index``.
+        max_tokens: Soft token budget per chunk.
+        overlap_ratio: Token overlap between windows of a split segment (0.10–0.15).
+
+    Returns:
+        Ordered ``TextChunk`` list ready for ``document_chunks`` persistence.
+    """
+    from app.ai.tokens import count_tokens, split_text_by_tokens
+
+    normalized = [_normalize_segment(s) for s in segments]
+    normalized = [s for s in normalized if s["text"].strip()]
+    if not normalized:
+        return []
+
+    chunks: list[TextChunk] = []
+    buffer: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        nonlocal buffer
+        if not buffer:
+            return
+        content = "\n\n".join(s["text"] for s in buffer)
+        first = buffer[0]
+        chunks.append(
+            _make_chunk(
+                chunk_index=len(chunks),
+                content=content,
+                page_number=first["page_number"],
+                section=first["section"],
+                heading=first["section"],
+                paragraph_index=first["order_index"],
+                start_offset=0,
+                end_offset=len(content),
+            )
+        )
+        buffer = []
+
+    for seg in normalized:
+        tok = count_tokens(seg["text"])
+        if tok > max_tokens:
+            flush()
+            for piece in split_text_by_tokens(
+                seg["text"],
+                max_tokens=max_tokens,
+                overlap_ratio=overlap_ratio,
+            ):
+                chunks.append(
+                    _make_chunk(
+                        chunk_index=len(chunks),
+                        content=piece,
+                        page_number=seg["page_number"],
+                        section=seg["section"],
+                        heading=seg["section"],
+                        paragraph_index=seg["order_index"],
+                        start_offset=0,
+                        end_offset=len(piece),
+                    )
+                )
+            continue
+
+        if not buffer:
+            buffer.append(seg)
+            continue
+
+        same_section = buffer[-1]["section"] == seg["section"]
+        projected = count_tokens("\n\n".join(s["text"] for s in buffer) + "\n\n" + seg["text"])
+        if same_section and projected <= max_tokens:
+            buffer.append(seg)
+        else:
+            flush()
+            buffer.append(seg)
+
+    flush()
+    return [
+        TextChunk(
+            chunk_index=i,
+            content=c.content,
+            page_number=c.page_number,
+            section=c.section,
+            heading=c.heading,
+            paragraph_index=c.paragraph_index,
+            start_offset=c.start_offset,
+            end_offset=c.end_offset,
+            token_count=c.token_count,
+            metadata=c.metadata,
+        )
+        for i, c in enumerate(chunks)
+    ]
+
+
+def _normalize_segment(segment: Any) -> dict[str, Any]:
+    """Accept OcrSegment dataclass or artifact dict."""
+    if isinstance(segment, dict):
+        return {
+            "text": str(segment.get("text") or "").strip(),
+            "page_number": segment.get("page_number"),
+            "section": segment.get("section"),
+            "order_index": int(segment.get("order_index") or 0),
+        }
+    return {
+        "text": str(getattr(segment, "text", "") or "").strip(),
+        "page_number": getattr(segment, "page_number", None),
+        "section": getattr(segment, "section", None),
+        "order_index": int(getattr(segment, "order_index", 0) or 0),
+    }

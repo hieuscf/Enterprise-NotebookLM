@@ -73,12 +73,14 @@ class KnowledgeSyncRepository:
         content: str,
         page_number: int | None,
         token_count: int | None,
+        section: str | None = None,
     ) -> DocumentChunk:
         chunk = DocumentChunk(
             document_version_id=document_version_id,
             chunk_index=chunk_index,
             content=content,
             page_number=page_number,
+            section=section,
             token_count=token_count,
         )
         self._session.add(chunk)

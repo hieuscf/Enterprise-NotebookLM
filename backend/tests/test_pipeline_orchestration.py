@@ -253,13 +253,11 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
 
 
 def test_remaining_stub_handlers_are_callable() -> None:
-    """Chunking+ later stages remain stubs until Steps 4–6."""
+    """Graph + indexing remain stubs until later steps."""
     from app.workers.stages import STAGE_HANDLERS
 
     vid = uuid.uuid4()
-    for stage in STAGE_ORDER:
-        if stage == PipelineStage.ocr_cleaning:
-            continue
+    for stage in (PipelineStage.graph_extraction, PipelineStage.indexing):
         meta = STAGE_HANDLERS[stage](vid)
         assert isinstance(meta, dict)
         assert meta.get("stub") is True
