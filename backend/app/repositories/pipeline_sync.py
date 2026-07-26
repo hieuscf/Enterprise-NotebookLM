@@ -54,6 +54,12 @@ class PipelineSyncRepository:
         run.completed_at = datetime.now(UTC)
         self._session.flush()
 
+    def increment_retry_count(self, run: PipelineRun) -> int:
+        """Bump retry_count for transient Celery retries; return new value."""
+        run.retry_count = int(run.retry_count or 0) + 1
+        self._session.flush()
+        return run.retry_count
+
     def set_version_status(
         self,
         version: DocumentVersion,

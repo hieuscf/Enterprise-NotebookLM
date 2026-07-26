@@ -4,9 +4,9 @@
 # Layer: Worker
 # Purpose: Package marker for Celery document pipeline tasks (FR2).
 # Responsibilities:
-#   - Host run_pipeline orchestration (OCR→Index)
+#   - Host run_pipeline orchestration; stages live under app.workers.stages
 # Dependencies:
-#   - Celery, Redis, app.ai.*, app.adapters.*
+#   - Celery, Redis, app.workers.stages
 # Public Exports:
 #   - N/A
 # Database/Table: pipeline_runs, pipeline_stage_logs
