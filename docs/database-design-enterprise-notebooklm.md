@@ -30,14 +30,25 @@ Mỗi lần upload lại/thay thế tài liệu → 1 version mới, giữ nguy�
 | storage_path    | VARCHAR                             | Đường dẫn MinIO/S3 của version này                                        |
 | file_size_bytes | BIGINT                              |                                                                           |
 | checksum_sha256 | VARCHAR                             | Phát hiện file trùng/không đổi nội dung → tránh re-index không cần thiết  |
-| page_count      | INT                                 |                                                                           |
+| page_count      | INT                                 | PDF/PPTX/XLSX: số trang/slide/sheet vật lý. **DOCX: số section logic** (theo heading), không phải số trang in Word. TXT: thường = 1. |
+
 | status          | ENUM('processing','ready','failed') |                                                                           |
 | is_current      | BOOLEAN                             | Đánh dấu version đang active (đồng bộ với `documents.current_version_id`) |
 | created_at      | TIMESTAMP                           |                                                                           |
 
 > **Tác động dây chuyền:** `document_chunks` và `entities` giờ trỏ theo `document_version_id`/`source_version_id` thay vì `document_id` — đảm bảo khi tài liệu được cập nhật, chunk/entity cũ của version trước không bị lẫn với version mới, và có thể rollback hoặc so sánh giữa các version.
 
-**`document_chunks` (cột chính):** `document_version_id`, `embedding_id`, `chunk_index`, `content`, `page_number`, `section` (VARCHAR, nullable — heading/sheet/slide từ OCR), `token_count`, `created_at`.
+**`document_chunks` (cột chính):** `document_version_id`, `embedding_id`, `chunk_index`, `content`, `page_number` (INT NULL — trang/slide/sheet vật lý), `section_index` (INT NULL — mục logic 1-based, chủ yếu DOCX), `section` (VARCHAR, nullable — heading/sheet/slide title từ OCR), `token_count`, `created_at`.
+
+**Rule vị trí (Citation / FR5):** đúng một trong hai locator có giá trị theo `file_type` của document (trừ TXT có thể cả hai NULL):
+
+| file_type | `page_number` | `section_index` |
+|-----------|---------------|-----------------|
+| PDF / PPTX / XLSX | có giá trị | NULL |
+| DOCX | NULL | có giá trị |
+| TXT | NULL (thường) | NULL (thường) |
+
+Không tự suy ra field còn lại từ field kia. Entity extraction **không** cần cột vị trí riêng — định vị citation đi qua `retrievals.chunk_id` → `document_chunks`.
 
 ---
 

@@ -27,6 +27,8 @@ export type {
   WorkspaceRole,
 } from "./auth";
 
+export type { Citation, ContentLocation } from "./citations";
+
 export type {
   AddMemberInput,
   UpdateMemberRoleInput,

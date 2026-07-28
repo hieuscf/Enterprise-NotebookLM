@@ -66,12 +66,18 @@ def stage_ocr_cleaning(document_version_id: UUID) -> dict[str, Any]:
         # Parser crashes on corrupt binaries are data errors, not retries.
         raise DataPipelineError(f"OCR parse error ({file_type.value}): {exc}") from exc
 
+    metrics = result.metrics
     artifact_payload = {
         "document_version_id": str(document_version_id),
         "file_type": file_type.value,
         "page_count": result.page_count,
         "char_count": result.char_count,
-        "segment_count": len(result.segments),
+        "segment_count": metrics.segment_count,
+        "heading_count": metrics.heading_count,
+        "table_count": metrics.table_count,
+        "unmerged_table_candidates": metrics.unmerged_table_candidates,
+        "used_image_ocr": metrics.used_image_ocr,
+        "languages_detected": metrics.languages_detected,
         "segments": [_segment_to_dict(s) for s in result.segments],
     }
     try:
@@ -91,7 +97,12 @@ def stage_ocr_cleaning(document_version_id: UUID) -> dict[str, Any]:
         "document_version_id": str(document_version_id),
         "file_type": file_type.value,
         "page_count": result.page_count,
-        "segment_count": len(result.segments),
+        "segment_count": metrics.segment_count,
+        "heading_count": metrics.heading_count,
+        "table_count": metrics.table_count,
+        "unmerged_table_candidates": metrics.unmerged_table_candidates,
+        "used_image_ocr": metrics.used_image_ocr,
+        "languages_detected": metrics.languages_detected,
         "char_count": result.char_count,
         "output_bytes": output_bytes,
         "artifact_key": artifact_key,
@@ -131,9 +142,24 @@ def _download_bytes(storage: MinioStorageAdapter, storage_path: str) -> bytes:
 
 
 def _segment_to_dict(segment: OcrSegment) -> dict[str, Any]:
-    return {
+    """Serialize segment core fields plus optional layout metadata."""
+    payload: dict[str, Any] = {
         "text": segment.text,
         "page_number": segment.page_number,
         "section": segment.section,
         "order_index": segment.order_index,
     }
+    optional = {
+        "heading_level": segment.heading_level,
+        "block_type": segment.block_type,
+        "bbox": list(segment.bbox) if segment.bbox is not None else None,
+        "language": segment.language,
+        "font_size": segment.font_size,
+        "font_name": segment.font_name,
+        "is_bold": segment.is_bold,
+        "section_index": segment.section_index,
+    }
+    for key, value in optional.items():
+        if value is not None:
+            payload[key] = value
+    return payload

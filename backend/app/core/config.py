@@ -89,6 +89,21 @@ class Settings(BaseSettings):
     graph_llm_max_tokens: int = 4096
     graph_llm_max_input_chars: int = 100_000
 
+    # FR2 Step 3 — OCR language detection + optional scanned-PDF image OCR (P3)
+    ocr_language_detection_enabled: bool = True
+    ocr_language_detect_per_segment: bool = False  # doc-level default keeps overhead << 10%
+    ocr_language_min_chars: int = 40
+    ocr_language_timeout_seconds: float = 0.25
+    enable_image_ocr: bool = False  # ENABLE_IMAGE_OCR — scanned PDF via Tesseract
+    image_ocr_dpi: int = 200
+    image_ocr_max_pages: int = 50
+    image_ocr_timeout_seconds: int = 30
+    image_ocr_lang: str = "eng+vie"
+    # Optional absolute path to tesseract.exe (Windows default auto-detected if empty)
+    tesseract_cmd: str | None = None
+    # Optional TESSDATA_PREFIX override (folder containing *.traineddata)
+    tessdata_prefix: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

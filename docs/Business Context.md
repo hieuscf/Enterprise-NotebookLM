@@ -95,7 +95,8 @@ _(Ghi chú: tài liệu gốc chưa xác định rõ ràng giới hạn phạm v
 
 ### FR5 — Citation
 
-- Gắn kèm trích dẫn nguồn (đoạn văn bản, trang, tài liệu gốc) cho mỗi câu trả lời.
+- Gắn kèm trích dẫn nguồn (đoạn văn bản, vị trí trong tài liệu gốc, tài liệu gốc) cho mỗi câu trả lời.
+- **Convention hiển thị vị trí:** PDF / PPTX / XLSX dùng ``page_number`` → UI hiển thị "Trang X"; DOCX dùng ``section_index`` (+ ``section``/heading) → UI hiển thị "Mục X" / "Phần X" (không dùng "Trang X"). TXT hoặc thiếu locator → chỉ hiện snippet + tên tài liệu.
 - Cho phép highlight trực tiếp trên tài liệu.
 - Citation Verification Layer kiểm tra xác định (deterministic) từng citation id trước khi trả kết quả; từ chối hoặc trả "không đủ căn cứ" nếu không hợp lệ.
 

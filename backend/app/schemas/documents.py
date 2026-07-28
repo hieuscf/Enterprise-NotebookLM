@@ -48,7 +48,13 @@ class DocumentVersionResponse(BaseModel):
     version_number: int
     file_size_bytes: int
     checksum_sha256: str
-    page_count: int | None = None
+    page_count: int | None = Field(
+        default=None,
+        description=(
+            "Physical page/slide/sheet count for PDF/PPTX/XLSX. "
+            "For DOCX: logical section count (by heading), not printed Word pages."
+        ),
+    )
     status: Literal["processing", "ready", "failed"]
     is_current: bool
     created_at: datetime

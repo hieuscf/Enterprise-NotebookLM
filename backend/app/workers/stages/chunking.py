@@ -5,7 +5,8 @@
 # Purpose: Structure-aware chunking from OCR segments → document_chunks (FR2 Step 4).
 # Responsibilities:
 #   - Load OCR artifact; chunk by section then token windows with overlap
-#   - Persist document_chunks (page_number, section, token_count)
+#   - Persist document_chunks (page_number XOR section_index, section, token_count)
+
 # Dependencies:
 #   - app.ai.chunking, app.workers.artifacts, MinIO, KnowledgeSyncRepository
 # Public Exports:
@@ -87,15 +88,22 @@ def stage_chunking(document_version_id: UUID) -> dict[str, Any]:
                 chunk_index=tc.chunk_index,
                 content=tc.content,
                 page_number=tc.page_number,
+                section_index=tc.section_index,
                 section=tc.section,
                 token_count=tc.token_count,
             )
 
         total_chars = sum(len(c.content) for c in text_chunks)
         avg_chars = total_chars / len(text_chunks)
+        chunks_with_page = sum(1 for c in text_chunks if c.page_number is not None)
+        chunks_with_section_index = sum(
+            1 for c in text_chunks if c.section_index is not None
+        )
         return {
             "document_version_id": str(document_version_id),
             "chunk_count": len(text_chunks),
+            "chunks_with_page_number": chunks_with_page,
+            "chunks_with_section_index": chunks_with_section_index,
             "avg_chars": round(avg_chars, 2),
             "avg_tokens": round(
                 sum(c.token_count for c in text_chunks) / len(text_chunks),

@@ -75,7 +75,14 @@ class DocumentVersion(Base):
     storage_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        doc=(
+            "Physical page/slide/sheet count for PDF/PPTX/XLSX. "
+            "For DOCX: logical section count (by heading), not printed pages."
+        ),
+    )
     status: Mapped[DocumentVersionStatus] = mapped_column(
         document_version_status_enum,
         nullable=False,

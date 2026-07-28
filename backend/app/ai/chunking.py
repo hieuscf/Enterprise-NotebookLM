@@ -37,14 +37,15 @@ class TextChunk:
     Attributes:
         chunk_index: Zero-based order within the version pipeline run.
         content: Chunk text (never mid-sentence unless fixed-window fallback).
-        page_number: Primary page for display / highlight (first page covered).
+        page_number: Physical page/slide/sheet when available (PDF/PPTX/XLSX).
+        section_index: Logical 1-based section for DOCX (None for physical formats).
         section: Coarse section label from OCR when available.
         heading: Nearest heading that scopes this chunk.
         paragraph_index: First source paragraph index included in the chunk.
         start_offset: Inclusive char offset in the concatenated document text.
         end_offset: Exclusive char offset in the concatenated document text.
         token_count: Lightweight token estimate (replaceable via ``estimate_tokens``).
-        metadata: Citation/highlight helpers ``{page, heading, section, paragraph}``.
+        metadata: Citation helpers ``{page, section_index, heading, section, paragraph}``.
     """
 
     chunk_index: int
@@ -57,6 +58,7 @@ class TextChunk:
     end_offset: int
     token_count: int
     metadata: dict[str, Any]
+    section_index: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -687,10 +689,12 @@ def _make_chunk(
     paragraph_index: int | None,
     start_offset: int,
     end_offset: int,
+    section_index: int | None = None,
 ) -> TextChunk:
     """Construct a ``TextChunk`` with normalized metadata."""
     meta = {
         "page": page_number,
+        "section_index": section_index,
         "heading": heading,
         "section": section,
         "paragraph": paragraph_index,
@@ -706,6 +710,7 @@ def _make_chunk(
         end_offset=end_offset,
         token_count=estimate_tokens(content),
         metadata=meta,
+        section_index=section_index,
     )
 
 
@@ -730,12 +735,13 @@ def run_chunking_from_segments(
 
     Args:
         segments: ``OcrSegment`` instances or dicts with keys
-            ``text``, ``page_number``, ``section``, ``order_index``.
+            ``text``, ``page_number``, ``section``, ``section_index``, ``order_index``.
         max_tokens: Soft token budget per chunk.
         overlap_ratio: Token overlap between windows of a split segment (0.10–0.15).
 
     Returns:
         Ordered ``TextChunk`` list ready for ``document_chunks`` persistence.
+        Copies ``page_number`` / ``section_index`` as-is (does not invent the other).
     """
     from app.ai.tokens import count_tokens, split_text_by_tokens
 
@@ -758,6 +764,7 @@ def run_chunking_from_segments(
                 chunk_index=len(chunks),
                 content=content,
                 page_number=first["page_number"],
+                section_index=first["section_index"],
                 section=first["section"],
                 heading=first["section"],
                 paragraph_index=first["order_index"],
@@ -781,6 +788,7 @@ def run_chunking_from_segments(
                         chunk_index=len(chunks),
                         content=piece,
                         page_number=seg["page_number"],
+                        section_index=seg["section_index"],
                         section=seg["section"],
                         heading=seg["section"],
                         paragraph_index=seg["order_index"],
@@ -794,7 +802,10 @@ def run_chunking_from_segments(
             buffer.append(seg)
             continue
 
-        same_section = buffer[-1]["section"] == seg["section"]
+        same_section = (
+            buffer[-1]["section"] == seg["section"]
+            and buffer[-1]["section_index"] == seg["section_index"]
+        )
         projected = count_tokens("\n\n".join(s["text"] for s in buffer) + "\n\n" + seg["text"])
         if same_section and projected <= max_tokens:
             buffer.append(seg)
@@ -815,6 +826,7 @@ def run_chunking_from_segments(
             end_offset=c.end_offset,
             token_count=c.token_count,
             metadata=c.metadata,
+            section_index=c.section_index,
         )
         for i, c in enumerate(chunks)
     ]
@@ -823,15 +835,19 @@ def run_chunking_from_segments(
 def _normalize_segment(segment: Any) -> dict[str, Any]:
     """Accept OcrSegment dataclass or artifact dict."""
     if isinstance(segment, dict):
+        section_index = segment.get("section_index")
         return {
             "text": str(segment.get("text") or "").strip(),
             "page_number": segment.get("page_number"),
             "section": segment.get("section"),
+            "section_index": int(section_index) if section_index is not None else None,
             "order_index": int(segment.get("order_index") or 0),
         }
+    section_index = getattr(segment, "section_index", None)
     return {
         "text": str(getattr(segment, "text", "") or "").strip(),
         "page_number": getattr(segment, "page_number", None),
         "section": getattr(segment, "section", None),
+        "section_index": int(section_index) if section_index is not None else None,
         "order_index": int(getattr(segment, "order_index", 0) or 0),
     }

@@ -102,6 +102,7 @@ def stage_embedding(document_version_id: UUID) -> dict[str, Any]:
                         "chunk_id": str(chunk.id),
                         "chunk_index": chunk.chunk_index,
                         "page_number": chunk.page_number,
+                        "section_index": chunk.section_index,
                         "section": chunk.section,
                     },
                 }

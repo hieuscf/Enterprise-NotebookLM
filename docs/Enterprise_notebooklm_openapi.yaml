@@ -1007,7 +1007,12 @@ components:
         version_number: { type: integer }
         file_size_bytes: { type: integer }
         checksum_sha256: { type: string }
-        page_count: { type: integer }
+        page_count:
+          type: integer
+          nullable: true
+          description: >
+            Physical page/slide/sheet count for PDF/PPTX/XLSX.
+            For DOCX: logical section count (by heading), not printed Word pages.
         status: { type: string, enum: [processing, ready, failed] }
         is_current: { type: boolean }
         created_at: { type: string, format: date-time }
@@ -1056,6 +1061,9 @@ components:
                 enum: [vector, bm25, knowledge_graph, rerank]
               score: { type: number, format: float }
               rank: { type: integer }
+              location:
+                $ref: "#/components/schemas/ContentLocation"
+                nullable: true
 
     SearchHistoryItem:
       type: object
@@ -1107,6 +1115,20 @@ components:
           type: string
           enum: [stop, length, content_filter, tool_calls]
 
+    ContentLocation:
+      type: object
+      description: >
+        Vị trí nội dung trong tài liệu gốc. Đúng 1 trong 2 field có giá trị tuỳ file_type
+        (PDF/PPTX/XLSX dùng page_number; DOCX dùng section_index).
+        UI: page_number → "Trang X"; section_index → "Mục X" (+ section_title nếu có).
+      properties:
+        page_number: { type: integer, nullable: true }
+        section_index: { type: integer, nullable: true }
+        section_title:
+          type: string
+          nullable: true
+          description: Tên heading gần nhất, dùng cho DOCX
+
     Citation:
       type: object
       properties:
@@ -1117,6 +1139,9 @@ components:
         text_snippet: { type: string }
         verified: { type: boolean }
         order_index: { type: integer }
+        location:
+          $ref: "#/components/schemas/ContentLocation"
+          nullable: true
 
     Summary:
       type: object

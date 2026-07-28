@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "echo \"No frontend unit tests yet (Phase 1.1 skeleton)\""
+    "test": "node scripts/test-content-location.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

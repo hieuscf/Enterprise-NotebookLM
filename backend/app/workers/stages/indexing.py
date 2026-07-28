@@ -65,6 +65,7 @@ def stage_indexing(document_version_id: UUID) -> dict[str, Any]:
                 "workspace_id": str(document.workspace_id),
                 "content": c.content,
                 "page_number": c.page_number,
+                "section_index": c.section_index,
                 "section": c.section,
                 "chunk_index": c.chunk_index,
             }

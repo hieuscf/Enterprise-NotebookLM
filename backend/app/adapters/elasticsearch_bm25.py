@@ -36,6 +36,7 @@ _INDEX_MAPPINGS: dict[str, Any] = {
         "workspace_id": {"type": "keyword"},
         "content": {"type": "text"},
         "page_number": {"type": "integer"},
+        "section_index": {"type": "integer"},
         "section": {"type": "keyword"},
         "chunk_index": {"type": "integer"},
     }
@@ -65,7 +66,7 @@ class ElasticsearchBm25Adapter:
         """Bulk-index chunk documents. ``_id`` = ``chunk_id`` for idempotent upserts.
 
         Each doc SHOULD include: chunk_id, document_version_id, workspace_id,
-        content, page_number, section, chunk_index.
+        content, page_number, section_index, section, chunk_index.
         """
         if not docs:
             return 0
@@ -80,6 +81,7 @@ class ElasticsearchBm25Adapter:
                     "workspace_id": str(doc["workspace_id"]),
                     "content": doc.get("content") or "",
                     "page_number": doc.get("page_number"),
+                    "section_index": doc.get("section_index"),
                     "section": doc.get("section"),
                     "chunk_index": doc.get("chunk_index"),
                 },

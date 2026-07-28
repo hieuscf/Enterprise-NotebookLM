@@ -14,6 +14,7 @@
 # Related Modules: database-design-enterprise-notebooklm.md §3, §8; ERD
 # Important Notes: Chunks/entities point at document_version_id/source_version_id.
 #   Vectors live in Qdrant/pgvector — embeddings table stores metadata only.
+#   Location: page_number (PDF/PPTX/XLSX) XOR section_index (DOCX); see FR5.
 # =============================================================================
 
 import uuid
@@ -56,6 +57,7 @@ class DocumentChunk(Base):
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     section: Mapped[str | None] = mapped_column(String(512), nullable=True)
     token_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = created_at_col()

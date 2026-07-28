@@ -243,8 +243,10 @@ def _to_text_chunk(chunk: DocumentChunk) -> TextChunk:
         token_count=chunk.token_count or 0,
         metadata={
             "page": chunk.page_number,
+            "section_index": chunk.section_index,
             "section": chunk.section,
             "heading": chunk.section,
             "paragraph": None,
         },
+        section_index=chunk.section_index,
     )
