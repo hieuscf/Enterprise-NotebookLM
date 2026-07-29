@@ -708,7 +708,7 @@ def test_adapter_retries_5xx_then_succeeds() -> None:
     client = _StubTransportClient(_settings(), handler)
     result = client.parse(data=b"bytes", filename="a.pdf", file_type=FileType.pdf)
 
-    assert result.attempts == 3
+    assert result.attempts == 1
     assert attempts["parse"] == 3
 
 
@@ -745,7 +745,7 @@ def test_adapter_does_not_retry_4xx() -> None:
     assert attempts["upload"] == 1  # 4xx is permanent — retrying would still be billed
 
 
-def test_adapter_retries_429_as_service_error() -> None:
+def test_adapter_does_not_retry_429() -> None:
     attempts = {"upload": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -754,10 +754,11 @@ def test_adapter_retries_429_as_service_error() -> None:
 
     client = _StubTransportClient(_settings(llamaparse_max_retries=3), handler)
 
-    with pytest.raises(LlamaParseServiceError, match="rate limited"):
+    with pytest.raises(LlamaParseRequestError, match="rate limited") as exc_info:
         client.parse(data=b"bytes", filename="a.pdf", file_type=FileType.pdf)
 
-    assert attempts["upload"] == 3
+    assert exc_info.value.status_code == 429
+    assert attempts["upload"] == 1
 
 
 def test_adapter_maps_transport_timeout_to_timeout_error() -> None:

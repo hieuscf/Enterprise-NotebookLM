@@ -35,6 +35,7 @@ from uuid import UUID
 from minio.error import S3Error
 
 from app.adapters.llamaparse import (
+    LlamaParseCircuitOpenError,
     LlamaParseClient,
     LlamaParseError,
     LlamaParseRequestError,
@@ -140,6 +141,8 @@ class LlamaParseDocumentParser:
         )
         try:
             result = self._client.parse(data=data, filename=filename, file_type=file_type)
+        except LlamaParseCircuitOpenError as exc:
+            raise DataPipelineError("LlamaParse circuit breaker open") from exc
         except LlamaParseTimeoutError as exc:
             raise DataPipelineError(
                 f"LlamaParse timed out after {self._settings.llamaparse_max_retries} attempt(s) "

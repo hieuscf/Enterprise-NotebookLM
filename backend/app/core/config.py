@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     llamaparse_base_url: str = "https://api.cloud.llamaindex.ai"
     llamaparse_timeout_seconds: int = 120
     llamaparse_max_retries: int = 3
+    llamaparse_retry_min_wait: float = 1.0
+    llamaparse_retry_max_wait: float = 30.0
+    llamaparse_cb_failure_threshold: int = 5
+    llamaparse_cb_reset_timeout: int = 60
+    llamaparse_cb_success_threshold: int = 1
     # fast tier cannot return markdown/items — keep cost_effective or higher.
     llamaparse_tier: Literal[
         "cost_effective",
