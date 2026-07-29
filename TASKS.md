@@ -8,14 +8,14 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ## Trạng thái triển khai (cập nhật 2026-07-29)
 
-**Baseline code hiện tại:** schema + pipeline **v2** (OCR local → section-aware chunking → embed → LightRAG graph/topics → BM25). Auth, Workspace, Document API backend, hạ tầng Docker/CI đã xong.
+**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline ingestion vẫn dùng handler v2 interim (OCR local) mapped sang stage enum v3 (`document_understanding`, `hierarchical_chunking`). Auth, Workspace, Document API backend, hạ tầng Docker/CI đã xong.
 
 **Chênh lệch so với tài liệu v3 (cần migration trước GĐ2):**
 
 | Hạng mục | v2 (đã có) | v3 (mục tiêu) |
 |---|---|---|
-| Schema DB | 28 bảng, enum stage `ocr_cleaning`/`chunking` | Thêm `agent_events`; cột `parser`, `markdown_storage_path`, `layout_metadata`; chunk phân cấp; `retrieval_pass`, `confidence_*` |
-| Pipeline ingestion | PyMuPDF/python-docx/openpyxl OCR local | LlamaParse → Markdown + Layout + Metadata |
+| Schema DB | 29 bảng v3 (enum stage mới, agent_events, cột LlamaParse/confidence) | Pipeline worker chưa gọi LlamaParse / cleaning_normalize |
+| Pipeline ingestion | Handler OCR local → stage `document_understanding` / `hierarchical_chunking` | LlamaParse API + stage `cleaning_normalize` |
 | Chunking | Section + token window (`section_index`) | Hierarchical (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`) |
 | Chat / Search | Chưa triển khai | Query Router + Confidence Engine + Agents (FR14) |
 
@@ -43,7 +43,7 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [BE] Khởi tạo repo monorepo (backend FastAPI, frontend Next.js), Docker Compose (Postgres, Redis, Qdrant/pgvector, Elasticsearch, MinIO, Neo4j).
 - [x] [BE] Cấu hình `.env`/secrets, CI cơ bản (lint + test on push) — `.github/workflows/ci.yml`.
 - [x] [BE] Alembic schema PostgreSQL **v2** (28 bảng baseline): `6ebf6936f6c1_initial_schema_v2.py` + migrations bổ sung (`section`, `section_index`, soft-delete workspaces).
-- [ ] [DB] Migration schema **v3** từ `database-design-enterprise-notebooklm.md`: `document_versions` (`parser`, `markdown_storage_path`, `layout_metadata`); `document_chunks` (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`); `pipeline_stage_logs.stage` enum mới; `retrievals.retrieval_pass`; `message_generations` (`confidence_level`, `confidence_score`, `agent_triggered`); bảng mới `agent_events`.
+- [x] [DB] Migration schema **v3** từ `database-design-enterprise-notebooklm.md`: `document_versions` (`parser`, `markdown_storage_path`, `layout_metadata`); `document_chunks` (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`); `pipeline_stage_logs.stage` enum mới; `retrievals.retrieval_pass`; `message_generations` (`confidence_level`, `confidence_score`, `agent_triggered`); bảng mới `agent_events` — `d4e5f6a7b8c9_schema_v3_llamaparse_confidence_agents.py`.
 - [x] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry) — nền cho FR13.
 
 ### 1.2 Auth & RBAC (FR12)
@@ -79,7 +79,7 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [AI] Topic extraction phân cấp (`topics.parent_topic_id`, `level`) — High-Level Retrieval.
 - [x] [BE] Index BM25 vào Elasticsearch song song với indexing vector.
 - [x] [BE] Ghi `pipeline_stage_logs` cho từng bước (enum v2: `ocr_cleaning`, `chunking`, `embedding`, `graph_extraction`, `indexing`) — FR13.
-- [ ] [BE] Cập nhật `pipeline_stage_logs` sang enum v3 (6 stage) sau migration schema.
+- [x] [BE] Cập nhật `pipeline_stage_logs` sang enum v3 (6 stage) — migration `d4e5f6a7b8c9` + `PipelineStage` ORM.
 
 #### Frontend
 - [ ] [FE] UI Upload tài liệu (drag-drop, hiển thị trạng thái pipeline realtime theo `status`, 6 stage v3).

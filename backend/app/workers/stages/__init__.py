@@ -33,16 +33,17 @@ from app.workers.stages.ocr_cleaning import stage_ocr_cleaning
 StageHandler = Callable[[UUID], dict[str, Any]]
 
 STAGE_ORDER: tuple[PipelineStage, ...] = (
-    PipelineStage.ocr_cleaning,
-    PipelineStage.chunking,
+    PipelineStage.document_understanding,
+    PipelineStage.hierarchical_chunking,
     PipelineStage.embedding,
     PipelineStage.graph_extraction,
     PipelineStage.indexing,
 )
 
 STAGE_HANDLERS: dict[PipelineStage, StageHandler] = {
-    PipelineStage.ocr_cleaning: stage_ocr_cleaning,
-    PipelineStage.chunking: stage_chunking,
+    # v3 stage names; v2 interim handlers until LlamaParse migration (TASKS 1.4).
+    PipelineStage.document_understanding: stage_ocr_cleaning,
+    PipelineStage.hierarchical_chunking: stage_chunking,
     PipelineStage.embedding: stage_embedding,
     PipelineStage.graph_extraction: stage_graph_extraction,
     PipelineStage.indexing: stage_indexing,

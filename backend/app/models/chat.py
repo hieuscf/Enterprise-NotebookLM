@@ -19,13 +19,14 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import FinishReason, MessageRole, RouteType
+from app.models.enums import ConfidenceLevel, FinishReason, MessageRole, RouteType
 from app.models.types import (
+    confidence_level_enum,
     created_at_col,
     finish_reason_enum,
     message_role_enum,
@@ -79,6 +80,11 @@ class MessageGeneration(Base):
         unique=True,
     )
     route_type: Mapped[RouteType] = mapped_column(route_type_enum, nullable=False)
+    confidence_level: Mapped[ConfidenceLevel | None] = mapped_column(
+        confidence_level_enum, nullable=True
+    )
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    agent_triggered: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -133,7 +133,7 @@ def execute_pipeline(
                             f"Stage '{stage.value}' must return a metadata dict"
                         )
                     pipe.complete_stage(log, metadata=metadata)
-                    if stage == PipelineStage.ocr_cleaning:
+                    if stage == PipelineStage.document_understanding:
                         page_count = metadata.get("page_count")
                         if isinstance(page_count, int):
                             pipe.set_version_status(

@@ -8,12 +8,13 @@
 # Dependencies:
 #   - All app.models.* modules
 # Public Exports:
-#   - All ORM model classes (27 tables)
-# Database/Table: Full schema v2
+#   - All ORM model classes (29 tables)
+# Database/Table: Full schema v3
 # Related Modules: alembic/env.py, database-design-enterprise-notebooklm.md
 # Important Notes: Import order does not affect FK resolution (string FKs).
 # =============================================================================
 
+from app.models.agent_events import AgentEvent
 from app.models.artifacts import (
     Comparison,
     ComparisonDocument,
@@ -56,6 +57,7 @@ __all__ = [
     "ChatSession",
     "ChatMessage",
     "MessageGeneration",
+    "AgentEvent",
     "Retrieval",
     "Citation",
     "SearchHistory",

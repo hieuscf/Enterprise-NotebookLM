@@ -194,8 +194,10 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
         raise DataPipelineError("simulated embedding failure")
 
     handlers = {
-        PipelineStage.ocr_cleaning: lambda v: _ok(v, name="ocr_cleaning"),
-        PipelineStage.chunking: lambda v: _ok(v, name="chunking"),
+        PipelineStage.document_understanding: lambda v: _ok(
+            v, name="document_understanding"
+        ),
+        PipelineStage.hierarchical_chunking: lambda v: _ok(v, name="hierarchical_chunking"),
         PipelineStage.embedding: _boom,
         PipelineStage.graph_extraction: lambda v: _ok(v, name="graph_extraction"),
         PipelineStage.indexing: lambda v: _ok(v, name="indexing"),
@@ -208,7 +210,7 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
             session_factory=_session_factory_for(store),
         )
 
-    assert call_log == ["ocr_cleaning", "chunking", "embedding"]
+    assert call_log == ["document_understanding", "hierarchical_chunking", "embedding"]
     assert "graph_extraction" not in call_log
     assert "indexing" not in call_log
     assert run.status == PipelineStatus.failed
@@ -231,8 +233,8 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
         raise TransientPipelineError("qdrant timeout")
 
     handlers = {
-        PipelineStage.ocr_cleaning: _timeout,
-        PipelineStage.chunking: lambda _v: {"stub": True},
+        PipelineStage.document_understanding: _timeout,
+        PipelineStage.hierarchical_chunking: lambda _v: {"stub": True},
         PipelineStage.embedding: lambda _v: {"stub": True},
         PipelineStage.graph_extraction: lambda _v: {"stub": True},
         PipelineStage.indexing: lambda _v: {"stub": True},

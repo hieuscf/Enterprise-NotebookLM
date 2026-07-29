@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -89,4 +89,7 @@ class DocumentVersion(Base):
         server_default=DocumentVersionStatus.processing.value,
     )
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    parser: Mapped[str] = mapped_column(String(64), nullable=False, server_default="llamaparse")
+    markdown_storage_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    layout_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = created_at_col()

@@ -28,7 +28,10 @@ from app.models.types import created_at_col, retrieval_method_enum, uuid_pk
 
 class Retrieval(Base):
     __tablename__ = "retrievals"
-    __table_args__ = (Index("ix_retrievals_message_id_rank", "message_id", "rank"),)
+    __table_args__ = (
+        Index("ix_retrievals_message_id_rank", "message_id", "rank"),
+        Index("ix_retrievals_message_id_retrieval_pass", "message_id", "retrieval_pass"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     message_id: Mapped[uuid.UUID] = mapped_column(
@@ -43,6 +46,7 @@ class Retrieval(Base):
     retrieval_method: Mapped[RetrievalMethod] = mapped_column(retrieval_method_enum, nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    retrieval_pass: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     created_at: Mapped[datetime] = created_at_col()
 
 

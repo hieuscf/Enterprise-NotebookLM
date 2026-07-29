@@ -26,6 +26,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.enums import (
+    AgentTriggerReason,
+    AgentType,
+    ChunkLayoutType,
+    ConfidenceLevel,
     DocumentVersionStatus,
     ExtractionOutputFormat,
     ExtractionType,
@@ -82,6 +86,10 @@ file_type_enum = pg_enum(FileType, "file_type")
 document_version_status_enum = pg_enum(DocumentVersionStatus, "document_version_status")
 pipeline_status_enum = pg_enum(PipelineStatus, "pipeline_status")
 pipeline_stage_enum = pg_enum(PipelineStage, "pipeline_stage")
+confidence_level_enum = pg_enum(ConfidenceLevel, "confidence_level")
+agent_type_enum = pg_enum(AgentType, "agent_type")
+agent_trigger_reason_enum = pg_enum(AgentTriggerReason, "agent_trigger_reason")
+chunk_layout_type_enum = pg_enum(ChunkLayoutType, "chunk_layout_type")
 vector_store_enum = pg_enum(VectorStore, "vector_store")
 message_role_enum = pg_enum(MessageRole, "message_role")
 route_type_enum = pg_enum(RouteType, "route_type")

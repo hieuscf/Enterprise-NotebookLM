@@ -11,7 +11,7 @@
 #   - PipelineRun, PipelineStageLog
 # Database/Table: pipeline_runs, pipeline_stage_logs
 # Related Modules: database-design-enterprise-notebooklm.md §2
-# Important Notes: Stage enum is fixed to five OCR→indexing stages.
+# Important Notes: Stage enum is six v3 ingestion stages (LlamaParse pipeline).
 # =============================================================================
 
 import uuid
