@@ -14,7 +14,7 @@
 #     _is_protected_content_line, _is_boilerplate_line, _median,
 #     MEDIAN_SAMPLE_MAX, _count_unmerged_table_candidates
 # Database/Table: N/A
-# Related Modules: app.ai.ocr.*, app.workers.stages.ocr_cleaning, app.ai.chunking
+# Related Modules: app.ai.ocr.*, app.services.document_understanding
 # Important Notes: Replaces former monolithic app.ai.ocr module.
 # =============================================================================
 

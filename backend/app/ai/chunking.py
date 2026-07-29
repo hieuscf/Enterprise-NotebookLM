@@ -11,7 +11,7 @@
 # Public Exports:
 #   - TextChunk, run_chunking, estimate_tokens
 # Database/Table: document_chunks (persisted by worker; version_id attached later)
-# Related Modules: app.workers.pipeline (stage_chunking), graph/topic extraction
+# Related Modules: app.ai.hierarchical_chunking, graph/topic extraction
 # Important Notes:
 #   - Do not store document_id; document_version_id is bound in the pipeline.
 #   - Semantic overlap uses trailing sentences; char overlap only on long-sentence fallback.

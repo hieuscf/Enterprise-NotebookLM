@@ -10,7 +10,7 @@
 # Public Exports:
 #   - N/A
 # Database/Table: N/A (fakes)
-# Related Modules: app.workers.stages.chunking, embedding
+# Related Modules: app.workers.stages.embedding
 # Important Notes: Uses local hash embedding provider (no remote API in CI).
 # =============================================================================
 
@@ -29,9 +29,7 @@ from app.ai.tokens import count_tokens, split_text_by_tokens
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import DocumentVersionStatus, FileType, VectorStore
 from app.models.knowledge import DocumentChunk, Embedding
-from app.workers.stages.chunking import stage_chunking
 from app.workers.stages.embedding import stage_embedding
-from app.workers.stages.errors import DataPipelineError
 
 
 def test_split_text_by_tokens_applies_overlap() -> None:
@@ -57,80 +55,6 @@ def test_run_chunking_from_segments_preserves_section_boundary() -> None:
     for c in chunks:
         if c.section == "Intro":
             assert "Body paragraph" not in c.content
-
-
-def test_stage_chunking_writes_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
-    version_id = uuid.uuid4()
-    version = DocumentVersion(
-        id=version_id,
-        document_id=uuid.uuid4(),
-        uploaded_by=uuid.uuid4(),
-        version_number=1,
-        storage_path="workspaces/ws/documents/doc/v1/a.txt",
-        file_size_bytes=10,
-        checksum_sha256="x",
-        page_count=1,
-        status=DocumentVersionStatus.processing,
-        is_current=True,
-        created_at=datetime.now(UTC),
-    )
-    created: list[DocumentChunk] = []
-
-    class FakeKnowledge:
-        def clear_version_artifacts(self, _vid: uuid.UUID) -> None:
-            return None
-
-        def create_chunk(self, **kwargs: Any) -> DocumentChunk:
-            chunk = DocumentChunk(
-                id=uuid.uuid4(),
-                document_version_id=kwargs["document_version_id"],
-                chunk_index=kwargs["chunk_index"],
-                content=kwargs["content"],
-                page_number=kwargs.get("page_number"),
-                section=kwargs.get("section"),
-                token_count=kwargs.get("token_count"),
-                created_at=datetime.now(UTC),
-            )
-            created.append(chunk)
-            return chunk
-
-    @contextmanager
-    def _session():
-        session = MagicMock()
-        session.get.return_value = version
-        yield session
-
-    monkeypatch.setattr(
-        "app.workers.stages.chunking.load_json_artifact",
-        lambda *_a, **_k: {
-            "segments": [
-                {
-                    "text": "Enterprise NotebookLM chunk one.",
-                    "page_number": 1,
-                    "section": "Overview",
-                    "order_index": 0,
-                },
-                {
-                    "text": "Second segment under overview.",
-                    "page_number": 1,
-                    "section": "Overview",
-                    "order_index": 1,
-                },
-            ]
-        },
-    )
-    monkeypatch.setattr("app.workers.stages.chunking.get_minio_storage", lambda: MagicMock())
-    monkeypatch.setattr("app.workers.stages.chunking.get_sync_session", _session)
-    monkeypatch.setattr(
-        "app.workers.stages.chunking.KnowledgeSyncRepository",
-        lambda _s: FakeKnowledge(),
-    )
-
-    meta = stage_chunking(version_id)
-    assert meta["chunk_count"] >= 1
-    assert meta["avg_chars"] > 0
-    assert created
-    assert created[0].section == "Overview"
 
 
 def test_stage_embedding_batch_updates_embedding_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,38 +149,3 @@ def test_stage_embedding_batch_updates_embedding_id(monkeypatch: pytest.MonkeyPa
     assert payload["section"] == "S"
     assert payload["kind"] == "chunk"
     qdrant.delete_by_document_version.assert_called_once_with(version_id, kind="chunk")
-
-
-def test_stage_chunking_fails_without_ocr_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
-    version_id = uuid.uuid4()
-    version = DocumentVersion(
-        id=version_id,
-        document_id=uuid.uuid4(),
-        uploaded_by=uuid.uuid4(),
-        version_number=1,
-        storage_path="workspaces/ws/documents/doc/v1/a.txt",
-        file_size_bytes=10,
-        checksum_sha256="x",
-        page_count=1,
-        status=DocumentVersionStatus.processing,
-        is_current=True,
-        created_at=datetime.now(UTC),
-    )
-
-    @contextmanager
-    def _session():
-        session = MagicMock()
-        session.get.return_value = version
-        yield session
-
-    monkeypatch.setattr("app.workers.stages.chunking.get_sync_session", _session)
-    monkeypatch.setattr("app.workers.stages.chunking.get_minio_storage", lambda: MagicMock())
-    monkeypatch.setattr(
-        "app.workers.stages.chunking.load_json_artifact",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            DataPipelineError("OCR segments artifact missing — run ocr_cleaning before chunking")
-        ),
-    )
-
-    with pytest.raises(DataPipelineError, match="OCR segments artifact missing"):
-        stage_chunking(version_id)

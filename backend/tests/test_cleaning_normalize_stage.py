@@ -4,7 +4,7 @@
 # Layer: Worker
 # Purpose: Unit tests for stage_cleaning_normalize orchestration.
 # Responsibilities:
-#   - Load markdown from MinIO, clean, overwrite, refresh segments artifact
+#   - Load markdown from MinIO, clean, overwrite durable output
 # Dependencies:
 #   - pytest, unittest.mock
 # Public Exports:
@@ -16,11 +16,9 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -84,7 +82,7 @@ def _session_for(version: DocumentVersion, document: Document):
     yield session
 
 
-def test_stage_cleans_markdown_and_refreshes_segments() -> None:
+def test_stage_cleans_markdown_in_place() -> None:
     version, document = _rows()
     uploaded: dict[str, bytes] = {}
     storage = MagicMock()
@@ -109,12 +107,7 @@ def test_stage_cleans_markdown_and_refreshes_segments() -> None:
     assert meta["chars_before"] > meta["chars_after"]
     assert meta["lines_removed"] >= 1
     assert meta["markdown_storage_path"] == version.markdown_storage_path
-
-    segments_key = "workspaces/ws/documents/doc/v1/.pipeline/ocr_segments.json"
-    assert segments_key in uploaded
-    payload = json.loads(uploaded[segments_key].decode("utf-8"))
-    assert payload["segment_count"] == meta["segment_count"]
-    assert payload["segments"]
+    assert len(uploaded) == 1
 
 
 def test_stage_fails_without_markdown_path() -> None:

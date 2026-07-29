@@ -9,15 +9,14 @@
 #     tables, figures, word count) — no extra API call
 #   - Build ordered layout blocks + nested heading tree from the items tree,
 #     falling back to Markdown parsing when items are unavailable
-#   - Emit the interim OCR-segment shape consumed by stage_chunking
 # Dependencies:
 #   - stdlib only (no LlamaIndex / LangChain), app.models.enums.FileType
 # Public Exports:
 #   - MarkdownMetrics, LayoutBlock, LayoutAnalysis
 #   - extract_markdown_metrics, build_layout_analysis
-#   - build_layout_metadata, build_layout_artifact, build_ocr_segments
+#   - build_layout_metadata, build_layout_artifact
 # Database/Table: document_versions.layout_metadata (JSONB) — shape defined here
-# Related Modules: app.workers.stages.document_understanding, app.ai.chunking
+# Related Modules: app.workers.stages.document_understanding, hierarchical_chunking
 # Important Notes:
 #   - Pure functions only: no HTTP, no DB, no object storage — keeps the mapping
 #     unit-testable without a LlamaParse key.
@@ -624,49 +623,6 @@ def build_layout_artifact(
         "heading_tree": analysis.heading_tree,
         "blocks": [block.as_dict() for block in analysis.blocks],
     }
-
-
-def build_ocr_segments(
-    *,
-    analysis: LayoutAnalysis,
-    file_type: FileType,
-) -> list[dict[str, Any]]:
-    """Project layout blocks onto the interim OCR-segment shape.
-
-    ``stage_chunking`` (v2 interim) consumes ``ocr_segments.json``; emitting it
-    here keeps the pipeline green until Hierarchical Chunking reads
-    ``layout_metadata`` directly. Drop this once that stage lands.
-
-    Only paginated formats carry ``page_number``; DOCX/TXT get ``section_index``
-    so citations never claim a page that does not exist.
-    """
-    paginated = file_type in PAGINATED_FILE_TYPES
-    segments: list[dict[str, Any]] = []
-    section: str | None = None
-    section_index = 0
-
-    for block in analysis.blocks:
-        if block.block_type == BLOCK_HEADING:
-            section = block.text
-            section_index += 1
-            continue
-        if not block.text.strip():
-            continue
-
-        segment: dict[str, Any] = {
-            "text": block.text,
-            "page_number": block.page_number if paginated else None,
-            "section": section,
-            "order_index": len(segments),
-            "block_type": block.block_type,
-        }
-        if not paginated and section_index:
-            segment["section_index"] = section_index
-        if block.heading_path:
-            segment["heading_path"] = block.heading_path
-        segments.append(segment)
-
-    return segments
 
 
 def resolve_page_count(*, analysis: LayoutAnalysis, file_type: FileType) -> int:

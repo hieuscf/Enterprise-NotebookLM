@@ -2,7 +2,7 @@
 # File: pipeline.py
 # Module/Service: Pipeline Worker
 # Layer: Worker
-# Purpose: Celery orchestration skeleton for 5 ingestion stages (FR2 Step 2).
+# Purpose: Celery orchestration for 6 ingestion stages (FR2 Step 2).
 # Responsibilities:
 #   - run_pipeline: mark running → sequential stages → completed/failed
 #   - Per-stage pipeline_stage_logs (running → completed/failed + duration_ms)
@@ -84,7 +84,7 @@ def execute_pipeline(
     stage_handlers: Mapping[PipelineStage, StageHandler] | None = None,
     session_factory: SessionFactory = get_sync_session,
 ) -> dict[str, Any]:
-    """Run the 5-stage ingestion pipeline synchronously (orchestration only).
+    """Run the 6-stage ingestion pipeline synchronously (orchestration only).
 
     Args:
         pipeline_run_id: ``pipeline_runs.id`` created at upload time.

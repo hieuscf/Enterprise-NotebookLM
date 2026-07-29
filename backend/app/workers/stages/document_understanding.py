@@ -13,7 +13,7 @@
 # Public Exports:
 #   - stage_document_understanding, PARSER_LLAMAPARSE, PARSER_LOCAL_OCR
 # Database/Table: document_versions (parser, markdown_storage_path, layout_metadata)
-# Related Modules: app.services.document_understanding, app.workers.stages.chunking
+# Related Modules: app.services.document_understanding
 # Important Notes:
 #   - Business logic lives in DocumentUnderstandingService — this module is orchestration only.
 #   - Parser selection is explicit via Settings.document_parser (see config.py).

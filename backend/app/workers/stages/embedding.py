@@ -57,7 +57,7 @@ def stage_embedding(document_version_id: UUID) -> dict[str, Any]:
         knowledge = KnowledgeSyncRepository(session)
         chunks = knowledge.list_chunks_for_version(document_version_id)
         if not chunks:
-            raise DataPipelineError("No document_chunks found — run chunking before embedding")
+            raise DataPipelineError("No document_chunks found — run hierarchical_chunking before embedding")
 
         texts = [c.content for c in chunks]
         try:

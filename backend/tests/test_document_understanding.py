@@ -42,7 +42,6 @@ from app.adapters.llamaparse import (
 )
 from app.ai.layout import (
     build_layout_analysis,
-    build_ocr_segments,
     extract_markdown_metrics,
     resolve_page_count,
 )
@@ -188,38 +187,6 @@ def test_layout_falls_back_to_markdown_when_items_missing() -> None:
     assert any(b.block_type == "table" for b in analysis.blocks)
     assert any(b.block_type == "figure" for b in analysis.blocks)
     assert any(b.block_type == "list" for b in analysis.blocks)
-
-
-def test_segments_shim_keeps_page_number_only_for_paginated_types() -> None:
-    analysis = build_layout_analysis(
-        markdown=MARKDOWN,
-        item_pages=ITEM_PAGES,
-        reported_page_count=2,
-    )
-
-    pdf_segments = build_ocr_segments(analysis=analysis, file_type=FileType.pdf)
-    assert all(s["page_number"] is not None for s in pdf_segments)
-    assert all("section_index" not in s for s in pdf_segments)
-
-    # DOCX has no physical pages — inventing one would break Citation (FR5)
-    docx_segments = build_ocr_segments(analysis=analysis, file_type=FileType.docx)
-    assert all(s["page_number"] is None for s in docx_segments)
-    assert all(s["section_index"] >= 1 for s in docx_segments)
-
-    assert [s["order_index"] for s in pdf_segments] == list(range(len(pdf_segments)))
-    assert pdf_segments[0]["section"] == "1. Giới thiệu"
-
-
-def test_segments_shim_output_is_chunkable() -> None:
-    """The interim artifact must still satisfy stage_chunking's contract."""
-    from app.ai.chunking import run_chunking_from_segments
-
-    analysis = build_layout_analysis(markdown=MARKDOWN, item_pages=ITEM_PAGES)
-    segments = build_ocr_segments(analysis=analysis, file_type=FileType.pdf)
-    chunks = run_chunking_from_segments(segments, max_tokens=128, overlap_ratio=0.12)
-
-    assert chunks
-    assert all(c.content.strip() for c in chunks)
 
 
 def test_resolve_page_count_uses_sections_for_unpaginated_types() -> None:
@@ -391,15 +358,11 @@ def test_stage_success_persists_markdown_layout_and_metadata() -> None:
     assert meta["figure_count"] == 1
     assert meta["word_count"] > 20
     assert meta["page_count"] == 2
-    assert meta["segment_count"] >= 1
+    assert meta["block_count"] >= 1
     assert "duration_ms" in meta
 
-    # Both artifacts written; segments artifact keeps stage_chunking working
     assert meta["layout_artifact_key"].endswith(".pipeline/llamaparse_layout.json")
-    assert meta["artifact_key"].endswith(".pipeline/ocr_segments.json")
-    segments_payload = json.loads(uploaded[meta["artifact_key"]].decode("utf-8"))
-    assert segments_payload["parser"] == PARSER_LLAMAPARSE
-    assert len(segments_payload["segments"]) == meta["segment_count"]
+    assert meta["layout_artifact_key"] in uploaded
 
     layout_payload = json.loads(uploaded[meta["layout_artifact_key"]].decode("utf-8"))
     assert all("text" in block for block in layout_payload["blocks"])
@@ -477,7 +440,7 @@ def test_stage_falls_back_to_local_ocr_without_api_key() -> None:
     assert meta["llamaparse_attempts"] is None
     assert version.parser == PARSER_LOCAL_OCR
     assert version.markdown_storage_path in uploaded
-    assert meta["segment_count"] >= 1
+    assert meta["block_count"] >= 1
 
 
 def test_service_rejects_llamaparse_without_api_key() -> None:
@@ -523,7 +486,7 @@ def test_service_execute_storage_failure_rolls_back_partial_uploads() -> None:
         )
 
     assert storage.delete_object.called
-    assert not any(key.endswith("ocr_segments.json") for key in uploaded)
+    assert any(key.endswith("document.md") for key in uploaded)
 
 
 def test_stage_database_failure_rolls_back_artifacts() -> None:

@@ -6,16 +6,16 @@
 #   plus durable outputs such as the LlamaParse Markdown (FR2).
 # Responsibilities:
 #   - Derive `.pipeline/` object keys from document_versions.storage_path
-#   - Save/load JSON artifacts (OCR segments → Chunking, Layout Analysis, …)
+#   - Save/load JSON artifacts (Layout Analysis, …)
 #   - Save durable text outputs beside the original file (Markdown)
 # Dependencies:
 #   - app.adapters.minio_storage
 # Public Exports:
-#   - OCR_SEGMENTS_ARTIFACT, LAYOUT_ARTIFACT, MARKDOWN_ARTIFACT
+#   - LAYOUT_ARTIFACT, MARKDOWN_ARTIFACT
 #   - pipeline_artifact_key, version_output_key
 #   - save_json_artifact, load_json_artifact, save_text_output
 # Database/Table: document_versions.markdown_storage_path (Markdown key)
-# Related Modules: app.workers.stages.document_understanding, ocr_cleaning, chunking
+# Related Modules: app.workers.stages.document_understanding
 # Important Notes:
 #   - `.pipeline/` holds ephemeral inter-stage handoffs, safe to delete/rebuild.
 #   - version_output_key() holds durable outputs referenced by DB columns.
@@ -28,7 +28,6 @@ from typing import Any
 
 from app.adapters.minio_storage import MinioStorageAdapter
 
-OCR_SEGMENTS_ARTIFACT = "ocr_segments.json"
 #: Full Layout Analysis incl. block text (v3 document_understanding stage).
 LAYOUT_ARTIFACT = "llamaparse_layout.json"
 #: Markdown output name; the key itself goes to document_versions.markdown_storage_path.
@@ -40,7 +39,7 @@ def pipeline_artifact_key(storage_path: str, artifact_name: str) -> str:
 
     Example:
         ``workspaces/…/v1/report.pdf`` →
-        ``workspaces/…/v1/.pipeline/ocr_segments.json``
+        ``workspaces/…/v1/.pipeline/llamaparse_layout.json``
     """
     return f"{_version_prefix(storage_path)}.pipeline/{artifact_name}"
 

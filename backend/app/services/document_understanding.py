@@ -50,7 +50,6 @@ from app.ai.layout import (
     build_layout_analysis,
     build_layout_artifact,
     build_layout_metadata,
-    build_ocr_segments,
     extract_markdown_metrics,
     resolve_page_count,
 )
@@ -61,8 +60,6 @@ from app.models.enums import FileType
 from app.workers.artifacts import (
     LAYOUT_ARTIFACT,
     MARKDOWN_ARTIFACT,
-    OCR_SEGMENTS_ARTIFACT,
-    load_json_artifact,
     pipeline_artifact_key,
     save_json_artifact,
     save_text_output,
@@ -299,7 +296,6 @@ class DocumentUnderstandingService:
         keys = self._persist_outputs(
             document_version_id=document_version_id,
             storage_path=version.storage_path,
-            file_type=document.file_type,
             parser=parser,
             markdown=output.markdown,
             analysis=analysis,
@@ -329,26 +325,23 @@ class DocumentUnderstandingService:
             "page_count": page_count,
             "section_count": analysis.section_count,
             "block_count": len(analysis.blocks),
-            "segment_count": keys["segment_count"],
             "markdown_bytes": len(output.markdown.encode("utf-8")),
             **metrics.as_dict(),
             "markdown_storage_path": keys["markdown_storage_path"],
             "layout_artifact_key": keys["layout_artifact_key"],
-            "artifact_key": keys["segments_artifact_key"],
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
 
         artifact_keys = (
             keys["markdown_storage_path"],
             keys["layout_artifact_key"],
-            keys["segments_artifact_key"],
         )
 
         logger.info(
             "Document understanding completed",
             document_version_id=str(document_version_id),
             parser=parser,
-            segment_count=keys["segment_count"],
+            block_count=len(analysis.blocks),
             duration_ms=stage_metadata["duration_ms"],
         )
 
@@ -398,14 +391,7 @@ class DocumentUnderstandingService:
             version.storage_path,
             LAYOUT_ARTIFACT,
         )
-        segments_artifact_key = pipeline_artifact_key(
-            version.storage_path,
-            OCR_SEGMENTS_ARTIFACT,
-        )
-        segment_count = self._resolve_segment_count(
-            storage_path=version.storage_path,
-            layout=layout,
-        )
+        block_count = layout.get("block_count", len(layout.get("blocks") or []))
 
         stage_metadata = {
             "document_version_id": str(document_version_id),
@@ -418,8 +404,7 @@ class DocumentUnderstandingService:
             "parse_duration_ms": 0,
             "page_count": resolve_page_count_from_layout(layout, document.file_type),
             "section_count": layout.get("section_count", 0),
-            "block_count": layout.get("block_count", len(layout.get("blocks") or [])),
-            "segment_count": segment_count,
+            "block_count": block_count,
             "markdown_bytes": metrics_dict.get("char_count", 0),
             "heading_counts_by_level": metrics_dict.get("heading_counts_by_level", {}),
             "heading_count": metrics_dict.get("heading_count", 0),
@@ -429,7 +414,6 @@ class DocumentUnderstandingService:
             "char_count": metrics_dict.get("char_count", 0),
             "markdown_storage_path": version.markdown_storage_path,
             "layout_artifact_key": layout_artifact_key,
-            "artifact_key": segments_artifact_key,
             "duration_ms": int((time.perf_counter() - started) * 1000),
         }
 
@@ -440,27 +424,6 @@ class DocumentUnderstandingService:
             stage_metadata=stage_metadata,
             artifact_keys=(),
         )
-
-    def _resolve_segment_count(self, *, storage_path: str, layout: dict[str, Any]) -> int:
-        try:
-            payload = load_json_artifact(
-                self._storage,
-                storage_path=storage_path,
-                artifact_name=OCR_SEGMENTS_ARTIFACT,
-            )
-            count = payload.get("segment_count")
-            if isinstance(count, int):
-                return count
-            segments = payload.get("segments")
-            if isinstance(segments, list):
-                return len(segments)
-        except Exception:
-            logger.warning(
-                "Could not load segments artifact for idempotent metadata; "
-                "falling back to layout block_count",
-                storage_path=storage_path,
-            )
-        return int(layout.get("block_count") or len(layout.get("blocks") or []))
 
     def _download_bytes(self, storage_path: str) -> bytes:
         try:
@@ -484,7 +447,6 @@ class DocumentUnderstandingService:
         *,
         document_version_id: UUID,
         storage_path: str,
-        file_type: FileType,
         parser: str,
         markdown: str,
         analysis: LayoutAnalysis,
@@ -492,12 +454,6 @@ class DocumentUnderstandingService:
         job_id: str | None,
     ) -> dict[str, Any]:
         """Write artifacts sequentially; rollback prior uploads on mid-flight failure."""
-        segments = build_ocr_segments(analysis=analysis, file_type=file_type)
-        if not segments:
-            raise DataPipelineError(
-                "Document Understanding produced no text segments — nothing to chunk"
-            )
-
         uploaded_keys: list[str] = []
         try:
             logger.info("Persist markdown", document_version_id=str(document_version_id))
@@ -523,23 +479,6 @@ class DocumentUnderstandingService:
                 ),
             )
             uploaded_keys.append(layout_key)
-
-            segments_key = save_json_artifact(
-                self._storage,
-                storage_path=storage_path,
-                artifact_name=OCR_SEGMENTS_ARTIFACT,
-                payload={
-                    "document_version_id": str(document_version_id),
-                    "file_type": file_type.value,
-                    "parser": parser,
-                    "page_count": analysis.page_count,
-                    "heading_count": metrics.heading_count,
-                    "table_count": metrics.table_count,
-                    "segment_count": len(segments),
-                    "segments": segments,
-                },
-            )
-            uploaded_keys.append(segments_key)
         except S3Error as exc:
             self.rollback_artifacts(tuple(uploaded_keys))
             raise TransientPipelineError(f"Failed to store parse outputs: {exc}") from exc
@@ -550,8 +489,6 @@ class DocumentUnderstandingService:
         return {
             "markdown_storage_path": markdown_key,
             "layout_artifact_key": layout_key,
-            "segments_artifact_key": segments_key,
-            "segment_count": len(segments),
         }
 
 

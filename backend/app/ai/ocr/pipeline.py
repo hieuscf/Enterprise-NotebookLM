@@ -12,7 +12,7 @@
 # Public Exports:
 #   - run_ocr_cleaning, _blocks_to_segments
 # Database/Table: N/A
-# Related Modules: app.ai.ocr.*, app.workers.stages.ocr_cleaning
+# Related Modules: app.ai.ocr.*, app.services.document_understanding
 # Important Notes: No LLM. Image OCR only when ENABLE_IMAGE_OCR=true.
 # =============================================================================
 

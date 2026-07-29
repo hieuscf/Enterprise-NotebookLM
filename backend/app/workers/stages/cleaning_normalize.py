@@ -7,15 +7,13 @@
 # Responsibilities:
 #   - Load Markdown from document_versions.markdown_storage_path
 #   - Apply pure-function cleaners; overwrite the same MinIO object in place
-#   - Refresh the interim ocr_segments.json artifact for stage_chunking
 #   - Return before/after character and line-removal stats for pipeline_stage_logs
 # Dependencies:
-#   - app.ai.markdown_cleaning, app.ai.layout, app.adapters.minio_storage,
-#     app.workers.artifacts, sync DB session
+#   - app.ai.markdown_cleaning, app.adapters.minio_storage, sync DB session
 # Public Exports:
 #   - stage_cleaning_normalize
 # Database/Table: document_versions.markdown_storage_path
-# Related Modules: app.workers.stages.document_understanding, app.workers.stages.chunking
+# Related Modules: app.workers.stages.document_understanding, hierarchical_chunking
 # Important Notes:
 #   - Overwrites document.md in place so markdown_storage_path stays stable for
 #     downstream stages; raw parse text remains recoverable from layout artifact.
@@ -33,16 +31,10 @@ from minio.error import S3Error
 from sqlalchemy.orm import Session
 
 from app.adapters.minio_storage import MinioStorageAdapter, get_minio_storage
-from app.ai.layout import (
-    build_layout_analysis,
-    build_ocr_segments,
-    extract_markdown_metrics,
-)
 from app.ai.markdown_cleaning import clean_markdown
 from app.core.logging import get_logger
 from app.db.sync_session import get_sync_session
 from app.models.documents import Document, DocumentVersion
-from app.workers.artifacts import OCR_SEGMENTS_ARTIFACT, save_json_artifact
 from app.workers.pipeline_errors import DataPipelineError, TransientPipelineError
 
 logger = get_logger(__name__)
@@ -56,7 +48,7 @@ def stage_cleaning_normalize(document_version_id: UUID) -> dict[str, Any]:
 
     Returns:
         Metadata for ``pipeline_stage_logs.metadata``: chars/lines before & after,
-        lines removed, markdown path, segment_count.
+        lines removed, markdown path.
 
     Raises:
         DataPipelineError: Missing version, markdown path, or empty markdown.
@@ -73,7 +65,6 @@ def stage_cleaning_normalize(document_version_id: UUID) -> dict[str, Any]:
                 f"markdown_storage_path missing for version {document_version_id} — "
                 "run document_understanding first"
             )
-        storage_path = version.storage_path
         file_type = document.file_type
         parser = version.parser or "unknown"
 
@@ -92,14 +83,6 @@ def stage_cleaning_normalize(document_version_id: UUID) -> dict[str, Any]:
         )
 
     _upload_markdown(storage, markdown_key, cleaned_markdown)
-    segment_count = _refresh_segments_artifact(
-        storage,
-        document_version_id=document_version_id,
-        storage_path=storage_path,
-        file_type=file_type,
-        parser=parser,
-        markdown=cleaned_markdown,
-    )
 
     logger.info(
         "Cleaning normalize completed",
@@ -114,7 +97,6 @@ def stage_cleaning_normalize(document_version_id: UUID) -> dict[str, Any]:
         "markdown_storage_path": markdown_key,
         "file_type": file_type.value,
         "parser": parser,
-        "segment_count": segment_count,
         **stats.as_dict(),
         "duration_ms": int((time.perf_counter() - started) * 1000),
     }
@@ -166,45 +148,3 @@ def _upload_markdown(storage: MinioStorageAdapter, object_key: str, text: str) -
         raise TransientPipelineError(f"Failed to store cleaned Markdown: {exc}") from exc
     except OSError as exc:
         raise TransientPipelineError(f"MinIO upload I/O error: {exc}") from exc
-
-
-def _refresh_segments_artifact(
-    storage: MinioStorageAdapter,
-    *,
-    document_version_id: UUID,
-    storage_path: str,
-    file_type: Any,
-    parser: str,
-    markdown: str,
-) -> int:
-    """Rebuild ocr_segments.json from cleaned Markdown for the interim chunker."""
-    metrics = extract_markdown_metrics(markdown)
-    analysis = build_layout_analysis(markdown=markdown, item_pages=[])
-    segments = build_ocr_segments(analysis=analysis, file_type=file_type)
-    if not segments:
-        raise DataPipelineError(
-            "Cleaning produced no chunkable segments — heading structure may be lost"
-        )
-
-    try:
-        save_json_artifact(
-            storage,
-            storage_path=storage_path,
-            artifact_name=OCR_SEGMENTS_ARTIFACT,
-            payload={
-                "document_version_id": str(document_version_id),
-                "file_type": file_type.value,
-                "parser": parser,
-                "page_count": analysis.page_count,
-                "heading_count": metrics.heading_count,
-                "table_count": metrics.table_count,
-                "segment_count": len(segments),
-                "segments": segments,
-            },
-        )
-    except S3Error as exc:
-        raise TransientPipelineError(f"Failed to refresh OCR segments artifact: {exc}") from exc
-    except OSError as exc:
-        raise TransientPipelineError(f"MinIO segments upload I/O error: {exc}") from exc
-
-    return len(segments)

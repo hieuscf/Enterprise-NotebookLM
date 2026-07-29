@@ -11,7 +11,7 @@
 # Public Exports:
 #   - count_tokens, split_text_by_tokens, get_token_encoding_name
 # Database/Table: N/A
-# Related Modules: app.ai.chunking, app.workers.stages.chunking
+# Related Modules: app.ai.chunking, app.ai.hierarchical_chunking
 # Important Notes: Embedding model tokenizers may differ; cl100k_base is default.
 # =============================================================================
 
