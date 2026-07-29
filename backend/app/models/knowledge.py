@@ -44,7 +44,10 @@ class Embedding(Base):
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
-    __table_args__ = (Index("ix_document_chunks_parent_chunk_id", "parent_chunk_id"),)
+    __table_args__ = (
+        Index("ix_document_chunks_parent_chunk_id", "parent_chunk_id"),
+        Index("ix_document_chunks_document_version_id_depth", "document_version_id", "depth"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     document_version_id: Mapped[uuid.UUID] = mapped_column(

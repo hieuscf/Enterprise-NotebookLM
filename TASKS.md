@@ -43,7 +43,8 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [BE] Khởi tạo repo monorepo (backend FastAPI, frontend Next.js), Docker Compose (Postgres, Redis, Qdrant/pgvector, Elasticsearch, MinIO, Neo4j).
 - [x] [BE] Cấu hình `.env`/secrets, CI cơ bản (lint + test on push) — `.github/workflows/ci.yml`.
 - [x] [BE] Alembic schema PostgreSQL **v2** (28 bảng baseline): `6ebf6936f6c1_initial_schema_v2.py` + migrations bổ sung (`section`, `section_index`, soft-delete workspaces).
-- [x] [DB] Migration schema **v3** từ `database-design-enterprise-notebooklm.md`: `document_versions` (`parser`, `markdown_storage_path`, `layout_metadata`); `document_chunks` (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`); `pipeline_stage_logs.stage` enum mới; `retrievals.retrieval_pass`; `message_generations` (`confidence_level`, `confidence_score`, `agent_triggered`); bảng mới `agent_events` — `d4e5f6a7b8c9_schema_v3_llamaparse_confidence_agents.py`.
+- [x] [DB] Migration schema **v3 Part 1** — `f6a7b8c9d0e1_schema_v3_part1_llamaparse_hierarchy.py` (markdown_storage_path, layout_metadata, hierarchical chunks, pipeline enum extend giữ deprecated, indexes).
+- [x] [DB] Migration schema **v3 Part 2** — `d4e5f6a7b8c9_schema_v3_llamaparse_confidence_agents.py` (parser, retrieval_pass, confidence_*, agent_events).
 - [x] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry) — nền cho FR13.
 
 ### 1.2 Auth & RBAC (FR12)

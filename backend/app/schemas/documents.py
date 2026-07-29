@@ -65,6 +65,8 @@ class PipelineStageLogResponse(BaseModel):
 
     id: UUID
     stage: Literal[
+        "ocr_cleaning",
+        "chunking",
         "document_understanding",
         "cleaning_normalize",
         "hierarchical_chunking",

@@ -24,7 +24,7 @@
 """schema_v3_llamaparse_confidence_agents
 
 Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a7b8
+Revises: f6a7b8c9d0e1
 Create Date: 2026-07-29
 """
 
@@ -38,65 +38,13 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "d4e5f6a7b8c9"
-down_revision: str | None = "c3d4e5f6a7b8"
+down_revision: str | None = "f6a7b8c9d0e1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_PIPELINE_STAGE_V3 = (
-    "document_understanding",
-    "cleaning_normalize",
-    "hierarchical_chunking",
-    "embedding",
-    "graph_extraction",
-    "indexing",
-)
-
-_PIPELINE_STAGE_V2 = (
-    "ocr_cleaning",
-    "chunking",
-    "embedding",
-    "graph_extraction",
-    "indexing",
-)
-
-
-def _replace_pipeline_stage_enum(*, to_v3: bool) -> None:
-    if to_v3:
-        new_values = _PIPELINE_STAGE_V3
-        case_sql = """
-            CASE stage::text
-                WHEN 'ocr_cleaning' THEN 'document_understanding'
-                WHEN 'chunking' THEN 'hierarchical_chunking'
-                ELSE stage::text
-            END
-        """
-    else:
-        new_values = _PIPELINE_STAGE_V2
-        case_sql = """
-            CASE stage::text
-                WHEN 'document_understanding' THEN 'ocr_cleaning'
-                WHEN 'cleaning_normalize' THEN 'ocr_cleaning'
-                WHEN 'hierarchical_chunking' THEN 'chunking'
-                ELSE stage::text
-            END
-        """
-
-    tmp_name = "pipeline_stage_new"
-    values_sql = ", ".join(f"'{v}'" for v in new_values)
-    op.execute(f"CREATE TYPE {tmp_name} AS ENUM ({values_sql})")
-    op.execute(
-        f"""
-        ALTER TABLE pipeline_stage_logs
-        ALTER COLUMN stage TYPE {tmp_name}
-        USING ({case_sql})::{tmp_name}
-        """
-    )
-    op.execute("DROP TYPE pipeline_stage")
-    op.execute(f"ALTER TYPE {tmp_name} RENAME TO pipeline_stage")
-
 
 def upgrade() -> None:
-    # --- document_versions (LlamaParse metadata) ---
+    # --- document_versions: parser engine label (v3 Part 2) ---
     op.add_column(
         "document_versions",
         sa.Column(
@@ -106,59 +54,6 @@ def upgrade() -> None:
             server_default="llamaparse",
         ),
     )
-    op.add_column(
-        "document_versions",
-        sa.Column("markdown_storage_path", sa.String(length=1024), nullable=True),
-    )
-    op.add_column(
-        "document_versions",
-        sa.Column("layout_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    )
-
-    # --- document_chunks (hierarchical chunking) ---
-    chunk_layout_type = postgresql.ENUM(
-        "paragraph",
-        "heading",
-        "table",
-        "list",
-        name="chunk_layout_type",
-        create_type=True,
-    )
-    chunk_layout_type.create(op.get_bind(), checkfirst=True)
-
-    op.add_column(
-        "document_chunks",
-        sa.Column("parent_chunk_id", sa.UUID(), nullable=True),
-    )
-    op.add_column(
-        "document_chunks",
-        sa.Column("heading_path", sa.String(length=1024), nullable=True),
-    )
-    op.add_column(
-        "document_chunks",
-        sa.Column("depth", sa.Integer(), nullable=True),
-    )
-    op.add_column(
-        "document_chunks",
-        sa.Column("layout_type", chunk_layout_type, nullable=True),
-    )
-    op.create_foreign_key(
-        "fk_document_chunks_parent_chunk_id",
-        "document_chunks",
-        "document_chunks",
-        ["parent_chunk_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_index(
-        "ix_document_chunks_parent_chunk_id",
-        "document_chunks",
-        ["parent_chunk_id"],
-        unique=False,
-    )
-
-    # --- pipeline_stage enum v2 → v3 ---
-    _replace_pipeline_stage_enum(to_v3=True)
 
     # --- retrievals (second retrieval pass) ---
     op.add_column(
@@ -173,7 +68,9 @@ def upgrade() -> None:
     )
 
     # --- message_generations (confidence engine) ---
-    confidence_level = postgresql.ENUM("high", "low", name="confidence_level", create_type=True)
+    confidence_level = postgresql.ENUM(
+        "high", "low", name="confidence_level", create_type=False
+    )
     confidence_level.create(op.get_bind(), checkfirst=True)
 
     op.add_column(
@@ -195,13 +92,15 @@ def upgrade() -> None:
     )
 
     # --- agent_events (event-driven micro agents) ---
-    agent_type = postgresql.ENUM("rewrite", "graph", "sql", name="agent_type", create_type=True)
+    agent_type = postgresql.ENUM(
+        "rewrite", "graph", "sql", name="agent_type", create_type=False
+    )
     agent_trigger_reason = postgresql.ENUM(
         "ambiguous_query",
         "multi_hop_reasoning",
         "structured_misclassified",
         name="agent_trigger_reason",
-        create_type=True,
+        create_type=False,
     )
     agent_type.create(op.get_bind(), checkfirst=True)
     agent_trigger_reason.create(op.get_bind(), checkfirst=True)
@@ -260,18 +159,6 @@ def downgrade() -> None:
     op.drop_index("ix_retrievals_message_id_retrieval_pass", table_name="retrievals")
     op.drop_column("retrievals", "retrieval_pass")
 
-    _replace_pipeline_stage_enum(to_v3=False)
-
-    op.drop_index("ix_document_chunks_parent_chunk_id", table_name="document_chunks")
-    op.drop_constraint("fk_document_chunks_parent_chunk_id", "document_chunks", type_="foreignkey")
-    op.drop_column("document_chunks", "layout_type")
-    op.drop_column("document_chunks", "depth")
-    op.drop_column("document_chunks", "heading_path")
-    op.drop_column("document_chunks", "parent_chunk_id")
-    op.execute("DROP TYPE IF EXISTS chunk_layout_type")
-
-    op.drop_column("document_versions", "layout_metadata")
-    op.drop_column("document_versions", "markdown_storage_path")
     op.drop_column("document_versions", "parser")
 
     op.execute("DROP TYPE IF EXISTS agent_trigger_reason")

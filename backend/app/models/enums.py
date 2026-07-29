@@ -51,12 +51,24 @@ class PipelineStatus(enum.StrEnum):
 
 
 class PipelineStage(enum.StrEnum):
+    # Deprecated v2 — retained in DB enum for historical pipeline_stage_logs rows.
+    ocr_cleaning = "ocr_cleaning"
+    chunking = "chunking"
+    # v3 ingestion stages (preferred for new pipeline runs)
     document_understanding = "document_understanding"
     cleaning_normalize = "cleaning_normalize"
     hierarchical_chunking = "hierarchical_chunking"
     embedding = "embedding"
     graph_extraction = "graph_extraction"
     indexing = "indexing"
+
+
+class ChunkLayoutType(enum.StrEnum):
+    heading = "heading"
+    paragraph = "paragraph"
+    table = "table"
+    list = "list"
+    figure_caption = "figure_caption"
 
 
 class ConfidenceLevel(enum.StrEnum):
@@ -74,13 +86,6 @@ class AgentTriggerReason(enum.StrEnum):
     ambiguous_query = "ambiguous_query"
     multi_hop_reasoning = "multi_hop_reasoning"
     structured_misclassified = "structured_misclassified"
-
-
-class ChunkLayoutType(enum.StrEnum):
-    paragraph = "paragraph"
-    heading = "heading"
-    table = "table"
-    list = "list"
 
 
 class VectorStore(enum.StrEnum):
