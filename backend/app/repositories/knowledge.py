@@ -22,7 +22,7 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models.enums import VectorStore
+from app.models.enums import ChunkLayoutType, VectorStore
 from app.models.knowledge import (
     DocumentChunk,
     Embedding,
@@ -118,6 +118,10 @@ class KnowledgeSyncRepository:
         token_count: int | None,
         section: str | None = None,
         section_index: int | None = None,
+        parent_chunk_id: uuid.UUID | None = None,
+        heading_path: str | None = None,
+        depth: int | None = None,
+        layout_type: ChunkLayoutType | None = None,
     ) -> DocumentChunk:
         chunk = DocumentChunk(
             document_version_id=document_version_id,
@@ -127,6 +131,10 @@ class KnowledgeSyncRepository:
             section_index=section_index,
             section=section,
             token_count=token_count,
+            parent_chunk_id=parent_chunk_id,
+            heading_path=heading_path,
+            depth=depth,
+            layout_type=layout_type,
         )
         self._session.add(chunk)
         self._session.flush()

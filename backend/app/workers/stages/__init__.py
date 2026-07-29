@@ -24,7 +24,7 @@ from typing import Any
 from uuid import UUID
 
 from app.models.enums import PipelineStage
-from app.workers.stages.chunking import stage_chunking
+from app.workers.stages.hierarchical_chunking import stage_hierarchical_chunking
 from app.workers.stages.cleaning_normalize import stage_cleaning_normalize
 from app.workers.stages.document_understanding import stage_document_understanding
 from app.workers.stages.embedding import stage_embedding
@@ -46,9 +46,7 @@ STAGE_ORDER: tuple[PipelineStage, ...] = (
 STAGE_HANDLERS: dict[PipelineStage, StageHandler] = {
     PipelineStage.document_understanding: stage_document_understanding,
     PipelineStage.cleaning_normalize: stage_cleaning_normalize,
-    # Still the v2 interim chunker — reads the ocr_segments.json artifact that
-    # document_understanding keeps emitting until Hierarchical Chunking lands.
-    PipelineStage.hierarchical_chunking: stage_chunking,
+    PipelineStage.hierarchical_chunking: stage_hierarchical_chunking,
     PipelineStage.embedding: stage_embedding,
     PipelineStage.graph_extraction: stage_graph_extraction,
     PipelineStage.indexing: stage_indexing,
