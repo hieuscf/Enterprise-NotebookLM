@@ -4,10 +4,11 @@ info:
   version: "1.0.0"
   description: >
     API contract cho hệ thống Enterprise NotebookLM (LLM + RAG).
-    Bao gồm Workspace Management, Knowledge Base/Document Versioning,
-    Intelligent Search, AI Chat với Citation, AI Summary, Information Extraction,
-    Multi-document Comparison, Report Generation, và Observability.
-    Ánh xạ FR1–FR13 (Business_Context.md) và schema v2 (database-design-enterprise-notebooklm.md).
+    Bao gồm Workspace Management, Knowledge Base/Document Versioning (Document Understanding qua LlamaParse
+    + Hierarchical Chunking), Intelligent Search, AI Chat với Citation (Confidence Engine + Event-driven
+    Micro Agents: Rewrite/Graph/SQL), AI Summary, Information Extraction, Multi-document Comparison,
+    Report Generation, và Observability.
+    Ánh xạ FR1–FR14 (Business_Context.md) và schema v3 (database-design-enterprise-notebooklm.md).
 servers:
   - url: https://api.notebooklm.example.com/v1
     description: Production
@@ -353,7 +354,7 @@ paths:
       - { $ref: "#/components/parameters/VersionId" }
     get:
       tags: [Documents]
-      summary: Trạng thái pipeline_run + từng pipeline_stage_log (OCR/Chunking/Embedding/Graph/Indexing)
+      summary: Trạng thái pipeline_run + từng pipeline_stage_log (Document Understanding/Cleaning/Hierarchical Chunking/Embedding/Graph/Indexing)
       responses:
         "200":
           description: OK
@@ -537,6 +538,25 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Citation" }
+
+  /workspaces/{workspaceId}/chat/messages/{messageId}/agent-events:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/MessageId" }
+    get:
+      tags: [Chat]
+      summary: >
+        (mới v3) Chi tiết Micro Agent đã được kích hoạt cho message này (nếu có).
+        Trả về mảng rỗng nếu message thuộc route cache_hit/metadata/factoid, hoặc
+        route=complex nhưng confidence=high (không cần agent).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AgentEvent" }
 
   # ---------------------------------------------------------------------
   # SUMMARIES (FR6)
@@ -833,7 +853,7 @@ paths:
       - { $ref: "#/components/parameters/WorkspaceId" }
     get:
       tags: [Admin/Observability]
-      summary: Danh sách pipeline_run (debug OCR/Chunking/Embedding/Graph/Indexing)
+      summary: Danh sách pipeline_run (debug Document Understanding/Cleaning/Hierarchical Chunking/Embedding/Graph/Indexing)
       parameters:
         - name: status
           in: query
@@ -1007,14 +1027,10 @@ components:
         version_number: { type: integer }
         file_size_bytes: { type: integer }
         checksum_sha256: { type: string }
-        page_count:
-          type: integer
-          nullable: true
-          description: >
-            Physical page/slide/sheet count for PDF/PPTX/XLSX.
-            For DOCX: logical section count (by heading), not printed Word pages.
+        page_count: { type: integer }
         status: { type: string, enum: [processing, ready, failed] }
         is_current: { type: boolean }
+        parser: { type: string, example: llamaparse, description: "Engine dùng cho Document Understanding" }
         created_at: { type: string, format: date-time }
 
     PipelineRun:
@@ -1037,7 +1053,7 @@ components:
         id: { type: string, format: uuid }
         stage:
           type: string
-          enum: [ocr_cleaning, chunking, embedding, graph_extraction, indexing]
+          enum: [document_understanding, cleaning_normalize, hierarchical_chunking, embedding, graph_extraction, indexing]
         status: { type: string, enum: [pending, running, completed, failed] }
         duration_ms: { type: integer }
         metadata: { type: object }
@@ -1061,9 +1077,6 @@ components:
                 enum: [vector, bm25, knowledge_graph, rerank]
               score: { type: number, format: float }
               rank: { type: integer }
-              location:
-                $ref: "#/components/schemas/ContentLocation"
-                nullable: true
 
     SearchHistoryItem:
       type: object
@@ -1105,6 +1118,13 @@ components:
         route_type:
           type: string
           enum: [cache_hit, metadata, factoid, complex]
+        confidence_level:
+          type: string
+          enum: [high, low]
+          nullable: true
+          description: "Chỉ có giá trị khi route_type=complex; NULL cho 3 route còn lại"
+        confidence_score: { type: number, format: float, nullable: true }
+        agent_triggered: { type: boolean, default: false }
         model_used: { type: string, nullable: true }
         prompt_tokens: { type: integer }
         completion_tokens: { type: integer }
@@ -1114,20 +1134,6 @@ components:
         finish_reason:
           type: string
           enum: [stop, length, content_filter, tool_calls]
-
-    ContentLocation:
-      type: object
-      description: >
-        Vị trí nội dung trong tài liệu gốc. Đúng 1 trong 2 field có giá trị tuỳ file_type
-        (PDF/PPTX/XLSX dùng page_number; DOCX dùng section_index).
-        UI: page_number → "Trang X"; section_index → "Mục X" (+ section_title nếu có).
-      properties:
-        page_number: { type: integer, nullable: true }
-        section_index: { type: integer, nullable: true }
-        section_title:
-          type: string
-          nullable: true
-          description: Tên heading gần nhất, dùng cho DOCX
 
     Citation:
       type: object
@@ -1139,9 +1145,22 @@ components:
         text_snippet: { type: string }
         verified: { type: boolean }
         order_index: { type: integer }
-        location:
-          $ref: "#/components/schemas/ContentLocation"
-          nullable: true
+
+    AgentEvent:
+      type: object
+      description: "(mới v3) Ghi lại 1 lần Event Policy Engine kích hoạt Micro Agent khi Confidence Engine đánh giá Low Confidence"
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        agent_type: { type: string, enum: [rewrite, graph, sql] }
+        trigger_reason:
+          type: string
+          enum: [ambiguous_query, multi_hop_reasoning, structured_misclassified]
+        triggered_second_retrieval: { type: boolean }
+        model_used: { type: string, nullable: true }
+        cost_usd: { type: number, format: double }
+        latency_ms: { type: integer }
+        created_at: { type: string, format: date-time }
 
     Summary:
       type: object

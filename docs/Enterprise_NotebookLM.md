@@ -1,4 +1,4 @@
-﻿**Enterprise NotebookLM**
+**Enterprise NotebookLM**
 
 Phát triển hệ thống Web thông minh hỗ trợ quản lý, phân tích và khai thác tri thức từ tài liệu doanh nghiệp dựa trên Large Language Models (LLM) và Retrieval-Augmented Generation (RAG).
 
@@ -28,11 +28,11 @@ Mỗi doanh nghiệp có thể tạo nhiều Workspace theo phòng ban/dự án.
 
 ## Module 2. Knowledge Base
 
-Tự động xử lý tài liệu đầu vào (PDF/DOCX/XLSX/PPTX/TXT) qua OCR & Cleaning, sau đó nạp vào LightRAG Core Engine (Dual-level Graph + Vector Index) để tạo kho tri thức có cấu trúc, phục vụ truy hồi theo nhiều cấp độ (thực thể, chủ đề, đoạn văn bản).
+Tự động xử lý tài liệu đầu vào (PDF/DOCX/XLSX/PPTX/TXT) qua **Document Understanding** bằng **LlamaParse**: xuất trực tiếp ra Markdown, đồng thời sinh song song Layout Analysis (cấu trúc heading/bảng/section) và Metadata Extraction (trích xuất từ chính cấu trúc Markdown, không cần bước OCR riêng). Sau đó **Cleaning & Normalize** nội dung Markdown, rồi **Hierarchical Chunking** (chia theo cấu trúc phân cấp section → sub-section → đoạn văn, giữ quan hệ cha-con giữa chunk). Cuối cùng nạp vào **LightRAG Core Engine** (Entity Extraction, Relation Extraction, Graph Construction, Embedding Generation) để tạo kho tri thức có cấu trúc, index song song vào 4 kho: BM25 Index, Vector DB, Graph DB, Metadata DB — phục vụ truy hồi theo nhiều cấp độ (thực thể, chủ đề, đoạn văn bản).
 
 ## Module 3. Intelligent Search
 
-Tìm kiếm ngữ nghĩa kết hợp Hybrid Retrieval (Vector Search + BM25 + Knowledge Graph) và lớp Re-ranking để trả về kết quả liên quan nhất.
+Tìm kiếm ngữ nghĩa kết hợp Hybrid Retrieval (Vector Search + BM25 + Knowledge Graph + Metadata DB) và lớp Cross-Encoder Reranking để trả về kết quả liên quan nhất. Với luồng AI Chat (Module 4), kết quả sau rerank còn đi qua Confidence Engine để quyết định có cần Micro Agent hỗ trợ hay không (xem mục 6, 7).
 
 ## Module 4. AI Chat
 
@@ -64,15 +64,24 @@ Lưu trữ và quản lý lịch sử hội thoại theo phiên và theo ngườ
 
 # 3\. Kiến trúc hệ thống (System Architecture)
 
-Luồng xử lý tổng quát:
+Luồng xử lý tổng quát (v3):
 
-- User → Enterprise Workspace → Document Management
-- Document Management → OCR & Cleaning (chuẩn hoá PDF/DOCX/XLSX/PPTX/TXT)
-- OCR & Cleaning → LightRAG Core Engine (Dual-level Graph + Vector Index)
-- LightRAG Core Engine → 3 nhánh truy hồi song song: Low-Level Retrieval (Entities), High-Level Retrieval (Topics), Vector Retrieval (Chunks)
-- 3 nhánh → Hybrid Retrieval Engine (Vector + BM25 + Knowledge Graph) → Re-ranking Layer
-- Re-ranking Layer → Prompt Construction → Large Language Model (LLM)
-- LLM → Citation & Highlight → Enterprise NotebookLM UI
+**Ingestion (nạp tài liệu):**
+- User → Enterprise Workspace → Document Management → Upload
+- Upload → Document Understanding (**LlamaParse**) → 3 nhánh song song: Markdown, Layout Analysis, Metadata Extraction
+- 3 nhánh → Cleaning & Normalize → Hierarchical Chunking
+- Hierarchical Chunking → LightRAG Engine (Entity Extraction, Relation Extraction, Graph Construction, Embedding Generation)
+- LightRAG Engine → index song song 4 kho: BM25 Index, Vector DB, Graph DB, Metadata DB
+
+**Query (hỏi đáp):**
+- User Query → Query Router (cache/metadata/factoid/complex, không dùng LLM — xem mục 6)
+- Nếu **Complex Query** → Hybrid Retrieval (Vector + BM25 + Knowledge Graph + Metadata) → Cross-Encoder Reranker
+- Reranker → Confidence Engine → phân nhánh:
+  - **High Confidence** → Prompt Builder → 1 lần gọi LLM (structured output)
+  - **Low Confidence** → Event Policy Engine → kích hoạt 1 trong 3 Micro Agent (Rewrite Agent / Graph Agent / SQL Agent) theo sự kiện → Second Retrieval (tuỳ chọn) → Prompt Builder → 1 lần gọi LLM
+- LLM → Citation Verification → Enterprise NotebookLM UI (Citation & Highlight)
+
+Chi tiết đầy đủ hai luồng trên xem sơ đồ C4 + Sequence trong `System_Architecture_Enterprise_NotebookLM.md`.
 
 # 4\. Tech Stack đề xuất
 
@@ -87,7 +96,8 @@ Dựa trên lựa chọn của nhóm: Backend Python (FastAPI) + Frontend Next.j
 | Vector Database        | Qdrant hoặc pgvector (PostgreSQL)               | Lưu embedding phục vụ Vector Retrieval             |
 | Knowledge Graph        | Neo4j hoặc NetworkX + lưu trữ tuỳ biến          | Phục vụ Low/High-Level Retrieval                   |
 | Full-text Search       | Elasticsearch / OpenSearch (BM25)               | Kết hợp Hybrid Retrieval                           |
-| OCR & Document Parsing | Unstructured.io, PyMuPDF, python-docx, openpyxl | Chuẩn hoá đa định dạng tài liệu                    |
+| Document Understanding | **LlamaParse**                                  | Parse PDF/DOCX/XLSX/PPTX/TXT trực tiếp ra Markdown + Layout Analysis + Metadata Extraction (thay thế OCR & Cleaning tổng quát ở bản trước) |
+| Reranking              | Cross-encoder model (non-LLM)                   | Re-ranking Layer, đầu vào cho Confidence Engine    |
 | LLM Provider           | Anthropic ChatGPT API (qua SDK)                 | Sinh câu trả lời, tóm tắt, trích xuất              |
 | Hàng đợi tác vụ nền    | Celery + Redis                                  | Xử lý OCR, indexing bất đồng bộ                    |
 | Cơ sở dữ liệu chính    | PostgreSQL                                      | Metadata, người dùng, Workspace, lịch sử chat      |
@@ -129,7 +139,22 @@ Pipeline cũ có thể phát sinh nhiều lần gọi LLM riêng lẻ (re-rankin
 | Truy vấn lặp lại / đã cache          | 1-3 lần                              | 0 lần                     |
 | Truy vấn liệt kê/thống kê metadata   | 1-2 lần                              | 0 lần                     |
 | Câu hỏi factoid đơn giản             | 1-2 lần                              | 0 lần                     |
-| Câu hỏi phức tạp (tổng hợp, so sánh) | 2-4 lần (rerank + generate + format) | 1 lần (structured output) |
+| Câu hỏi phức tạp — High Confidence   | 2-4 lần (rerank + generate + format) | 1 lần (structured output) |
+| Câu hỏi phức tạp — Low Confidence    | 2-4 lần                              | tối đa 1 lần LLM sinh câu trả lời + agent (non-LLM/model nhẹ) + tối đa 1 lần Second Retrieval |
+
+## 6\.4 Confidence Engine & Event Policy Engine (chỉ áp dụng trong nhánh Complex Query)
+
+Vấn đề bổ sung: không phải mọi kết quả sau rerank đều đủ tốt để LLM trả lời trực tiếp — nếu độ tin cậy thấp mà vẫn ép LLM sinh câu trả lời ngay, rủi ro "không đủ căn cứ" ở bước Citation Verification (7.1) tăng, gây nhiều lần fallback. Giải pháp: chèn một bước đánh giá độ tin cậy **trước** khi vào Prompt Construction, và chỉ khi cần mới huy động thêm agent — đúng nguyên tắc **event-driven**: agent không nằm trên đường đi mặc định của mọi truy vấn.
+
+- **Confidence Engine**: tính confidence score từ kết quả Cross-Encoder Reranker (vd. dựa trên score cao nhất, độ phân tán điểm giữa các candidate, số lượng candidate vượt ngưỡng). Phân loại High Confidence / Low Confidence theo ngưỡng cấu hình được.
+- **High Confidence** → đi thẳng Prompt Construction như 6.2 (không đổi).
+- **Low Confidence** → **Event Policy Engine** nhận diện loại sự kiện và chọn agent tương ứng:
+  - **Rewrite Agent** — sự kiện: câu hỏi mơ hồ/thiếu ngữ cảnh (điểm rerank thấp đều, không có candidate nổi bật) → viết lại câu hỏi rõ ràng hơn.
+  - **Graph Agent** — sự kiện: câu hỏi cần suy luận quan hệ nhiều bước (multi-hop) mà Vector/BM25 không phủ đủ → mở rộng truy vấn qua Knowledge Graph.
+  - **SQL Agent** — sự kiện: câu hỏi thực chất là structured/thống kê nhưng bị Query Router (6.1) phân loại nhầm thành Complex → truy vấn trực tiếp Metadata DB.
+- **Second Retrieval (tuỳ chọn)**: sau khi agent trả về câu hỏi viết lại hoặc ngữ cảnh bổ sung, hệ thống chạy lại Hybrid Retrieval một lần nữa, rồi mới vào Prompt Construction.
+- Agent dùng model nhỏ/rule-based, **không tính** vào giới hạn "tối đa 1 lần gọi LLM sinh câu trả lời cuối" ở mục 6.2 — giới hạn đó chỉ áp dụng cho bước Prompt Construction cuối cùng.
+- Mọi lượt kích hoạt agent đều được ghi log (loại agent, lý do, có Second Retrieval hay không) phục vụ Observability (mục 7.2).
 
 # 7\. Đảm bảo câu trả lời có đường dẫn xác thực (Verifiable Citation)
 
@@ -144,7 +169,7 @@ Yêu cầu bắt buộc ở tầng kiến trúc: mọi câu trả lời do LLM s
 
 ## 7\.2 Vị trí trong kiến trúc tổng thể
 
-Query Router và Citation Verification Layer được triển khai như một Query Orchestration Service độc lập, nằm giữa Enterprise NotebookLM UI và LightRAG Core Engine, đạt chuẩn kiến trúc enterprise:
+Query Router, Confidence Engine, Event Policy Engine (+ Micro Agents) và Citation Verification Layer được triển khai như một Query Orchestration Service độc lập, nằm giữa Enterprise NotebookLM UI và LightRAG Core Engine, đạt chuẩn kiến trúc enterprise:
 
 - Stateless, có thể scale ngang độc lập với các service khác.
 - Ghi log toàn bộ quyết định định tuyến và số lần gọi LLM theo từng request để phục vụ audit và theo dõi chi phí (cost observability).
@@ -157,6 +182,8 @@ Query Router và Citation Verification Layer được triển khai như một Qu
 - → [Cache Hit] Trả lời ngay kèm citation gốc
 - → [Metadata Query] Truy vấn DB trực tiếp
 - → [Simple Factoid] Trích xuất trực tiếp từ chunk, không sinh văn bản
-- → [Complex Query] Hybrid Retrieval → Cross-encoder Re-ranking (non-LLM) → Prompt Construction → 1 LLM Call (structured output: answer + citation ids)
+- → [Complex Query] Hybrid Retrieval → Cross-encoder Re-ranking (non-LLM) → **Confidence Engine**
+  - → [High Confidence] Prompt Construction → 1 LLM Call (structured output: answer + citation ids)
+  - → [Low Confidence] Event Policy Engine → Rewrite/Graph/SQL Agent (theo sự kiện) → Second Retrieval (tuỳ chọn) → Prompt Construction → 1 LLM Call
 - → Citation Verification Layer (deterministic check) → nếu không đạt: fallback "không đủ căn cứ" hoặc sinh lại tối đa 1 lần
 - → Trả lời kèm Citation & Highlight → Enterprise NotebookLM UI
