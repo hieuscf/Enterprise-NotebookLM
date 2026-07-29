@@ -2,18 +2,23 @@
 # File: artifacts.py
 # Module/Service: Pipeline Worker
 # Layer: Adapter
-# Purpose: Ephemeral MinIO artifacts passed between pipeline stages (FR2).
+# Purpose: MinIO artifacts derived from a document version — inter-stage handoff
+#   plus durable outputs such as the LlamaParse Markdown (FR2).
 # Responsibilities:
 #   - Derive `.pipeline/` object keys from document_versions.storage_path
-#   - Save/load JSON artifacts (OCR segments → Chunking, …)
+#   - Save/load JSON artifacts (OCR segments → Chunking, Layout Analysis, …)
+#   - Save durable text outputs beside the original file (Markdown)
 # Dependencies:
 #   - app.adapters.minio_storage
 # Public Exports:
-#   - OCR_SEGMENTS_ARTIFACT, pipeline_artifact_key
-#   - save_json_artifact, load_json_artifact
-# Database/Table: N/A (avoids inter-stage DB round-trips)
-# Related Modules: app.workers.stages.ocr_cleaning, chunking (later)
-# Important Notes: Artifacts live next to the version file under `.pipeline/`.
+#   - OCR_SEGMENTS_ARTIFACT, LAYOUT_ARTIFACT, MARKDOWN_ARTIFACT
+#   - pipeline_artifact_key, version_output_key
+#   - save_json_artifact, load_json_artifact, save_text_output
+# Database/Table: document_versions.markdown_storage_path (Markdown key)
+# Related Modules: app.workers.stages.document_understanding, ocr_cleaning, chunking
+# Important Notes:
+#   - `.pipeline/` holds ephemeral inter-stage handoffs, safe to delete/rebuild.
+#   - version_output_key() holds durable outputs referenced by DB columns.
 # =============================================================================
 
 from __future__ import annotations
@@ -24,6 +29,10 @@ from typing import Any
 from app.adapters.minio_storage import MinioStorageAdapter
 
 OCR_SEGMENTS_ARTIFACT = "ocr_segments.json"
+#: Full Layout Analysis incl. block text (v3 document_understanding stage).
+LAYOUT_ARTIFACT = "llamaparse_layout.json"
+#: Markdown output name; the key itself goes to document_versions.markdown_storage_path.
+MARKDOWN_ARTIFACT = "document.md"
 
 
 def pipeline_artifact_key(storage_path: str, artifact_name: str) -> str:
@@ -33,11 +42,22 @@ def pipeline_artifact_key(storage_path: str, artifact_name: str) -> str:
         ``workspaces/…/v1/report.pdf`` →
         ``workspaces/…/v1/.pipeline/ocr_segments.json``
     """
+    return f"{_version_prefix(storage_path)}.pipeline/{artifact_name}"
+
+
+def version_output_key(storage_path: str, output_name: str) -> str:
+    """Build MinIO key for a durable derived output of the same version.
+
+    Example:
+        ``workspaces/…/v1/report.pdf`` → ``workspaces/…/v1/document.md``
+    """
+    return f"{_version_prefix(storage_path)}{output_name}"
+
+
+def _version_prefix(storage_path: str) -> str:
     if "/" not in storage_path:
-        prefix = ""
-    else:
-        prefix = storage_path.rsplit("/", 1)[0] + "/"
-    return f"{prefix}.pipeline/{artifact_name}"
+        return ""
+    return storage_path.rsplit("/", 1)[0] + "/"
 
 
 def save_json_artifact(
@@ -54,6 +74,24 @@ def save_json_artifact(
         object_key=key,
         data=data,
         content_type="application/json",
+    )
+    return key
+
+
+def save_text_output(
+    storage: MinioStorageAdapter,
+    *,
+    storage_path: str,
+    output_name: str,
+    text: str,
+    content_type: str = "text/markdown; charset=utf-8",
+) -> str:
+    """Store a durable text output beside the version file; return the key."""
+    key = version_output_key(storage_path, output_name)
+    storage.upload_bytes(
+        object_key=key,
+        data=text.encode("utf-8"),
+        content_type=content_type,
     )
     return key
 

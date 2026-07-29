@@ -17,13 +17,14 @@
 
 from functools import lru_cache
 
+from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -89,6 +90,23 @@ class Settings(BaseSettings):
     graph_llm_max_tokens: int = 4096
     graph_llm_max_input_chars: int = 100_000
 
+    # FR2 Step 3 (v3) — Document Understanding parser selection.
+    # NOT an LLM Provider call: LlamaParse is a standalone SaaS, billed separately
+    # from Anthropic. Only celery-worker talks to it (see System_Architecture note 3).
+    # Set DOCUMENT_PARSER=local for offline dev/CI; llamaparse requires LLAMAPARSE_API_KEY.
+    document_parser: Literal["llamaparse", "local"] = "llamaparse"
+    llamaparse_api_key: str | None = None
+    llamaparse_base_url: str = "https://api.cloud.llamaindex.ai"
+    llamaparse_timeout_seconds: int = 120
+    llamaparse_max_retries: int = 3
+    # fast tier cannot return markdown/items — keep cost_effective or higher.
+    llamaparse_tier: Literal[
+        "cost_effective",
+        "balanced",
+        "premium"
+    ] = "cost_effective"
+    llamaparse_poll_interval_seconds: float = 2.0
+
     # FR2 Step 3 — OCR language detection + optional scanned-PDF image OCR (P3)
     ocr_language_detection_enabled: bool = True
     ocr_language_detect_per_segment: bool = False  # doc-level default keeps overhead << 10%
@@ -103,7 +121,6 @@ class Settings(BaseSettings):
     tesseract_cmd: str | None = None
     # Optional TESSDATA_PREFIX override (folder containing *.traineddata)
     tessdata_prefix: str | None = None
-
 
 @lru_cache
 def get_settings() -> Settings:

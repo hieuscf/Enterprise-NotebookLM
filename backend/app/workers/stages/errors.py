@@ -2,36 +2,26 @@
 # File: errors.py
 # Module/Service: Pipeline Worker — Stages
 # Layer: Worker
-# Purpose: Classify stage failures for Celery retry vs immediate fail (FR2).
+# Purpose: Backward-compatible re-export of pipeline stage error types.
 # Responsibilities:
-#   - TransientPipelineError → timeout/network → Celery autoretry
-#   - DataPipelineError → corrupt/unreadable input → fail immediately
+#   - Re-export PipelineStageError, TransientPipelineError, DataPipelineError
 # Dependencies:
-#   - N/A
+#   - app.workers.pipeline_errors
 # Public Exports:
 #   - PipelineStageError, TransientPipelineError, DataPipelineError
 # Database/Table: N/A
-# Related Modules: app.workers.pipeline, app.workers.stages.*
-# Important Notes: Only Transient* is listed in Celery autoretry_for.
+# Related Modules: app.workers.pipeline_errors
+# Important Notes: Import from app.workers.pipeline_errors in new service code.
 # =============================================================================
 
-from __future__ import annotations
+from app.workers.pipeline_errors import (
+    DataPipelineError,
+    PipelineStageError,
+    TransientPipelineError,
+)
 
-
-class PipelineStageError(Exception):
-    """Base error raised by a pipeline stage handler."""
-
-
-class TransientPipelineError(PipelineStageError):
-    """Temporary infrastructure failure (timeout, network, broker).
-
-    Celery may retry the whole ``run_pipeline`` task and bump
-    ``pipeline_runs.retry_count``.
-    """
-
-
-class DataPipelineError(PipelineStageError):
-    """Permanent data/content failure (corrupt file, unsupported/unreadable).
-
-    Must fail the pipeline immediately — do not Celery-retry.
-    """
+__all__ = [
+    "DataPipelineError",
+    "PipelineStageError",
+    "TransientPipelineError",
+]
