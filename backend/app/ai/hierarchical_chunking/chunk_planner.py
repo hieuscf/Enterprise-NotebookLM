@@ -21,6 +21,7 @@ from uuid import uuid4
 
 from app.ai.hierarchical_chunking.chunk_splitter import split_content_block
 from app.ai.hierarchical_chunking.constants import ROOT_NODE_TITLE
+from app.ai.hierarchical_chunking.token_budget import ChunkTokenBudget
 from app.ai.hierarchical_chunking.types import ContentBlock, HeadingNode, PlannedChunk
 from app.ai.tokens import count_tokens
 from app.models.enums import ChunkLayoutType
@@ -29,10 +30,10 @@ from app.models.enums import ChunkLayoutType
 def plan_hierarchical_chunks(
     root: HeadingNode,
     *,
-    max_tokens: int,
-    overlap_ratio: float,
+    budget: ChunkTokenBudget | None = None,
 ) -> list[PlannedChunk]:
     """Build the full planned chunk list for one document version."""
+    token_budget = budget or ChunkTokenBudget.default()
     planned: list[PlannedChunk] = []
     chunk_index = 0
 
@@ -75,11 +76,7 @@ def plan_hierarchical_chunks(
         section: str | None,
         depth: int,
     ) -> None:
-        pieces = split_content_block(
-            block.text,
-            max_tokens=max_tokens,
-            overlap_ratio=overlap_ratio,
-        )
+        pieces = split_content_block(block, token_budget)
         for piece in pieces:
             append_chunk(
                 content=piece,

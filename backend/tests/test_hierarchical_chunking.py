@@ -112,7 +112,7 @@ def test_plan_hierarchical_chunks_parent_relationships() -> None:
     lines = parse_markdown_lines(SAMPLE_MARKDOWN)
     root = build_heading_tree(lines)
     attach_content_blocks(root=root, lines=lines, layout_metadata=None, file_type=FileType.pdf)
-    planned = plan_hierarchical_chunks(root, max_tokens=512, overlap_ratio=0.12)
+    planned = plan_hierarchical_chunks(root)
 
     by_temp = {chunk.temp_id: chunk for chunk in planned}
     headings = [c for c in planned if c.layout_type == ChunkLayoutType.heading]
@@ -140,8 +140,6 @@ def test_run_hierarchical_chunking_preserves_heading_chunks() -> None:
             layout_metadata=None,
             file_type=FileType.docx,
         ),
-        max_tokens=128,
-        overlap_ratio=0.12,
     )
 
     assert plan.metrics.chunk_count >= 4

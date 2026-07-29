@@ -72,8 +72,6 @@ class HierarchicalChunkingService:
                 layout_metadata=version.layout_metadata,
                 file_type=document.file_type,
             ),
-            max_tokens=self._settings.chunk_max_tokens,
-            overlap_ratio=self._settings.chunk_overlap_ratio,
         )
         if not plan.planned_chunks:
             raise DataPipelineError("Hierarchical chunking produced zero chunks")

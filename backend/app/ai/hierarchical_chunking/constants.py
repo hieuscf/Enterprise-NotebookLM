@@ -41,3 +41,6 @@ LAYOUT_BLOCK_TYPE_MAP: dict[str, ChunkLayoutType] = {
 
 DEFAULT_CONTENT_LAYOUT_TYPE = ChunkLayoutType.paragraph
 ROOT_NODE_TITLE = "__root__"
+
+# Block processing priority (document order preserved; one block → one split pass):
+# heading (planner) → paragraph → list → table → figure_caption

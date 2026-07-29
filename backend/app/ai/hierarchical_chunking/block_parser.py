@@ -138,6 +138,7 @@ def _parse_blocks_from_lines(
                     layout_blocks=layout_blocks,
                     layout_cursor=layout_cursor,
                     paginated=paginated,
+                    is_code_fence=True,
                 )
             )
             layout_cursor += 1
@@ -231,6 +232,7 @@ def _make_block(
     layout_cursor: int,
     paginated: bool,
     fallback: ChunkLayoutType | None = None,
+    is_code_fence: bool = False,
 ) -> ContentBlock:
     layout = _layout_at(layout_blocks, layout_cursor)
     layout_type = map_layout_type(layout.get("block_type") if layout else None)
@@ -252,6 +254,7 @@ def _make_block(
         end_line=end,
         order_index=order_index,
         page_number=page_number,
+        is_code_fence=is_code_fence,
     )
 
 

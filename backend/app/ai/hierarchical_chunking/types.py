@@ -42,6 +42,7 @@ class ContentBlock:
     order_index: int
     page_number: int | None = None
     section_index: int | None = None
+    is_code_fence: bool = False
 
 
 @dataclass

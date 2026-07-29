@@ -23,6 +23,7 @@ from app.ai.hierarchical_chunking.chunk_planner import plan_hierarchical_chunks
 from app.ai.hierarchical_chunking.heading_tree_builder import build_heading_tree
 from app.ai.hierarchical_chunking.markdown_parser import parse_markdown_lines
 from app.ai.hierarchical_chunking.metrics_collector import collect_chunking_metrics
+from app.ai.hierarchical_chunking.token_budget import ChunkTokenBudget
 from app.ai.hierarchical_chunking.types import ChunkingInput, ChunkingMetrics, PlannedChunk
 
 
@@ -37,10 +38,12 @@ class HierarchicalChunkingPlan:
 def run_hierarchical_chunking(
     chunk_input: ChunkingInput,
     *,
-    max_tokens: int,
-    overlap_ratio: float,
+    budget: ChunkTokenBudget | None = None,
+    max_tokens: int | None = None,
+    overlap_ratio: float | None = None,
 ) -> HierarchicalChunkingPlan:
     """Execute the rule-based hierarchical chunking pipeline."""
+    token_budget = budget or ChunkTokenBudget.default()
     lines = parse_markdown_lines(chunk_input.markdown)
     root = build_heading_tree(lines)
     attach_content_blocks(
@@ -51,12 +54,10 @@ def run_hierarchical_chunking(
     )
     planned = plan_hierarchical_chunks(
         root,
-        max_tokens=max_tokens,
-        overlap_ratio=overlap_ratio,
+        budget=token_budget,
     )
     metrics = collect_chunking_metrics(
         planned,
-        max_tokens=max_tokens,
-        overlap_ratio=overlap_ratio,
+        budget=token_budget,
     )
     return HierarchicalChunkingPlan(planned_chunks=planned, metrics=metrics)

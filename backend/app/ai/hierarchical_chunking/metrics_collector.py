@@ -6,7 +6,7 @@
 # Responsibilities:
 #   - Count heading vs content chunks, averages, max depth
 # Dependencies:
-#   - app.ai.hierarchical_chunking.types, app.ai.tokens
+#   - app.ai.hierarchical_chunking.types, token_budget, app.ai.tokens
 # Public Exports:
 #   - collect_chunking_metrics
 # Database/Table: N/A
@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from app.ai.hierarchical_chunking.token_budget import ChunkTokenBudget
 from app.ai.hierarchical_chunking.types import ChunkingMetrics, PlannedChunk
 from app.ai.tokens import get_token_encoding_name
 from app.models.enums import ChunkLayoutType
@@ -24,8 +25,7 @@ from app.models.enums import ChunkLayoutType
 def collect_chunking_metrics(
     planned: list[PlannedChunk],
     *,
-    max_tokens: int,
-    overlap_ratio: float,
+    budget: ChunkTokenBudget,
 ) -> ChunkingMetrics:
     """Summarize a planned chunk list for observability."""
     if not planned:
@@ -36,8 +36,8 @@ def collect_chunking_metrics(
             avg_chars=0.0,
             avg_tokens=0.0,
             max_depth=0,
-            max_tokens=max_tokens,
-            overlap_ratio=overlap_ratio,
+            max_tokens=budget.hard_limit,
+            overlap_ratio=budget.overlap_ratio,
             tokenizer=get_token_encoding_name(),
         )
 
@@ -54,7 +54,7 @@ def collect_chunking_metrics(
         avg_chars=round(total_chars / len(planned), 2),
         avg_tokens=round(total_tokens / len(planned), 2),
         max_depth=max_depth,
-        max_tokens=max_tokens,
-        overlap_ratio=overlap_ratio,
+        max_tokens=budget.hard_limit,
+        overlap_ratio=budget.overlap_ratio,
         tokenizer=get_token_encoding_name(),
     )
