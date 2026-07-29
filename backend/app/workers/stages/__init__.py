@@ -14,8 +14,7 @@
 # Database/Table: N/A (handlers may write via their own sessions later)
 # Related Modules: app.workers.pipeline
 # Important Notes:
-#   - All five stages are real (Parse→Chunk→Embed→Graph→ES BM25).
-#   - `cleaning_normalize` exists in the enum but is not in STAGE_ORDER yet.
+#   - Six stages: Parse → Clean → Chunk → Embed → Graph → ES BM25.
 # =============================================================================
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ from uuid import UUID
 
 from app.models.enums import PipelineStage
 from app.workers.stages.chunking import stage_chunking
+from app.workers.stages.cleaning_normalize import stage_cleaning_normalize
 from app.workers.stages.document_understanding import stage_document_understanding
 from app.workers.stages.embedding import stage_embedding
 from app.workers.stages.errors import DataPipelineError, TransientPipelineError
@@ -36,6 +36,7 @@ StageHandler = Callable[[UUID], dict[str, Any]]
 
 STAGE_ORDER: tuple[PipelineStage, ...] = (
     PipelineStage.document_understanding,
+    PipelineStage.cleaning_normalize,
     PipelineStage.hierarchical_chunking,
     PipelineStage.embedding,
     PipelineStage.graph_extraction,
@@ -43,8 +44,8 @@ STAGE_ORDER: tuple[PipelineStage, ...] = (
 )
 
 STAGE_HANDLERS: dict[PipelineStage, StageHandler] = {
-    # v3 Document Understanding — parser selected via DOCUMENT_PARSER (llamaparse | local).
     PipelineStage.document_understanding: stage_document_understanding,
+    PipelineStage.cleaning_normalize: stage_cleaning_normalize,
     # Still the v2 interim chunker — reads the ocr_segments.json artifact that
     # document_understanding keeps emitting until Hierarchical Chunking lands.
     PipelineStage.hierarchical_chunking: stage_chunking,

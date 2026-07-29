@@ -161,7 +161,7 @@ def _stub_handlers() -> dict[PipelineStage, Any]:
     }
 
 
-def test_stub_pipeline_completes_all_five_stages() -> None:
+def test_stub_pipeline_completes_all_six_stages() -> None:
     run, version = _make_run_and_version()
     store = _FakeStore(run, version)
 
@@ -175,7 +175,7 @@ def test_stub_pipeline_completes_all_five_stages() -> None:
     assert result["stages"] == [s.value for s in STAGE_ORDER]
     assert run.status == PipelineStatus.completed
     assert version.status == DocumentVersionStatus.ready
-    assert len(store.stage_logs) == 5
+    assert len(store.stage_logs) == 6
     assert all(log.status == PipelineStatus.completed for log in store.stage_logs)
     assert [log.stage for log in store.stage_logs] == list(STAGE_ORDER)
 
@@ -197,6 +197,7 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
         PipelineStage.document_understanding: lambda v: _ok(
             v, name="document_understanding"
         ),
+        PipelineStage.cleaning_normalize: lambda v: _ok(v, name="cleaning_normalize"),
         PipelineStage.hierarchical_chunking: lambda v: _ok(v, name="hierarchical_chunking"),
         PipelineStage.embedding: _boom,
         PipelineStage.graph_extraction: lambda v: _ok(v, name="graph_extraction"),
@@ -210,18 +211,24 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
             session_factory=_session_factory_for(store),
         )
 
-    assert call_log == ["document_understanding", "hierarchical_chunking", "embedding"]
+    assert call_log == [
+        "document_understanding",
+        "cleaning_normalize",
+        "hierarchical_chunking",
+        "embedding",
+    ]
     assert "graph_extraction" not in call_log
     assert "indexing" not in call_log
     assert run.status == PipelineStatus.failed
     assert version.status == DocumentVersionStatus.failed
     assert run.error_message == "simulated embedding failure"
 
-    assert len(store.stage_logs) == 3
+    assert len(store.stage_logs) == 4
     assert store.stage_logs[0].status == PipelineStatus.completed
     assert store.stage_logs[1].status == PipelineStatus.completed
-    assert store.stage_logs[2].stage == PipelineStage.embedding
-    assert store.stage_logs[2].status == PipelineStatus.failed
+    assert store.stage_logs[2].status == PipelineStatus.completed
+    assert store.stage_logs[3].stage == PipelineStage.embedding
+    assert store.stage_logs[3].status == PipelineStatus.failed
 
 
 def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
@@ -234,6 +241,7 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
 
     handlers = {
         PipelineStage.document_understanding: _timeout,
+        PipelineStage.cleaning_normalize: lambda _v: {"stub": True},
         PipelineStage.hierarchical_chunking: lambda _v: {"stub": True},
         PipelineStage.embedding: lambda _v: {"stub": True},
         PipelineStage.graph_extraction: lambda _v: {"stub": True},
@@ -255,7 +263,7 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
 
 
 def test_all_stage_handlers_registered() -> None:
-    """All five STAGE_ORDER handlers are wired (no stubs left after Step 6)."""
+    """All STAGE_ORDER handlers are wired (no stubs left after Step 6)."""
     from app.workers.stages import STAGE_HANDLERS, STAGE_ORDER
 
     assert set(STAGE_HANDLERS) == set(STAGE_ORDER)
