@@ -11,7 +11,7 @@
 #   - MARKDOWN_HEADING_RE, layout maps, depth helpers
 # Database/Table: N/A
 # Related Modules: app.ai.hierarchical_chunking.*
-# Important Notes: Token budgets come from Settings — not duplicated here.
+# Important Notes: Token budgets live in token_budget.py — not duplicated here.
 # =============================================================================
 
 from __future__ import annotations

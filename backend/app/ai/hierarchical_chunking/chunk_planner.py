@@ -124,10 +124,3 @@ def _first_page_number(blocks: list[ContentBlock]) -> int | None:
         if block.page_number is not None:
             return block.page_number
     return None
-
-
-def _first_section_index(blocks: list[ContentBlock]) -> int | None:
-    for block in blocks:
-        if block.section_index is not None:
-            return block.section_index
-    return None

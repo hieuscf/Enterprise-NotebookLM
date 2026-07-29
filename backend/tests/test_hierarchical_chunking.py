@@ -142,7 +142,7 @@ def test_run_hierarchical_chunking_preserves_heading_chunks() -> None:
         ),
     )
 
-    assert plan.metrics.chunk_count >= 4
+    assert plan.metrics.chunks_created >= 4
     assert plan.metrics.heading_chunk_count >= 4
     paths = {chunk.heading_path for chunk in plan.planned_chunks if chunk.layout_type == ChunkLayoutType.heading}
     assert "Chapter > Marketing > Digital" in paths
@@ -232,10 +232,10 @@ def test_stage_hierarchical_chunking_persists_parent_and_heading_path() -> None:
     with (
         patch(f"{module}.get_minio_storage", return_value=storage),
         patch(f"{module}.get_sync_session", lambda: _session_for(version, document, created)),
-        patch(f"{module}.get_settings", return_value=MagicMock(chunk_max_tokens=512, chunk_overlap_ratio=0.12)),
     ):
         meta = stage_hierarchical_chunking(version.id)
 
+    assert meta["chunks_created"] == len(created)
     assert meta["chunk_count"] == len(created)
     assert meta["heading_chunk_count"] >= 4
     headings = [c for c in created if c.layout_type == ChunkLayoutType.heading]

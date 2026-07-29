@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 from uuid import UUID
 
@@ -26,8 +27,8 @@ from sqlalchemy.orm import Session
 from app.adapters.minio_storage import MinioStorageAdapter
 from app.ai.hierarchical_chunking.parent_resolver import resolve_parent_chunk_id
 from app.ai.hierarchical_chunking.pipeline import run_hierarchical_chunking
+from app.ai.hierarchical_chunking.stage_metadata import build_stage_metadata
 from app.ai.hierarchical_chunking.types import ChunkingInput
-from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.documents import Document, DocumentVersion
 from app.repositories.knowledge import KnowledgeSyncRepository
@@ -39,9 +40,8 @@ logger = get_logger(__name__)
 class HierarchicalChunkingService:
     """Plan and persist hierarchical chunks for one document version."""
 
-    def __init__(self, *, storage: MinioStorageAdapter, settings: Settings) -> None:
+    def __init__(self, *, storage: MinioStorageAdapter) -> None:
         self._storage = storage
-        self._settings = settings
 
     def execute(
         self,
@@ -65,6 +65,7 @@ class HierarchicalChunkingService:
             markdown_storage_path=markdown_key,
         )
 
+        started = time.perf_counter()
         markdown = self._download_markdown(markdown_key)
         plan = run_hierarchical_chunking(
             ChunkingInput(
@@ -97,17 +98,20 @@ class HierarchicalChunkingService:
             )
             temp_to_db[planned.temp_id] = chunk.id
 
+        processing_time_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "Hierarchical chunking completed",
             document_version_id=str(document_version_id),
-            chunk_count=plan.metrics.chunk_count,
-            heading_chunk_count=plan.metrics.heading_chunk_count,
+            chunks_created=plan.metrics.chunks_created,
+            sections_count=plan.metrics.sections_count,
+            processing_time_ms=processing_time_ms,
         )
 
-        return {
-            "document_version_id": str(document_version_id),
-            **plan.metrics.as_dict(),
-        }
+        return build_stage_metadata(
+            plan.metrics,
+            document_version_id=document_version_id,
+            processing_time_ms=processing_time_ms,
+        )
 
     def _download_markdown(self, object_key: str) -> str:
         try:

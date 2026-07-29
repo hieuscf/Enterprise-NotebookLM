@@ -39,8 +39,6 @@ def run_hierarchical_chunking(
     chunk_input: ChunkingInput,
     *,
     budget: ChunkTokenBudget | None = None,
-    max_tokens: int | None = None,
-    overlap_ratio: float | None = None,
 ) -> HierarchicalChunkingPlan:
     """Execute the rule-based hierarchical chunking pipeline."""
     token_budget = budget or ChunkTokenBudget.default()

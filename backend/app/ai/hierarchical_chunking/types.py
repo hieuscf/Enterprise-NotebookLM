@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
+from app.ai.hierarchical_chunking.token_budget import ChunkTokenBudget
+from app.ai.tokens import get_token_encoding_name
 from app.models.enums import ChunkLayoutType, FileType
 
 
@@ -79,15 +81,6 @@ class PlannedChunk:
 
 
 @dataclass(frozen=True, slots=True)
-class PersistedChunk:
-    """Chunk after DB insert with resolved parent reference."""
-
-    planned: PlannedChunk
-    db_id: UUID
-    parent_db_id: UUID | None
-
-
-@dataclass(frozen=True, slots=True)
 class ChunkingInput:
     """Inputs for one hierarchical chunking run."""
 
@@ -100,25 +93,72 @@ class ChunkingInput:
 class ChunkingMetrics:
     """Observability payload for ``pipeline_stage_logs.metadata``."""
 
-    chunk_count: int
+    sections_count: int
+    chunks_created: int
     heading_chunk_count: int
     content_chunk_count: int
-    avg_chars: float
-    avg_tokens: float
     max_depth: int
+    avg_chunk_tokens: float
+    largest_chunk_tokens: int
+    smallest_chunk_tokens: int
+    tables: int
+    lists: int
+    paragraphs: int
+    figure_captions: int
+    avg_chars: float
     max_tokens: int
     overlap_ratio: float
     tokenizer: str
 
-    def as_dict(self) -> dict[str, Any]:
+    @classmethod
+    def empty(cls, budget: ChunkTokenBudget) -> ChunkingMetrics:
+        """Zero-valued metrics when no chunks were produced."""
+        return cls(
+            sections_count=0,
+            chunks_created=0,
+            heading_chunk_count=0,
+            content_chunk_count=0,
+            max_depth=0,
+            avg_chunk_tokens=0.0,
+            largest_chunk_tokens=0,
+            smallest_chunk_tokens=0,
+            tables=0,
+            lists=0,
+            paragraphs=0,
+            figure_captions=0,
+            avg_chars=0.0,
+            max_tokens=budget.hard_limit,
+            overlap_ratio=budget.overlap_ratio,
+            tokenizer=get_token_encoding_name(),
+        )
+
+    def to_pipeline_log(self, processing_time_ms: int) -> dict[str, Any]:
+        """Metadata written to ``pipeline_stage_logs`` for hierarchical_chunking."""
         return {
-            "chunk_count": self.chunk_count,
+            "sections_count": self.sections_count,
+            "chunks_created": self.chunks_created,
+            "max_depth": self.max_depth,
+            "avg_chunk_tokens": self.avg_chunk_tokens,
+            "largest_chunk_tokens": self.largest_chunk_tokens,
+            "smallest_chunk_tokens": self.smallest_chunk_tokens,
+            "tables": self.tables,
+            "lists": self.lists,
+            "paragraphs": self.paragraphs,
+            "processing_time_ms": processing_time_ms,
+            # Legacy / downstream-compatible aliases
+            "chunk_count": self.chunks_created,
             "heading_chunk_count": self.heading_chunk_count,
             "content_chunk_count": self.content_chunk_count,
+            "avg_tokens": self.avg_chunk_tokens,
             "avg_chars": self.avg_chars,
-            "avg_tokens": self.avg_tokens,
-            "max_depth": self.max_depth,
+            "figure_captions": self.figure_captions,
             "max_tokens": self.max_tokens,
             "overlap_ratio": self.overlap_ratio,
             "tokenizer": self.tokenizer,
         }
+
+    def as_dict(self) -> dict[str, Any]:
+        """Backward-compatible alias without ``processing_time_ms``."""
+        payload = self.to_pipeline_log(processing_time_ms=0)
+        payload.pop("processing_time_ms", None)
+        return payload

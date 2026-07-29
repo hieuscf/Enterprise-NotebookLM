@@ -17,18 +17,18 @@
 
 from __future__ import annotations
 
+import traceback
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.adapters.minio_storage import get_minio_storage
-from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.sync_session import get_sync_session
 from app.models.documents import Document, DocumentVersion
 from app.services.hierarchical_chunking import HierarchicalChunkingService
-from app.workers.pipeline_errors import DataPipelineError
+from app.workers.pipeline_errors import DataPipelineError, TransientPipelineError
 
 logger = get_logger(__name__)
 
@@ -43,12 +43,11 @@ def stage_hierarchical_chunking(document_version_id: UUID) -> dict[str, Any]:
         Metadata for ``pipeline_stage_logs.metadata`` (chunk counts, depth, tokens).
 
     Raises:
-        DataPipelineError: Missing inputs or zero chunks produced.
+        DataPipelineError: Missing inputs or zero chunks produced (message includes traceback).
         TransientPipelineError: Temporary MinIO failures.
     """
-    settings = get_settings()
     storage = get_minio_storage()
-    service = HierarchicalChunkingService(storage=storage, settings=settings)
+    service = HierarchicalChunkingService(storage=storage)
 
     with get_sync_session() as session:
         version, document = _load_version_and_document(session, document_version_id)
@@ -59,12 +58,18 @@ def stage_hierarchical_chunking(document_version_id: UUID) -> dict[str, Any]:
                 version=version,
                 document=document,
             )
-        except Exception:
+        except TransientPipelineError:
+            logger.exception(
+                "Hierarchical chunking transient failure",
+                document_version_id=str(document_version_id),
+            )
+            raise
+        except Exception as exc:
             logger.exception(
                 "Hierarchical chunking failed",
                 document_version_id=str(document_version_id),
             )
-            raise
+            raise DataPipelineError(traceback.format_exc()) from exc
 
 
 def _load_version_and_document(

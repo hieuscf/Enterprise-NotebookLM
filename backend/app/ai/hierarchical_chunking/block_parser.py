@@ -299,9 +299,14 @@ def _skip_list(lines: list[MarkdownLine], index: int) -> int:
             break
         if MARKDOWN_HEADING_RE.match(stripped):
             break
-        if not LIST_ITEM_RE.match(stripped) and cursor > index:
-            break
-        cursor += 1
+        if LIST_ITEM_RE.match(stripped):
+            cursor += 1
+            continue
+        if cursor > index:
+            # Wrapped continuation line for the current list item.
+            cursor += 1
+            continue
+        break
     return cursor
 
 
