@@ -30,6 +30,20 @@ export type {
 export type { Citation, ContentLocation } from "./citations";
 
 export type {
+  Document,
+  DocumentListResponse,
+  DocumentVersion,
+  DocumentVersionStatus,
+  FileType,
+  PipelineRun,
+  PipelineStageLog,
+  PipelineStageName,
+  PipelineStageNameLegacy,
+  PipelineStageNameV3,
+  PipelineStatus,
+} from "./documents";
+
+export type {
   AddMemberInput,
   UpdateMemberRoleInput,
   Workspace,

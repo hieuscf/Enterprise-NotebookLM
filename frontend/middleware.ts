@@ -14,6 +14,7 @@
  * Database/Table: N/A
  * Related Modules: lib/auth/cookies (cookie names), app/login
  * Important Notes: Cookie presence only — JWT signature verified by backend/BFF.
+ *   Never redirect /login → / based on cookies alone (stale tokens cause loops).
  * =============================================================================
  */
 
@@ -42,15 +43,9 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (isPublic(pathname)) {
-    // Already signed in → skip login page
-    if (pathname === "/login" || pathname.startsWith("/login/")) {
-      const hasSession =
-        Boolean(request.cookies.get(ACCESS_COOKIE)?.value) ||
-        Boolean(request.cookies.get(REFRESH_COOKIE)?.value);
-      if (hasSession) {
-        return NextResponse.redirect(new URL("/", request.url));
-      }
-    }
+    // Do NOT bounce /login → / just because cookies exist.
+    // Stale access/refresh cookies would create an infinite redirect loop with
+    // client 401 → /login (middleware sees cookies → / → 401 → …).
     return NextResponse.next();
   }
 

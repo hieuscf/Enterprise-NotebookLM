@@ -13,7 +13,10 @@
  *   - default RootLayout
  * Database/Table: N/A
  * Related Modules: .cursor/rules/SKILL.md (typography)
- * Important Notes: Do not invent fonts outside the design system.
+ * Important Notes:
+ *   - Do not invent fonts outside the design system.
+ *   - suppressHydrationWarning on html/body only — do NOT MutationObserver-strip
+ *     extension attrs (ColorZilla/MDL); that fights the extension and freezes the UI.
  * =============================================================================
  */
 
@@ -56,9 +59,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi">
+    <html lang="vi" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${beVietnam.variable} ${sourceSerif.variable} min-h-screen bg-base font-sans text-primary antialiased`}
+        suppressHydrationWarning
       >
         {children}
       </body>

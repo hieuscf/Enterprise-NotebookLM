@@ -8,8 +8,8 @@
  *   - Load GET /workspaces/{id}; gate edit/delete via useWorkspaceRole
  *   - Handle 403 from API even when UI gates miss a mid-session role change
  * Dependencies:
- *   - hooks/useWorkspaceRole, useAuth; lib/api-client; ConfirmDialog, FormModal;
- *     features/shell/AppShell
+ *   - hooks/useWorkspaceRole, useAuth; lib/api-client; components/ui/confirm-dialog,
+ *     FormModal; features/shell/AppShell
  * Public Exports:
  *   - WorkspaceDetailView
  * Database/Table: N/A
@@ -33,8 +33,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { AppShell } from "@/features/shell/AppShell";
-import { ConfirmDialog } from "@/features/workspaces/ConfirmDialog";
 import {
   WorkspaceFormModal,
   type WorkspaceFormValues,

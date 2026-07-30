@@ -6,20 +6,21 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ---
 
-## Trạng thái triển khai (cập nhật 2026-07-29)
+## Trạng thái triển khai (cập nhật 2026-07-30)
 
-**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline ingestion vẫn dùng handler v2 interim (OCR local) mapped sang stage enum v3 (`document_understanding`, `hierarchical_chunking`). Auth, Workspace, Document API backend, hạ tầng Docker/CI đã xong.
+**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API backend, hạ tầng Docker/CI đã xong.
 
-**Chênh lệch so với tài liệu v3 (cần migration trước GĐ2):**
+**Chênh lệch so với tài liệu v3 (còn lại trước GĐ2):**
 
-| Hạng mục | v2 (đã có) | v3 (mục tiêu) |
+| Hạng mục | v2 / interim (đã có) | v3 (mục tiêu) |
 |---|---|---|
-| Schema DB | 29 bảng v3 (enum stage mới, agent_events, cột LlamaParse/confidence) | Pipeline worker chưa gọi LlamaParse / cleaning_normalize |
-| Pipeline ingestion | Handler OCR local → stage `document_understanding` / `hierarchical_chunking` | LlamaParse API + stage `cleaning_normalize` |
-| Chunking | Section + token window (`section_index`) | Hierarchical (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`) |
+| Schema DB | 29 bảng v3 (enum stage mới, agent_events, cột LlamaParse/confidence) | — (đã khớp) |
+| Pipeline ingestion | 6 stage v3; LlamaParse + fallback OCR local | — (đã khớp backend) |
+| Chunking | Stage `chunking` v2 (legacy test) | Hierarchical (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`) — **đã triển khai** stage `hierarchical_chunking` |
+| LlamaParse resilience | Retry bounded + CB độc lập (`app/clients/llamaparse_client.py`, `app/core/resilience/`) | — (đã khớp) |
 | Chat / Search | Chưa triển khai | Query Router + Confidence Engine + Agents (FR14) |
 
-**Tiến độ GĐ1 (P0):** ~75% — thiếu migration v3, FE documents/upload, và thay pipeline OCR bằng LlamaParse.
+**Tiến độ GĐ1 (P0):** ~95% — backend pipeline v3 xong; còn thiếu **FE** documents/upload + pipeline status UI.
 
 ---
 
@@ -67,14 +68,17 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [BE] `GET /.../versions/{versionId}/pipeline-status` — trả `pipeline_runs` + `pipeline_stage_logs`.
 
 #### Pipeline Worker — v3 (mục tiêu)
-- [ ] [AI] **Document Understanding** qua **LlamaParse API** cho PDF/DOCX/XLSX/PPTX/TXT: gọi API, lưu output Markdown (`document_versions.markdown_storage_path`) và Layout Analysis (`document_versions.layout_metadata`) song song với Metadata Extraction từ chính cấu trúc Markdown (stage `document_understanding`).
-- [ ] [AI] **Cleaning & Normalize** nội dung Markdown sau parse (loại nhiễu, chuẩn hoá định dạng) — stage `cleaning_normalize`.
-- [ ] [AI] **Hierarchical Chunking** — chia theo cấu trúc phân cấp (section → sub-section → đoạn văn) dựa trên `layout_metadata`; ghi `document_chunks.parent_chunk_id`, `heading_path`, `depth`, `layout_type` — stage `hierarchical_chunking`.
-- [ ] [BE] Circuit breaker/retry khi gọi LlamaParse API lỗi hoặc timeout (tách khỏi circuit breaker của LLM Provider ở FR13/GĐ3).
+- [x] [AI] **Document Understanding** qua **LlamaParse API** cho PDF/DOCX/XLSX/PPTX/TXT: gọi API, lưu output Markdown (`document_versions.markdown_storage_path`) và Layout Analysis (`document_versions.layout_metadata`) song song với Metadata Extraction từ chính cấu trúc Markdown (stage `document_understanding`) — `app/services/document_understanding.py` + `app/clients/llamaparse_client.py` + `app/ai/layout.py`. Không có LLAMAPARSE_API_KEY → fallback parser local, `document_versions.parser='local-ocr'`.
+- [x] [AI] **Cleaning & Normalize** nội dung Markdown sau parse (loại nhiễu, chuẩn hoá định dạng) — stage `cleaning_normalize` (`app/ai/markdown_cleaning.py`, `app/workers/stages/cleaning_normalize.py`).
+- [x] [AI] **Hierarchical Chunking** — chia theo cấu trúc phân cấp (section → sub-section → đoạn văn) dựa trên `layout_metadata`; ghi `document_chunks.parent_chunk_id`, `heading_path`, `depth`, `layout_type` — stage `hierarchical_chunking` (`app/ai/hierarchical_chunking/`, `app/services/hierarchical_chunking.py`). Pipeline log metadata đầy đủ; tests `tests/pipeline/test_hierarchical_chunking.py`.
+- [x] [BE] **Retry + Circuit Breaker LlamaParse** (tách khỏi circuit breaker LLM Provider ở FR13/GĐ3):
+  - Retry: `tenacity`, exponential backoff + jitter — `LLAMAPARSE_MAX_RETRIES`, `LLAMAPARSE_RETRY_MIN_WAIT`, `LLAMAPARSE_RETRY_MAX_WAIT` (`app/clients/retry_policy.py`).
+  - Circuit breaker riêng: `pybreaker`, namespace metrics `llamaparse_cb_*` — `LLAMAPARSE_CB_FAILURE_THRESHOLD`, `LLAMAPARSE_CB_RESET_TIMEOUT`, `LLAMAPARSE_CB_SUCCESS_THRESHOLD` (`app/core/resilience/`, `app/clients/llamaparse_client.py`).
+  - Fail-fast → `DataPipelineError("LlamaParse circuit breaker open")` → `pipeline_runs.status=failed`. Tests: `tests/test_llamaparse_resilience.py` (8 scenarios).
 
-#### Pipeline Worker — v2 interim (đã có, thay thế khi migration v3 xong)
-- [x] [AI] Pipeline Worker (Celery) — OCR & Cleaning local (PyMuPDF/python-docx/openpyxl/txt) cho PDF/DOCX/XLSX/PPTX/TXT — stage `ocr_cleaning`.
-- [x] [AI] Chunking theo cấu trúc section + token window — stage `chunking` (chưa phân cấp cha-con v3).
+#### Pipeline Worker — v2 interim (legacy, giữ cho test/fallback)
+- [x] [AI] Pipeline Worker (Celery) — OCR & Cleaning local (PyMuPDF/python-docx/openpyxl/txt) cho PDF/DOCX/XLSX/PPTX/TXT — stage `ocr_cleaning`. **Giữ lại làm parser fallback offline** cho `document_understanding` khi không có `LLAMAPARSE_API_KEY`.
+- [x] [AI] Chunking theo cấu trúc section + token window — stage `chunking` (v2, **không còn trong STAGE_ORDER**; thay bởi `hierarchical_chunking`). File giữ cho legacy tests.
 - [x] [AI] Embedding tài liệu (model theo `embeddings.model_name`), ghi `document_chunks.embedding_id`.
 - [x] [AI] Graph Extraction (entities + entity_relations) qua LightRAG — Low-Level Retrieval.
 - [x] [AI] Topic extraction phân cấp (`topics.parent_topic_id`, `level`) — High-Level Retrieval.
@@ -170,7 +174,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [BE] `GET /admin/workspaces/{id}/query-logs` (filter route_type).
 - [ ] [BE] `GET /admin/workspaces/{id}/pipeline-runs` (filter status).
 - [ ] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type).
-- [ ] [BE] Circuit breaker + fallback khi LLM provider lỗi/chậm (Prompt Construction → LLM call).
+- [ ] [BE] Circuit breaker + fallback khi **LLM provider** lỗi/chậm (Prompt Construction → LLM call). **Tách instance/state/metrics khỏi LlamaParse CB** (`anthropic_cb_*` hoặc tương đương — dùng chung framework `app/core/resilience/`).
 - [ ] [FE] Dashboard admin cơ bản: cost summary, pipeline status, query log.
 
 ### 3.6 Bảo mật & Đa tenant (hoàn thiện FR12)
@@ -189,7 +193,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [x] [BE] Tách container `backend-api` và `celery-worker` để scale độc lập — `docker-compose.yml`.
 - [ ] [BE] Docker Compose/K8s manifest production, healthcheck, autoscaling cơ bản cho pipeline worker.
 - [ ] [BE] Backup/restore Postgres + MinIO.
-- [ ] [BE] Runbook vận hành: xử lý pipeline_run failed, circuit breaker trip, cache dọn rác.
+- [ ] [BE] Runbook vận hành: xử lý pipeline_run failed, circuit breaker trip (LlamaParse vs LLM), cache dọn rác.
 
 **Tiêu chí hoàn thành GĐ3 (release):** Toàn bộ UC1–UC13 chạy được end-to-end trên môi trường staging, có dashboard cost/observability, có test coverage cho luồng lõi (Router + Citation + Confidence Engine), tài liệu vận hành đầy đủ.
 

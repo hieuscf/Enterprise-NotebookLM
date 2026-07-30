@@ -22,9 +22,9 @@
 
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogIn, Mail } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
-import { authLogin } from "@/lib/api-client";
+import { authLogin, authMe } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 const inputBaseClass = cn(
@@ -44,6 +44,20 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Soft redirect only after /auth/me succeeds — never trust cookie presence alone.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const me = await authMe();
+      if (!cancelled && me) {
+        router.replace(nextPath.startsWith("/") ? nextPath : "/workspaces");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [nextPath, router]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

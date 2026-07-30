@@ -29,7 +29,10 @@ import type { AuthToken, User } from "@/types/auth";
 
 async function tryRefresh(): Promise<string | null> {
   const refreshToken = await getRefreshToken();
-  if (!refreshToken) return null;
+  if (!refreshToken) {
+    await clearAuthCookies();
+    return null;
+  }
 
   const upstream = await backendFetch("/auth/refresh", {
     method: "POST",
@@ -55,6 +58,7 @@ export async function GET() {
     access = (await tryRefresh()) ?? undefined;
   }
   if (!access) {
+    await clearAuthCookies();
     return NextResponse.json(
       { code: "unauthorized", message: "Unauthorized" },
       { status: 401 },
@@ -68,6 +72,7 @@ export async function GET() {
   if (upstream.status === 401) {
     const refreshed = await tryRefresh();
     if (!refreshed) {
+      await clearAuthCookies();
       return NextResponse.json(
         { code: "unauthorized", message: "Unauthorized" },
         { status: 401 },
@@ -80,6 +85,7 @@ export async function GET() {
 
   const payload = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
+    await clearAuthCookies();
     return NextResponse.json(
       { code: "unauthorized", message: "Unauthorized" },
       { status: upstream.status },

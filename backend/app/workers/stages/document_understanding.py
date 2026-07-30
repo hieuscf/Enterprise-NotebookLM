@@ -17,6 +17,8 @@
 # Important Notes:
 #   - Business logic lives in DocumentUnderstandingService — this module is orchestration only.
 #   - Parser selection is explicit via Settings.document_parser (see config.py).
+#   - Expunge version/document before session commit; expire_on_commit would otherwise
+#     detach them and cause DetachedInstanceError during long-running parse I/O.
 # =============================================================================
 
 from __future__ import annotations
@@ -69,6 +71,10 @@ def stage_document_understanding(document_version_id: UUID) -> dict[str, Any]:
 
     with get_sync_session() as session:
         version, document = _load_version_and_document(session, document_version_id)
+        # Expunge before commit so attrs stay readable after the session closes.
+        # Otherwise expire_on_commit triggers DetachedInstanceError in execute().
+        session.expunge(document)
+        session.expunge(version)
 
     result: DocumentUnderstandingResult | None = None
     try:

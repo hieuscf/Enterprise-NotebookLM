@@ -16,9 +16,10 @@
  *   - Sidebar, type SidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
- * Important Notes: Only "home", "workspaces" and "members" (when a workspaceId
- *   is in context) are real routes today (Phase 1.3). Everything else must
- *   stay visibly disabled — never link to a page that 404s.
+ * Important Notes: "home", "workspaces", "members", "upload" and "documents"
+ *   (when a workspaceId is in context) are real routes today (Phase 1.4 adds
+ *   Upload + Document list/detail). Everything else must stay visibly
+ *   disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -39,6 +40,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  UploadCloud,
   Users,
   Wand2,
   X,
@@ -48,7 +50,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
-export type SidebarActiveKey = "home" | "workspaces" | "members";
+export type SidebarActiveKey = "home" | "workspaces" | "members" | "upload" | "documents";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -57,8 +59,8 @@ type NavItem = {
   href?: string;
   /** Static badge for not-yet-built modules; ignored once `href` resolves. */
   badge?: string;
-  /** Marks the "Thành viên" item — its href depends on the current workspaceId. */
-  contextual?: "members";
+  /** Marks items whose href depends on the current workspaceId. */
+  contextual?: "members" | "upload" | "documents";
 };
 
 type NavGroup = {
@@ -73,7 +75,20 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Knowledge",
     items: [
-      { label: "Tài liệu", icon: FileText, badge: "Sắp có" },
+      {
+        key: "documents",
+        label: "Tài liệu",
+        icon: FileText,
+        contextual: "documents",
+        badge: "Chọn workspace",
+      },
+      {
+        key: "upload",
+        label: "Tải lên tài liệu",
+        icon: UploadCloud,
+        contextual: "upload",
+        badge: "Chọn workspace",
+      },
       { label: "Tìm kiếm", icon: Search, badge: "Sắp có" },
       { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
       { label: "Knowledge Graph", icon: Network, badge: "Sắp có" },
@@ -187,10 +202,15 @@ export function Sidebar({
                 {group.items.map((item) => {
                   const isActive = item.key === active;
                   const Icon = item.icon;
-                  const href =
-                    item.contextual === "members" && workspaceId
+                  const href = workspaceId
+                    ? item.contextual === "members"
                       ? `/workspaces/${workspaceId}/members`
-                      : item.href;
+                      : item.contextual === "upload"
+                        ? `/workspaces/${workspaceId}/upload`
+                        : item.contextual === "documents"
+                          ? `/workspaces/${workspaceId}/documents`
+                          : item.href
+                    : item.href;
 
                   if (href) {
                     return (

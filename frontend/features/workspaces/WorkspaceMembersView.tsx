@@ -9,7 +9,7 @@
  *   - Handle 403/404/409/400(last_admin) from API with friendly messages
  * Dependencies:
  *   - hooks/useWorkspaceMembers, useWorkspaceRole, useAuth; lib/api-client
- *   - features/workspaces/AddMemberModal, ConfirmDialog
+ *   - features/workspaces/AddMemberModal; components/ui/confirm-dialog
  * Public Exports:
  *   - WorkspaceMembersView
  * Database/Table: N/A
@@ -32,12 +32,12 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   AddMemberModal,
   type AddMemberFormValues,
 } from "@/features/workspaces/AddMemberModal";
 import { AppShell } from "@/features/shell/AppShell";
-import { ConfirmDialog } from "@/features/workspaces/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaceMembers";
 import { useWorkspaceRole } from "@/hooks/useWorkspaceRole";

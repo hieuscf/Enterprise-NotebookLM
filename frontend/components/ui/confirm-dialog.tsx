@@ -1,27 +1,35 @@
 /**
  * =============================================================================
- * File: ConfirmDialog.tsx
- * Module/Service: Workspace Service (Web App)
+ * File: confirm-dialog.tsx
+ * Module/Service: Web App shell
  * Layer: UI
- * Purpose: Accessible confirm dialog for destructive actions (soft-delete).
+ * Purpose: Accessible confirm dialog for consequential actions — destructive
+ *          (delete/remove) or informational (e.g. rollback document version).
  * Responsibilities:
  *   - Require explicit confirm; show loading + error; Escape / backdrop cancel
+ *   - `variant="danger"` (red, default) vs `variant="primary"` (teal, for
+ *     non-destructive but consequential actions like Set current version)
  * Dependencies:
  *   - lucide-react, lib/utils
  * Public Exports:
  *   - ConfirmDialog
  * Database/Table: N/A
- * Related Modules: features/workspaces/WorkspaceDetailView
+ * Related Modules: features/workspaces/WorkspaceDetailView, WorkspaceMembersView,
+ *   features/documents/DocumentVersionHistory
  * Important Notes: Does not auto-close until parent sets open=false after success.
+ *   Moved here from features/workspaces/ConfirmDialog.tsx (Part 2 of FE Documents
+ *   work) since it is a shared primitive, not workspace-specific.
  * =============================================================================
  */
 
 "use client";
 
-import { AlertTriangle, Loader2, X } from "lucide-react";
+import { AlertTriangle, Info, Loader2, X } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
 
 import { cn } from "@/lib/utils";
+
+type Variant = "danger" | "primary";
 
 type Props = {
   open: boolean;
@@ -31,8 +39,29 @@ type Props = {
   cancelLabel?: string;
   confirming?: boolean;
   error?: string | null;
+  variant?: Variant;
   onConfirm: () => void;
   onCancel: () => void;
+};
+
+const VARIANT_ICON_WRAP: Record<Variant, string> = {
+  danger: "bg-danger-soft",
+  primary: "bg-accent-primary-soft",
+};
+
+const VARIANT_ICON_COLOR: Record<Variant, string> = {
+  danger: "text-danger",
+  primary: "text-accent-primary",
+};
+
+const VARIANT_CONFIRM_BUTTON: Record<Variant, string> = {
+  danger: "bg-danger hover:opacity-90",
+  primary: "bg-accent-primary hover:bg-accent-primary-hover",
+};
+
+const VARIANT_CONFIRMING_LABEL: Record<Variant, string> = {
+  danger: "Đang xoá…",
+  primary: "Đang xử lý…",
 };
 
 export function ConfirmDialog({
@@ -43,12 +72,14 @@ export function ConfirmDialog({
   cancelLabel = "Huỷ",
   confirming = false,
   error = null,
+  variant = "danger",
   onConfirm,
   onCancel,
 }: Props) {
   const titleId = useId();
   const descId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const Icon = variant === "danger" ? AlertTriangle : Info;
 
   useEffect(() => {
     if (!open) return;
@@ -80,8 +111,13 @@ export function ConfirmDialog({
         className="relative z-10 w-full max-w-md rounded-lg border border-border-default bg-surface p-6 shadow-lg"
       >
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-danger-soft">
-            <AlertTriangle className="h-5 w-5 text-danger" aria-hidden />
+          <span
+            className={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+              VARIANT_ICON_WRAP[variant],
+            )}
+          >
+            <Icon className={cn("h-5 w-5", VARIANT_ICON_COLOR[variant])} aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
             <h2 id={titleId} className="text-h3 text-primary">
@@ -127,15 +163,16 @@ export function ConfirmDialog({
             disabled={confirming}
             onClick={onConfirm}
             className={cn(
-              "flex h-10 items-center gap-2 rounded-md bg-danger px-4",
+              "flex h-10 items-center gap-2 rounded-md px-4",
               "text-body-sm font-medium text-white",
-              "hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60",
+              "disabled:cursor-not-allowed disabled:opacity-60",
+              VARIANT_CONFIRM_BUTTON[variant],
             )}
           >
             {confirming ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                Đang xoá…
+                {VARIANT_CONFIRMING_LABEL[variant]}
               </>
             ) : (
               confirmLabel
