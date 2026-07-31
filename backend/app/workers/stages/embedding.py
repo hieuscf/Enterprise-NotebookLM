@@ -97,6 +97,7 @@ def stage_embedding(document_version_id: UUID) -> dict[str, Any]:
                     "payload": {
                         # Shared collection: filter retrieval by workspace_id.
                         "workspace_id": str(document.workspace_id),
+                        "document_id": str(document.id),
                         "document_version_id": str(document_version_id),
                         "kind": "chunk",
                         "chunk_id": str(chunk.id),

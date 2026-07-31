@@ -200,12 +200,31 @@ def stage_graph_extraction(document_version_id: UUID) -> dict[str, Any]:
         # Best-effort Neo4j mirror (Postgres remains canonical).
         neo4j_synced = False
         if neo4j_entities:
+            mentions: list[dict[str, Any]] = []
+            for ent in neo4j_entities:
+                name = (ent.get("name") or "").strip()
+                if not name:
+                    continue
+                name_l = name.lower()
+                for chunk in db_chunks:
+                    content = chunk.content or ""
+                    if name_l in content.lower():
+                        mentions.append(
+                            {
+                                "entity_id": ent["id"],
+                                "chunk_id": str(chunk.id),
+                                "document_id": str(document.id),
+                                "document_version_id": str(document_version_id),
+                                "content": content,
+                            }
+                        )
             try:
                 get_neo4j_graph().upsert_entities_and_relations(
                     workspace_id=document.workspace_id,
                     source_version_id=document_version_id,
                     entities=neo4j_entities,
                     relations=neo4j_relations,
+                    mentions=mentions,
                 )
                 neo4j_synced = True
             except Exception:

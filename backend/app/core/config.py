@@ -16,8 +16,8 @@
 # =============================================================================
 
 from functools import lru_cache
-
 from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -126,6 +126,18 @@ class Settings(BaseSettings):
     tesseract_cmd: str | None = None
     # Optional TESSDATA_PREFIX override (folder containing *.traineddata)
     tessdata_prefix: str | None = None
+
+    # FR3 — Hybrid Retrieval (0 LLM). Timeouts / limits from env — never hardcode in services.
+    retrieval_vector_timeout_seconds: float = 2.0
+    retrieval_bm25_timeout_seconds: float = 2.0
+    retrieval_graph_timeout_seconds: float = 2.0
+    retrieval_per_source_top_k: int = 20
+    retrieval_max_rerank_candidates: int = 100
+    retrieval_snippet_max_chars: int = 500
+    # heuristic = token-overlap (CI/local, no model download); cross_encoder = sentence-transformers
+    reranker_backend: Literal["heuristic", "cross_encoder"] = "heuristic"
+    reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
 
 @lru_cache
 def get_settings() -> Settings:

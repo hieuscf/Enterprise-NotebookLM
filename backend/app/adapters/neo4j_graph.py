@@ -1,17 +1,18 @@
 # =============================================================================
 # File: neo4j_graph.py
-# Module/Service: Pipeline Worker / LightRAG Low-Level Graph
+# Module/Service: Pipeline Worker / LightRAG Low-Level Graph / Hybrid Retrieval
 # Layer: Adapter
-# Purpose: Neo4j writer for entities and relations extracted in graph_extraction.
+# Purpose: Neo4j writer + entity/chunk graph reader for Low-Level Retrieval (FR2/FR3).
 # Responsibilities:
-#   - Upsert Entity nodes and RELATES_TO edges scoped by workspace/version
+#   - Upsert Entity nodes, RELATES_TO edges, optional Chunk + MENTIONED_IN
+#   - Search entities by name/alias scoped by workspace_id
 # Dependencies:
 #   - neo4j driver, app.core.config.Settings
 # Public Exports:
 #   - Neo4jGraphAdapter, get_neo4j_graph
 # Database/Table: entities, entity_relations (Postgres is source of truth; Neo4j mirror)
-# Related Modules: app.ai.graph_extraction, app.workers.pipeline
-# Important Notes: Non-LLM graph write from Celery; Postgres remains canonical.
+# Related Modules: app.ai.graph_extraction, app.services.retrieval.graph_search
+# Important Notes: Non-LLM graph I/O; Postgres remains canonical for entity rows.
 # =============================================================================
 
 from __future__ import annotations
@@ -42,7 +43,14 @@ class Neo4jGraphAdapter:
         source_version_id: UUID,
         entities: list[dict[str, Any]],
         relations: list[dict[str, Any]],
+        mentions: list[dict[str, Any]] | None = None,
     ) -> None:
+        """Upsert entities/relations and optional ``(Entity)-[:MENTIONED_IN]->(Chunk)``.
+
+        Args:
+            mentions: Optional list of
+                ``{entity_id, chunk_id, document_id, content, aliases?}``.
+        """
         with self._driver.session() as session:
             session.execute_write(
                 self._write_graph,
@@ -50,6 +58,33 @@ class Neo4jGraphAdapter:
                 str(source_version_id),
                 entities,
                 relations,
+                mentions or [],
+            )
+
+    def search_entities_with_chunks(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        top_k: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Match entities by name/alias; return linked chunks via MENTIONED_IN.
+
+        Returns:
+            Rows with ``entity_id``, ``entity_name``, ``source_version_id``,
+            ``chunk_id`` (nullable), ``document_id`` (nullable), ``content``, ``score``.
+        """
+        q = (query_text or "").strip()
+        if not q:
+            return []
+        with self._driver.session() as session:
+            return list(
+                session.execute_read(
+                    self._read_entities,
+                    str(workspace_id),
+                    q,
+                    max(1, top_k),
+                )
             )
 
     @staticmethod
@@ -59,14 +94,17 @@ class Neo4jGraphAdapter:
         source_version_id: str,
         entities: list[dict[str, Any]],
         relations: list[dict[str, Any]],
+        mentions: list[dict[str, Any]],
     ) -> None:
         for ent in entities:
+            aliases = ent.get("aliases") or []
             tx.run(
                 """
                 MERGE (e:Entity {id: $id})
                 SET e.name = $name,
                     e.type = $type,
                     e.description = $description,
+                    e.aliases = $aliases,
                     e.workspace_id = $workspace_id,
                     e.source_version_id = $source_version_id
                 """,
@@ -74,6 +112,7 @@ class Neo4jGraphAdapter:
                 name=ent["name"],
                 type=ent["type"],
                 description=ent.get("description"),
+                aliases=list(aliases),
                 workspace_id=workspace_id,
                 source_version_id=source_version_id,
             )
@@ -94,6 +133,77 @@ class Neo4jGraphAdapter:
                 description=rel.get("description"),
                 weight=rel.get("weight"),
             )
+        for mention in mentions:
+            tx.run(
+                """
+                MATCH (e:Entity {id: $entity_id})
+                MERGE (c:Chunk {id: $chunk_id})
+                SET c.document_id = $document_id,
+                    c.document_version_id = $document_version_id,
+                    c.workspace_id = $workspace_id,
+                    c.content = $content
+                MERGE (e)-[:MENTIONED_IN]->(c)
+                """,
+                entity_id=mention["entity_id"],
+                chunk_id=mention["chunk_id"],
+                document_id=mention.get("document_id"),
+                document_version_id=mention.get("document_version_id"),
+                workspace_id=workspace_id,
+                content=(mention.get("content") or "")[:2000],
+            )
+
+    @staticmethod
+    def _read_entities(
+        tx: Any,
+        workspace_id: str,
+        query_text: str,
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        result = tx.run(
+            """
+            MATCH (e:Entity)
+            WHERE e.workspace_id = $workspace_id
+              AND (
+                toLower(e.name) CONTAINS toLower($query_text)
+                OR any(
+                  a IN coalesce(e.aliases, [])
+                  WHERE toLower(a) CONTAINS toLower($query_text)
+                )
+              )
+            OPTIONAL MATCH (e)-[:MENTIONED_IN]->(c:Chunk)
+            WHERE c IS NULL OR c.workspace_id = $workspace_id
+            RETURN e.id AS entity_id,
+                   e.name AS entity_name,
+                   e.source_version_id AS source_version_id,
+                   c.id AS chunk_id,
+                   c.document_id AS document_id,
+                   c.content AS content,
+                   CASE
+                     WHEN toLower(e.name) = toLower($query_text) THEN 1.0
+                     WHEN toLower(e.name) CONTAINS toLower($query_text) THEN 0.85
+                     ELSE 0.7
+                   END AS score
+            ORDER BY score DESC
+            LIMIT $top_k
+            """,
+            workspace_id=workspace_id,
+            query_text=query_text,
+            top_k=top_k,
+        )
+        rows: list[dict[str, Any]] = []
+        for record in result:
+            rows.append(
+                {
+                    "entity_id": record["entity_id"],
+                    "entity_name": record["entity_name"],
+                    "source_version_id": record["source_version_id"],
+                    "chunk_id": record["chunk_id"],
+                    "document_id": record["document_id"],
+                    "content": record["content"] or "",
+                    "score": float(record["score"] or 0.0),
+                }
+            )
+        return rows
 
 
 @lru_cache

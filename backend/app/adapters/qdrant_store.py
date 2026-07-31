@@ -117,6 +117,55 @@ class QdrantStoreAdapter:
             ),
         )
 
+    def search_similar(
+        self,
+        *,
+        workspace_id: UUID,
+        query_vector: list[float],
+        top_k: int = 20,
+        kind: str = "chunk",
+    ) -> list[dict[str, Any]]:
+        """Cosine similarity search filtered by ``workspace_id`` (and optional kind).
+
+        Returns:
+            List of dicts: ``chunk_id``, ``document_version_id``, ``score``, ``payload``.
+        """
+        self.ensure_collection()
+        must: list[qmodels.FieldCondition] = [
+            qmodels.FieldCondition(
+                key="workspace_id",
+                match=qmodels.MatchValue(value=str(workspace_id)),
+            )
+        ]
+        if kind:
+            must.append(
+                qmodels.FieldCondition(
+                    key="kind",
+                    match=qmodels.MatchValue(value=kind),
+                )
+            )
+        hits = self._client.search(
+            collection_name=self._collection,
+            query_vector=query_vector,
+            query_filter=qmodels.Filter(must=must),
+            limit=max(1, top_k),
+            with_payload=True,
+        )
+        results: list[dict[str, Any]] = []
+        for hit in hits:
+            payload = dict(hit.payload or {})
+            chunk_id = payload.get("chunk_id") or str(hit.id)
+            results.append(
+                {
+                    "chunk_id": str(chunk_id),
+                    "document_version_id": payload.get("document_version_id"),
+                    "document_id": payload.get("document_id"),
+                    "score": float(hit.score or 0.0),
+                    "payload": payload,
+                }
+            )
+        return results
+
     @property
     def collection_name(self) -> str:
         return self._collection

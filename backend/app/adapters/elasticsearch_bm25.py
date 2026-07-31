@@ -33,6 +33,7 @@ _INDEX_MAPPINGS: dict[str, Any] = {
     "properties": {
         "chunk_id": {"type": "keyword"},
         "document_version_id": {"type": "keyword"},
+        "document_id": {"type": "keyword"},
         "workspace_id": {"type": "keyword"},
         "content": {"type": "text"},
         "page_number": {"type": "integer"},
@@ -78,6 +79,7 @@ class ElasticsearchBm25Adapter:
                 "_source": {
                     "chunk_id": str(doc["chunk_id"]),
                     "document_version_id": str(doc["document_version_id"]),
+                    "document_id": str(doc["document_id"]) if doc.get("document_id") else None,
                     "workspace_id": str(doc["workspace_id"]),
                     "content": doc.get("content") or "",
                     "page_number": doc.get("page_number"),
@@ -108,6 +110,87 @@ class ElasticsearchBm25Adapter:
             refresh=True,
             conflicts="proceed",
         )
+
+    def search(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        top_k: int = 20,
+    ) -> list[dict[str, Any]]:
+        """BM25 search with phrase + fuzziness boosts, scoped by workspace_id.
+
+        Returns:
+            List of dicts: ``chunk_id``, ``document_version_id``, ``content``, ``score``.
+        """
+        self.ensure_index()
+        q = (query_text or "").strip()
+        if not q:
+            return []
+        body: dict[str, Any] = {
+            "size": max(1, top_k),
+            "query": {
+                "bool": {
+                    "filter": [{"term": {"workspace_id": str(workspace_id)}}],
+                    "should": [
+                        {
+                            "match_phrase": {
+                                "content": {"query": q, "boost": 3.0},
+                            }
+                        },
+                        {
+                            "match": {
+                                "content": {
+                                    "query": q,
+                                    "operator": "and",
+                                    "boost": 2.0,
+                                }
+                            }
+                        },
+                        {
+                            "match": {
+                                "content": {
+                                    "query": q,
+                                    "fuzziness": "AUTO",
+                                    "boost": 1.0,
+                                }
+                            }
+                        },
+                    ],
+                    "minimum_should_match": 1,
+                }
+            },
+        }
+        try:
+            resp = self._client.search(
+                index=self._index,
+                query=body["query"],
+                size=body["size"],
+            )
+        except TypeError:
+            resp = self._client.search(index=self._index, body=body)
+
+        if isinstance(resp, dict):
+            hits = resp.get("hits", {}).get("hits", [])
+        else:
+            try:
+                hits = list(resp["hits"]["hits"])
+            except Exception:  # noqa: BLE001
+                hits = []
+
+        results: list[dict[str, Any]] = []
+        for hit in hits:
+            src = hit.get("_source") or {}
+            results.append(
+                {
+                    "chunk_id": str(src.get("chunk_id") or hit.get("_id")),
+                    "document_version_id": src.get("document_version_id"),
+                    "document_id": src.get("document_id"),
+                    "content": src.get("content") or "",
+                    "score": float(hit.get("_score") or 0.0),
+                }
+            )
+        return results
 
     @property
     def index_name(self) -> str:
