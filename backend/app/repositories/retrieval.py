@@ -246,3 +246,38 @@ class RetrievalRepository:
             .limit(max(1, limit))
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def documents_meta_by_ids(
+        self,
+        workspace_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, MetadataDocumentRow]:
+        """Load document metadata for filter / title hydration (workspace-scoped)."""
+        if not document_ids:
+            return {}
+        stmt = (
+            select(Document, DocumentVersion)
+            .outerjoin(
+                DocumentVersion,
+                DocumentVersion.id == Document.current_version_id,
+            )
+            .where(
+                Document.workspace_id == workspace_id,
+                Document.id.in_(document_ids),
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        out: dict[uuid.UUID, MetadataDocumentRow] = {}
+        for doc, version in rows:
+            out[doc.id] = MetadataDocumentRow(
+                document_id=doc.id,
+                workspace_id=doc.workspace_id,
+                title=doc.title,
+                file_type=doc.file_type,
+                created_at=doc.created_at,
+                updated_at=doc.updated_at,
+                uploaded_by=version.uploaded_by if version else None,
+                version_number=version.version_number if version else None,
+                status=version.status.value if version else None,
+            )
+        return out

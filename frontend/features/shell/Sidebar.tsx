@@ -16,10 +16,9 @@
  *   - Sidebar, type SidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
- * Important Notes: "home", "workspaces", "members", "upload" and "documents"
- *   (when a workspaceId is in context) are real routes today (Phase 1.4 adds
- *   Upload + Document list/detail). Everything else must stay visibly
- *   disabled — never link to a page that 404s.
+ * Important Notes: "home", "workspaces", "members", "upload", "documents",
+ *   and "search" (when a workspaceId is in context) are real routes today.
+ *   Everything else must stay visibly disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -50,7 +49,13 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
-export type SidebarActiveKey = "home" | "workspaces" | "members" | "upload" | "documents";
+export type SidebarActiveKey =
+  | "home"
+  | "workspaces"
+  | "members"
+  | "upload"
+  | "documents"
+  | "search";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -60,7 +65,7 @@ type NavItem = {
   /** Static badge for not-yet-built modules; ignored once `href` resolves. */
   badge?: string;
   /** Marks items whose href depends on the current workspaceId. */
-  contextual?: "members" | "upload" | "documents";
+  contextual?: "members" | "upload" | "documents" | "search";
 };
 
 type NavGroup = {
@@ -89,7 +94,13 @@ const NAV_GROUPS: NavGroup[] = [
         contextual: "upload",
         badge: "Chọn workspace",
       },
-      { label: "Tìm kiếm", icon: Search, badge: "Sắp có" },
+      {
+        key: "search",
+        label: "Tìm kiếm",
+        icon: Search,
+        contextual: "search",
+        badge: "Chọn workspace",
+      },
       { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
       { label: "Knowledge Graph", icon: Network, badge: "Sắp có" },
     ],
@@ -209,7 +220,9 @@ export function Sidebar({
                         ? `/workspaces/${workspaceId}/upload`
                         : item.contextual === "documents"
                           ? `/workspaces/${workspaceId}/documents`
-                          : item.href
+                          : item.contextual === "search"
+                            ? `/workspaces/${workspaceId}/search`
+                            : item.href
                     : item.href;
 
                   if (href) {

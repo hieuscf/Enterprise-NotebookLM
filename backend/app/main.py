@@ -22,6 +22,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.documents import router as documents_router
+from app.api.search import router as search_router
 from app.api.workspaces import router as workspaces_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
@@ -52,7 +53,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Enterprise NotebookLM API",
     version="0.1.0",
-    description="Backend API System — Phase 1.4 Document Ingestion (FR2).",
+    description="Backend API System — Phase 2 Search (FR3) + Document Ingestion (FR2).",
     lifespan=lifespan,
 )
 
@@ -61,6 +62,7 @@ instrument_app(app)
 app.include_router(auth_router)
 app.include_router(workspaces_router)
 app.include_router(documents_router)
+app.include_router(search_router)
 
 
 @app.get("/health", tags=["Health"])

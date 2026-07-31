@@ -24,6 +24,7 @@
 "use client";
 
 import { Bell, Menu, Search } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { Sidebar, type SidebarActiveKey } from "@/features/shell/Sidebar";
@@ -66,13 +67,22 @@ export function AppShell({ active, user, workspaceId, children }: Props) {
               className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-tertiary"
               aria-hidden
             />
-            <input
-              type="search"
-              disabled
-              title="Tìm kiếm toàn văn — sắp có"
-              placeholder="Tìm kiếm tài liệu, chủ đề, cuộc trò chuyện… (sắp có)"
-              className="h-10 w-full cursor-not-allowed rounded-md border border-border-default bg-elevated/60 pl-9 pr-3 text-body-sm text-tertiary placeholder:text-tertiary"
-            />
+            {workspaceId ? (
+              <Link
+                href={`/workspaces/${workspaceId}/search`}
+                className="flex h-10 w-full items-center rounded-md border border-border-default bg-base pl-9 pr-3 text-body-sm text-tertiary hover:border-accent-primary/40 hover:text-secondary"
+              >
+                Tìm kiếm tài liệu trong workspace…
+              </Link>
+            ) : (
+              <input
+                type="search"
+                disabled
+                title="Chọn workspace để tìm kiếm"
+                placeholder="Tìm kiếm tài liệu… (chọn workspace)"
+                className="h-10 w-full cursor-not-allowed rounded-md border border-border-default bg-elevated/60 pl-9 pr-3 text-body-sm text-tertiary placeholder:text-tertiary"
+              />
+            )}
           </div>
           <div className="flex-1 sm:hidden" />
 

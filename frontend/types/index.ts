@@ -44,6 +44,15 @@ export type {
 } from "./documents";
 
 export type {
+  RetrievalMethod,
+  SearchFilters,
+  SearchHistoryItem,
+  SearchRequest,
+  SearchResultItem,
+  SearchResultResponse,
+} from "./search";
+
+export type {
   AddMemberInput,
   UpdateMemberRoleInput,
   Workspace,

@@ -409,6 +409,40 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/SearchHistoryItem" }
 
+  /workspaces/{workspaceId}/search/history/{historyId}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: historyId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Search]
+      summary: Ghi nhận tài liệu được click từ một lần tìm kiếm (clicked_document_id)
+      description: >
+        Idempotent — gọi lại với cùng clicked_document_id không gây tác dụng phụ.
+        Chỉ chủ sở hữu history (user hiện tại) mới được cập nhật.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clicked_document_id]
+              properties:
+                clicked_document_id: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchHistoryItem" }
+        "404":
+          description: History không tồn tại hoặc không thuộc user hiện tại
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # ---------------------------------------------------------------------
   # CHAT (FR4, FR5, FR10, FR11)
   # ---------------------------------------------------------------------
@@ -1062,6 +1096,12 @@ components:
     SearchResultResponse:
       type: object
       properties:
+        history_id:
+          type: string
+          format: uuid
+          description: >
+            Id bản ghi search_history vừa tạo — dùng cho PATCH
+            /search/history/{historyId} khi user click một kết quả.
         results_count: { type: integer }
         results:
           type: array
