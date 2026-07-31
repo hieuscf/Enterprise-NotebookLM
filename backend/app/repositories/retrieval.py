@@ -39,6 +39,7 @@ class ChunkHydrationRow:
     workspace_id: uuid.UUID
     content: str
     title: str | None = None
+    page_number: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +93,7 @@ class RetrievalRepository:
                 workspace_id=document.workspace_id,
                 content=chunk.content or "",
                 title=document.title,
+                page_number=chunk.page_number,
             )
         return out
 
@@ -135,6 +137,7 @@ class RetrievalRepository:
                 workspace_id=document.workspace_id,
                 content=chunk.content or "",
                 title=document.title,
+                page_number=chunk.page_number,
             )
             for chunk, document, version in rows
         ]

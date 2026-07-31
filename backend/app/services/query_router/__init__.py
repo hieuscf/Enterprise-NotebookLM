@@ -1,25 +1,35 @@
 # =============================================================================
 # File: __init__.py
-# Module/Service: Query Router (FR11)
+# Module/Service: Query Router (FR11) + Execution (Part 4)
 # Layer: Service
-# Purpose: Package exports for Query Router cache + classification.
+# Purpose: Package exports for Query Router classification and orchestration.
 # Responsibilities:
-#   - Expose QueryRouter and RouteDecision as the public API
+#   - Expose QueryRouter, QueryOrchestrator, and shared schemas
 # Dependencies:
-#   - app.services.query_router.router, schemas
+#   - app.services.query_router.router, orchestrator, schemas
 # Public Exports:
-#   - QueryRouter, RouteDecision, CacheEntryView, QueryRouterError
+#   - QueryRouter, QueryOrchestrator, RouteDecision, QueryExecutionResult, …
 # Database/Table: N/A
-# Related Modules: Chat Service (Part 4), Hybrid Retrieval
-# Important Notes: 0 LLM. Does not answer — only routes.
+# Related Modules: Chat Service, Hybrid Retrieval
+# Important Notes: Chat must call handle_query via QueryOrchestrator only.
 # =============================================================================
 
 from app.services.query_router.exceptions import QueryRouterError
+from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
 from app.services.query_router.router import QueryRouter
-from app.services.query_router.schemas import CacheEntryView, RouteDecision
+from app.services.query_router.schemas import (
+    CacheEntryView,
+    CitationRef,
+    QueryExecutionResult,
+    RouteDecision,
+)
 
 __all__ = [
+    "COMPLEX_STATUS",
     "CacheEntryView",
+    "CitationRef",
+    "QueryExecutionResult",
+    "QueryOrchestrator",
     "QueryRouter",
     "QueryRouterError",
     "RouteDecision",

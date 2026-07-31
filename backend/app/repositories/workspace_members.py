@@ -209,3 +209,15 @@ class WorkspaceMemberRepository:
             )
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def count_active_members(self, workspace_id: uuid.UUID) -> int:
+        """Count non-deleted members in a workspace."""
+        stmt = (
+            select(func.count())
+            .select_from(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.deleted_at.is_(None),
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one())

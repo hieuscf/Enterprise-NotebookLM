@@ -1,17 +1,17 @@
 # =============================================================================
 # File: schemas.py
-# Module/Service: Query Router (FR11)
+# Module/Service: Query Router (FR11) + Execution (Part 4)
 # Layer: Service
-# Purpose: RouteDecision and cache view models for Query Router output.
+# Purpose: RouteDecision and unified QueryExecutionResult for Chat Service.
 # Responsibilities:
-#   - Define RouteDecision returned to Chat / Part 4 handlers
+#   - Define RouteDecision (classification) and QueryExecutionResult (execution)
 # Dependencies:
 #   - app.models.enums.RouteType, app.services.retrieval.schemas.RetrievalResult
 # Public Exports:
-#   - CacheEntryView, RouteDecision, NormalizedQuery
+#   - CacheEntryView, RouteDecision, NormalizedQuery, CitationRef, QueryExecutionResult
 # Database/Table: query_cache (view fields)
-# Related Modules: app.services.query_router.router
-# Important Notes: Router never answers — only routes + optional reuse payloads.
+# Related Modules: app.services.query_router.router, orchestrator
+# Important Notes: Router never answers — Orchestrator executes 0-LLM branches.
 # =============================================================================
 
 from __future__ import annotations
@@ -66,3 +66,29 @@ class RouteDecision:
     similarity: float | None = None
     factoid_score: float | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class CitationRef:
+    """Deterministic citation for extractive / cached answers."""
+
+    chunk_id: UUID | None
+    document_id: UUID | None
+    page_number: int | None = None
+    verify: bool = True
+
+
+@dataclass(slots=True)
+class QueryExecutionResult:
+    """Unified orchestrator response for Chat Service (0-LLM branches + complex stub)."""
+
+    route_type: RouteType
+    answer: str | None
+    citation_refs: list[CitationRef]
+    metadata: dict[str, Any]
+    verify: bool
+    latency_ms: int
+    status: str | None = None
+    cache_id: UUID | None = None
+    query_log_id: UUID | None = None
+    message_generation_id: UUID | None = None
