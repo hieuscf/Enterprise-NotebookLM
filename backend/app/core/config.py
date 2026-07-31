@@ -140,6 +140,9 @@ class Settings(BaseSettings):
 
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
+    # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).
+    query_cache_default_ttl_seconds: int = 86_400  # 24h
+    query_cache_cleanup_interval_minutes: int = 15
     query_router_factoid_confidence_threshold: float = 0.75
     query_router_minimum_factoid_score: float = 0.70
     query_router_maximum_factoid_length: int = 80

@@ -32,6 +32,7 @@ class QueryCache(Base):
     __table_args__ = (
         Index("ix_query_cache_query_hash", "query_hash"),
         Index("ix_query_cache_workspace_id_expires_at", "workspace_id", "expires_at"),
+        Index("ix_query_cache_expires_at", "expires_at"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

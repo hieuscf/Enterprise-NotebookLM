@@ -5,7 +5,7 @@
 # Purpose: Base orchestration for Enterprise NotebookLM (infra + app containers).
 # Responsibilities:
 #   - Run Postgres, Redis, Qdrant, Elasticsearch, MinIO, Neo4j
-#   - Run backend-api, celery-worker (separate containers), frontend (Next.js)
+#   - Run backend-api, celery-worker, celery-beat (query_cache cleanup), frontend (Next.js)
 # Dependencies:
 #   - Docker Engine + Compose v2; values from .env / .env.example
 # Public Exports:
@@ -325,6 +325,29 @@ services:
         condition: service_healthy
       backend-api:
         condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: enlm-celery-beat
+    restart: unless-stopped
+    command: celery -A app.workers.celery_app.celery_app beat --loglevel=INFO
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-notebooklm}:${POSTGRES_PASSWORD:-notebooklm}@postgres:5432/${POSTGRES_DB:-notebooklm}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      REDIS_URL: redis://redis:6379/0
+      QUERY_CACHE_CLEANUP_INTERVAL_MINUTES: ${QUERY_CACHE_CLEANUP_INTERVAL_MINUTES:-15}
+      QUERY_CACHE_DEFAULT_TTL_SECONDS: ${QUERY_CACHE_DEFAULT_TTL_SECONDS:-86400}
+    networks:
+      - enlm-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      celery-worker:
+        condition: service_started
 
   frontend:
     build:

@@ -24,3 +24,9 @@ class QueryRouterError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+# Re-export repository persistence error for service-layer callers.
+from app.repositories.query_cache import QueryCacheRepositoryError as QueryCacheRepositoryError  # noqa: E402
+
+__all__ = ["QueryRouterError", "QueryCacheRepositoryError"]

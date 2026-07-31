@@ -14,7 +14,8 @@
 # Important Notes: Chat must call handle_query via QueryOrchestrator only.
 # =============================================================================
 
-from app.services.query_router.exceptions import QueryRouterError
+from app.services.query_router.cache_writer import QueryCacheWriter, write_cache
+from app.services.query_router.exceptions import QueryCacheRepositoryError, QueryRouterError
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
 from app.services.query_router.router import QueryRouter
 from app.services.query_router.schemas import (
@@ -28,9 +29,12 @@ __all__ = [
     "COMPLEX_STATUS",
     "CacheEntryView",
     "CitationRef",
+    "QueryCacheRepositoryError",
+    "QueryCacheWriter",
     "QueryExecutionResult",
     "QueryOrchestrator",
     "QueryRouter",
     "QueryRouterError",
     "RouteDecision",
+    "write_cache",
 ]
