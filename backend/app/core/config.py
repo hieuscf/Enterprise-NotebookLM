@@ -138,6 +138,13 @@ class Settings(BaseSettings):
     reranker_backend: Literal["heuristic", "cross_encoder"] = "heuristic"
     reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
+    query_cache_similarity_threshold: float = 0.92
+    query_router_factoid_confidence_threshold: float = 0.75
+    query_router_minimum_factoid_score: float = 0.70
+    query_router_maximum_factoid_length: int = 80
+    query_router_factoid_top_k: int = 1
+
 
 @lru_cache
 def get_settings() -> Settings:

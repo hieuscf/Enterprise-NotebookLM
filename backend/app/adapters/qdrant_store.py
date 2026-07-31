@@ -128,7 +128,8 @@ class QdrantStoreAdapter:
         """Cosine similarity search filtered by ``workspace_id`` (and optional kind).
 
         Returns:
-            List of dicts: ``chunk_id``, ``document_version_id``, ``score``, ``payload``.
+            List of dicts including ``score``, ``payload``, and common id fields
+            (``chunk_id``, ``cache_id``, …) when present in the payload.
         """
         self.ensure_collection()
         must: list[qmodels.FieldCondition] = [
@@ -154,10 +155,14 @@ class QdrantStoreAdapter:
         results: list[dict[str, Any]] = []
         for hit in hits:
             payload = dict(hit.payload or {})
-            chunk_id = payload.get("chunk_id") or str(hit.id)
+            chunk_id = payload.get("chunk_id") or (
+                str(hit.id) if kind == "chunk" else None
+            )
             results.append(
                 {
-                    "chunk_id": str(chunk_id),
+                    "point_id": str(hit.id),
+                    "chunk_id": str(chunk_id) if chunk_id else None,
+                    "cache_id": payload.get("cache_id"),
                     "document_version_id": payload.get("document_version_id"),
                     "document_id": payload.get("document_id"),
                     "score": float(hit.score or 0.0),
