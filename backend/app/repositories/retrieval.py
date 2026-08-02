@@ -40,6 +40,10 @@ class ChunkHydrationRow:
     content: str
     title: str | None = None
     page_number: int | None = None
+    section_index: int | None = None
+    section: str | None = None
+    chunk_index: int | None = None
+    heading_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +98,10 @@ class RetrievalRepository:
                 content=chunk.content or "",
                 title=document.title,
                 page_number=chunk.page_number,
+                section_index=chunk.section_index,
+                section=chunk.section,
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading_path,
             )
         return out
 
@@ -138,6 +146,70 @@ class RetrievalRepository:
                 content=chunk.content or "",
                 title=document.title,
                 page_number=chunk.page_number,
+                section_index=chunk.section_index,
+                section=chunk.section,
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading_path,
+            )
+            for chunk, document, version in rows
+        ]
+
+    async def list_chunks_for_document(
+        self,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        version_id: uuid.UUID | None = None,
+    ) -> list[ChunkHydrationRow]:
+        """List chunks for a document's current (or specified) version.
+
+        Args:
+            workspace_id: Tenant scope.
+            document_id: Document id within the workspace.
+            version_id: Optional version override; defaults to ``current_version_id``.
+
+        Returns:
+            Chunks ordered by ``chunk_index`` (empty if document/version missing).
+        """
+        doc_stmt = select(Document).where(
+            Document.id == document_id,
+            Document.workspace_id == workspace_id,
+        )
+        document = (await self._session.execute(doc_stmt)).scalar_one_or_none()
+        if document is None:
+            return []
+        target_version = version_id or document.current_version_id
+        if target_version is None:
+            return []
+
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                Document.id == document_id,
+                DocumentChunk.document_version_id == target_version,
+            )
+            .order_by(DocumentChunk.chunk_index.asc())
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            ChunkHydrationRow(
+                chunk_id=chunk.id,
+                document_id=document.id,
+                document_version_id=version.id,
+                workspace_id=document.workspace_id,
+                content=chunk.content or "",
+                title=document.title,
+                page_number=chunk.page_number,
+                section_index=chunk.section_index,
+                section=chunk.section,
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading_path,
             )
             for chunk, document, version in rows
         ]

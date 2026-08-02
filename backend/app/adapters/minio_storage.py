@@ -82,6 +82,14 @@ class MinioStorageAdapter:
             response.close()
             response.release_conn()
 
+    def object_exists(self, object_key: str) -> bool:
+        """Return True if ``object_key`` exists in the bucket."""
+        try:
+            self._client.stat_object(self._bucket, object_key)
+            return True
+        except S3Error:
+            return False
+
     def delete_object(self, object_key: str) -> None:
         try:
             self._client.remove_object(self._bucket, object_key)

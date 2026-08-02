@@ -89,9 +89,17 @@ class Bm25Search:
             row = hydrated.get(cid)
             content = (hit.get("content") or "")[:max_chars]
             document_id = None
+            page_number = None
+            section_index = None
+            section_title = None
+            document_title = None
             if row is not None:
                 content = (row.content or content)[:max_chars]
                 document_id = row.document_id
+                page_number = row.page_number
+                section_index = row.section_index
+                section_title = row.section
+                document_title = row.title
             else:
                 raw_doc = hit.get("document_id")
                 if raw_doc:
@@ -117,6 +125,10 @@ class Bm25Search:
                     raw_score=float(hit.get("score") or 0.0),
                     retrieval_method="bm25",
                     source_methods=["bm25"],
+                    page_number=page_number,
+                    section_index=section_index,
+                    section_title=section_title,
+                    document_title=document_title,
                 )
             )
         return candidates

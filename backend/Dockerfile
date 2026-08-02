@@ -23,8 +23,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# libreoffice-* provides soffice for Preview Generation (DOCX/PPTX/XLSX → PDF).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        libreoffice-writer \
+        libreoffice-impress \
+        libreoffice-calc \
+        fonts-dejavu \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

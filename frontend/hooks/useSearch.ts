@@ -22,6 +22,7 @@ import { useCallback, useState } from "react";
 
 import { ApiClientError } from "@/lib/api-client";
 import { searchWorkspace } from "@/lib/search.api";
+import { filterResultsByMinScore } from "@/lib/search-score";
 import type {
   SearchFilters,
   SearchResultItem,
@@ -54,10 +55,12 @@ export function useSearch(workspaceId: string) {
           filters: filters ?? undefined,
           top_k: topK,
         });
-        setResults(data.results);
-        setResultsCount(data.results_count);
+        // Defense-in-depth: only show hits with score >= 0.6 (backend also filters).
+        const filtered = filterResultsByMinScore(data.results);
+        setResults(filtered);
+        setResultsCount(filtered.length);
         setHistoryId(data.history_id);
-        return data;
+        return { ...data, results: filtered, results_count: filtered.length };
       } catch (err) {
         setResults([]);
         setResultsCount(0);

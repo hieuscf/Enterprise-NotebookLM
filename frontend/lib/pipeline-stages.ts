@@ -25,6 +25,7 @@ import {
   Boxes,
   CheckCircle2,
   Circle,
+  FileOutput,
   ListChecks,
   ListTree,
   Loader2,
@@ -39,6 +40,7 @@ import type { PipelineStageNameV3, PipelineStatus } from "@/types/documents";
 
 /** Fixed v3 order — never derive this from API data (stage order is a contract). */
 export const PIPELINE_STAGE_ORDER: readonly PipelineStageNameV3[] = [
+  "preview_generation",
   "document_understanding",
   "cleaning_normalize",
   "hierarchical_chunking",
@@ -49,6 +51,7 @@ export const PIPELINE_STAGE_ORDER: readonly PipelineStageNameV3[] = [
 
 /** User-facing Vietnamese copy — describes the action, not the technical stage name. */
 export const STAGE_LABEL_VI: Record<PipelineStageNameV3, string> = {
+  preview_generation: "Tạo bản xem tài liệu",
   document_understanding: "Trích xuất bố cục tài liệu",
   cleaning_normalize: "Làm sạch & chuẩn hoá nội dung",
   hierarchical_chunking: "Phân đoạn theo cấu trúc",
@@ -59,6 +62,7 @@ export const STAGE_LABEL_VI: Record<PipelineStageNameV3, string> = {
 
 /** Icon per stage — kept separate from the label so either can change independently. */
 export const STAGE_ICON: Record<PipelineStageNameV3, LucideIcon> = {
+  preview_generation: FileOutput,
   document_understanding: ScanSearch,
   cleaning_normalize: Sparkles,
   hierarchical_chunking: ListTree,

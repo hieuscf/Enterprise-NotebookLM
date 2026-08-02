@@ -17,16 +17,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import DocumentVersionStatus, FileType
+from app.models.enums import DocumentVersionStatus, FileType, PreviewStatus, PreviewType
 from app.models.types import (
     created_at_col,
     document_version_status_enum,
     file_type_enum,
+    preview_status_enum,
+    preview_type_enum,
     updated_at_col,
     uuid_pk,
 )
@@ -92,4 +94,17 @@ class DocumentVersion(Base):
     parser: Mapped[str] = mapped_column(String(64), nullable=False, server_default="llamaparse")
     markdown_storage_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     layout_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Preview Representation (Viewer). storage_path = original_file_path.
+    preview_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    preview_status: Mapped[PreviewStatus] = mapped_column(
+        preview_status_enum,
+        nullable=False,
+        default=PreviewStatus.pending,
+        server_default=PreviewStatus.pending.value,
+    )
+    preview_type: Mapped[PreviewType | None] = mapped_column(preview_type_enum, nullable=True)
+    preview_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = created_at_col()

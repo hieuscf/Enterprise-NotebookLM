@@ -134,6 +134,8 @@ class Settings(BaseSettings):
     retrieval_per_source_top_k: int = 20
     retrieval_max_rerank_candidates: int = 100
     retrieval_snippet_max_chars: int = 500
+    # FR3 — Search API: drop weak hits before UI (rerank score threshold).
+    search_min_score: float = 0.6
     # heuristic = token-overlap (CI/local, no model download); cross_encoder = sentence-transformers
     reranker_backend: Literal["heuristic", "cross_encoder"] = "heuristic"
     reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

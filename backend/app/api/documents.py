@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.minio_storage import MinioStorageAdapter, get_minio_storage
@@ -35,6 +36,7 @@ from app.models.enums import FileType
 from app.models.pipeline import PipelineRun, PipelineStageLog
 from app.schemas.common import ErrorResponse
 from app.schemas.documents import (
+    DocumentChunkListResponse,
     DocumentListResponse,
     DocumentResponse,
     DocumentVersionResponse,
@@ -81,6 +83,9 @@ def _version_response(ver: DocumentVersion) -> DocumentVersionResponse:
         status=ver.status.value,  # type: ignore[arg-type]
         is_current=ver.is_current,
         created_at=ver.created_at,
+        preview_status=ver.preview_status.value,  # type: ignore[arg-type]
+        preview_type=ver.preview_type.value if ver.preview_type else None,  # type: ignore[arg-type]
+        preview_generated_at=ver.preview_generated_at,
     )
 
 
@@ -203,6 +208,87 @@ async def get_document(
     except DocumentIngestionError as exc:
         raise _http_error(exc) from exc
     return _doc_response(doc)
+
+
+@router.get(
+    "/{workspaceId}/documents/{documentId}/chunks",
+    response_model=DocumentChunkListResponse,
+    summary="Danh sách chunk của bản hiện hành (Document Viewer / deep-link)",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def list_document_chunks(
+    workspaceId: uuid.UUID,
+    documentId: uuid.UUID,
+    versionId: uuid.UUID | None = Query(
+        None,
+        description="Optional version override; default = current_version_id",
+    ),
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    service: DocumentIngestionService = Depends(get_document_service),
+) -> DocumentChunkListResponse:
+    """Return chunks for viewer navigation — no retrieval / no LLM."""
+    del workspaceId
+    try:
+        return await service.list_document_chunks(
+            access.workspace_id,
+            documentId,
+            version_id=versionId,
+        )
+    except DocumentIngestionError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/{workspaceId}/documents/{documentId}/content",
+    summary="Stream original file (or preview PDF) for Document Viewer",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+        status.HTTP_502_BAD_GATEWAY: {"model": ErrorResponse},
+    },
+)
+async def get_document_content(
+    workspaceId: uuid.UUID,
+    documentId: uuid.UUID,
+    versionId: uuid.UUID | None = Query(None),
+    download: bool = Query(
+        False,
+        description="If true, Content-Disposition=attachment (Download Original).",
+    ),
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    service: DocumentIngestionService = Depends(get_document_service),
+) -> Response:
+    """Serve original representation bytes — never markdown."""
+    del workspaceId
+    try:
+        payload = await service.get_document_content(
+            access.workspace_id,
+            documentId,
+            version_id=versionId,
+            # Download Original must return the uploaded file (e.g. DOCX), not preview PDF.
+            prefer_preview_pdf=not download,
+        )
+    except DocumentIngestionError as exc:
+        raise _http_error(exc) from exc
+
+    disposition = "attachment" if download else "inline"
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{payload.filename}"',
+        "X-Viewer-Kind": payload.viewer_kind,
+        "Cache-Control": "private, max-age=60",
+    }
+    return Response(
+        content=payload.data,
+        media_type=payload.content_type,
+        headers=headers,
+    )
 
 
 @router.delete(

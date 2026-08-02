@@ -6,19 +6,20 @@
  * Purpose: Compose Search Form / Results / History for a workspace (UC3).
  * Responsibilities:
  *   - Own local search + history state; hydrate document titles for results
+ *   - Persist query/filters/scroll before Document Viewer deep-link
  * Dependencies:
  *   - AppShell, SearchForm, SearchResults, SearchHistoryPanel, hooks
  * Public Exports:
  *   - SearchView
- * Database/Table: N/A
- * Related Modules: app/workspaces/[id]/search/page.tsx
+ * Database/Table: search_history
+ * Related Modules: DocumentViewer deep-link (?chunk=)
  * Important Notes: Click tracking via PATCH history (fire-and-forget; C+A).
  * =============================================================================
  */
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SearchFormWithQuery, type SearchFormValues } from "@/features/search/SearchForm";
 import { SearchHistoryPanel } from "@/features/search/SearchHistoryPanel";
@@ -29,6 +30,10 @@ import { useSearch } from "@/hooks/useSearch";
 import { useSearchHistory } from "@/hooks/useSearchHistory";
 import { getDocument } from "@/lib/api-client";
 import { recordSearchHistoryClick } from "@/lib/search.api";
+import {
+  loadSearchPageState,
+  saveSearchPageState,
+} from "@/lib/search-navigation";
 import type { SearchFilters, SearchResultItem } from "@/types/search";
 
 type Props = {
@@ -50,6 +55,22 @@ export function SearchView({ workspaceId }: Props) {
   const history = useSearchHistory(workspaceId);
   const [formKey, setFormKey] = useState("");
   const [titles, setTitles] = useState<Record<string, string>>({});
+  const [filtersSnapshot, setFiltersSnapshot] = useState<SearchFilters | null>(null);
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    const saved = loadSearchPageState(workspaceId);
+    if (!saved?.queryText) return;
+    setFormKey(saved.queryText);
+    setFiltersSnapshot(saved.filters);
+    void runSearch(saved.queryText, saved.filters).then(() => {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: saved.scrollY || 0, behavior: "auto" });
+      });
+    });
+  }, [workspaceId, runSearch]);
 
   const documentIds = useMemo(
     () => Array.from(new Set(results.map((r) => r.document_id))),
@@ -87,6 +108,7 @@ export function SearchView({ workspaceId }: Props) {
 
   const handleSubmit = useCallback(
     async (values: SearchFormValues) => {
+      setFiltersSnapshot(values.filters);
       await runSearch(values.queryText, values.filters);
       void history.reload();
     },
@@ -96,6 +118,7 @@ export function SearchView({ workspaceId }: Props) {
   const handleReplay = useCallback(
     async (queryText: string, filters?: SearchFilters | null) => {
       setFormKey(queryText);
+      setFiltersSnapshot(filters ?? null);
       await runSearch(queryText, filters ?? null);
       void history.reload();
     },
@@ -105,11 +128,19 @@ export function SearchView({ workspaceId }: Props) {
   const handleResultClick = useCallback(
     async (item: SearchResultItem) => {
       if (!historyId) return;
-      // Fire-and-forget from SearchResults — failures must not block navigation.
       await recordSearchHistoryClick(workspaceId, historyId, item.document_id);
     },
     [historyId, workspaceId],
   );
+
+  const handleBeforeNavigate = useCallback(() => {
+    saveSearchPageState(workspaceId, {
+      queryText: lastQuery,
+      filters: filtersSnapshot,
+      scrollY: typeof window !== "undefined" ? window.scrollY : 0,
+      savedAt: Date.now(),
+    });
+  }, [workspaceId, lastQuery, filtersSnapshot]);
 
   return (
     <AppShell active="search" user={user} workspaceId={workspaceId}>
@@ -139,6 +170,7 @@ export function SearchView({ workspaceId }: Props) {
               hasSearched={hasSearched}
               titles={titles}
               onResultClick={handleResultClick}
+              onBeforeNavigate={handleBeforeNavigate}
             />
           </div>
           <SearchHistoryPanel

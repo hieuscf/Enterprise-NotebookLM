@@ -100,6 +100,10 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const responseHeaders = new Headers();
   const responseContentType = upstream.headers.get("Content-Type");
   if (responseContentType) responseHeaders.set("Content-Type", responseContentType);
+  const contentDisposition = upstream.headers.get("Content-Disposition");
+  if (contentDisposition) responseHeaders.set("Content-Disposition", contentDisposition);
+  const viewerKind = upstream.headers.get("X-Viewer-Kind");
+  if (viewerKind) responseHeaders.set("X-Viewer-Kind", viewerKind);
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) responseHeaders.set("Retry-After", retryAfter);
 

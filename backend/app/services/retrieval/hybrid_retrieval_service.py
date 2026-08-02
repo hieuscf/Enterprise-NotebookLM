@@ -249,6 +249,10 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 score=cand.score,
                 rank=cand.rank,
                 source_methods=list(cand.source_methods) or [cand.retrieval_method],
+                page_number=cand.page_number,
+                section_index=cand.section_index,
+                section_title=cand.section_title,
+                document_title=cand.document_title,
             )
             continue
         methods = list(
@@ -269,6 +273,14 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 score=None,
                 rank=None,
                 source_methods=methods,
+                page_number=cand.page_number
+                if cand.page_number is not None
+                else existing.page_number,
+                section_index=cand.section_index
+                if cand.section_index is not None
+                else existing.section_index,
+                section_title=cand.section_title or existing.section_title,
+                document_title=cand.document_title or existing.document_title,
             )
         else:
             existing.source_methods = methods
@@ -278,6 +290,14 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 existing.document_id = cand.document_id
             if existing.entity_id is None and cand.entity_id is not None:
                 existing.entity_id = cand.entity_id
+            if existing.page_number is None and cand.page_number is not None:
+                existing.page_number = cand.page_number
+            if existing.section_index is None and cand.section_index is not None:
+                existing.section_index = cand.section_index
+            if not existing.section_title and cand.section_title:
+                existing.section_title = cand.section_title
+            if not existing.document_title and cand.document_title:
+                existing.document_title = cand.document_title
 
     merged = list(best.values())
     merged.sort(key=lambda c: c.raw_score, reverse=True)

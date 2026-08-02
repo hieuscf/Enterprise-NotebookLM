@@ -13,10 +13,11 @@
  *   - SearchHistoryItem, RetrievalMethod
  * Database/Table: N/A
  * Related Modules: lib/search.api.ts, features/search/*
- * Important Notes: Do not add fields beyond OpenAPI without confirmation.
+ * Important Notes: location / page_number enable Document Viewer deep-link.
  * =============================================================================
  */
 
+import type { ContentLocation } from "@/lib/content-location";
 import type { FileType } from "./documents";
 
 export type RetrievalMethod = "vector" | "bm25" | "knowledge_graph" | "rerank";
@@ -39,10 +40,13 @@ export type SearchResultItem = {
   chunk_id: string | null;
   entity_id: string | null;
   document_id: string;
+  document_title?: string | null;
   text_snippet: string;
   retrieval_method: RetrievalMethod;
   score: number;
   rank: number;
+  page_number?: number | null;
+  location?: ContentLocation | null;
 };
 
 export type SearchResultResponse = {

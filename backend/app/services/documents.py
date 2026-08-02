@@ -27,17 +27,20 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import BinaryIO, Protocol
+from typing import Any, BinaryIO, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.minio_storage import MinioStorageAdapter
 from app.core.logging import get_logger
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType
+from app.models.enums import DocumentVersionStatus, FileType, PreviewStatus
 from app.models.pipeline import PipelineRun
 from app.repositories.documents import DocumentRepository
 from app.repositories.pipeline import PipelineRepository
+from app.repositories.retrieval import ChunkHydrationRow, RetrievalRepository
+from app.schemas.documents import DocumentChunkListResponse, DocumentChunkResponse
+from app.services.preview_generator import PREVIEW_PDF_ARTIFACT
 
 logger = get_logger(__name__)
 
@@ -61,6 +64,18 @@ CONTENT_TYPES: dict[FileType, str] = {
     FileType.pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     FileType.txt: "text/plain",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentContentPayload:
+    """Original (or preview PDF) bytes for the Document Viewer."""
+
+    data: bytes
+    content_type: str
+    filename: str
+    viewer_kind: str  # pdf | original_download
+    storage_key: str
+
 
 # Hash/spool in 1 MiB chunks; spool to disk when payload exceeds 8 MiB.
 _HASH_CHUNK_SIZE = 1024 * 1024
@@ -177,6 +192,7 @@ class DocumentIngestionService:
         self._storage = storage
         self._docs = DocumentRepository(session)
         self._pipeline = PipelineRepository(session)
+        self._retrieval = RetrievalRepository(session)
         self._enqueue = enqueue
 
     async def list_documents(
@@ -200,6 +216,151 @@ class DocumentIngestionService:
         if doc is None:
             raise DocumentIngestionError("not_found", "Document not found", status_code=404)
         return doc
+
+    async def list_document_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        version_id: uuid.UUID | None = None,
+    ) -> DocumentChunkListResponse:
+        """Return ordered chunk metadata for AI panel / deep-link (not for body render)."""
+        doc = await self.get_document(workspace_id, document_id)
+        target = version_id or doc.current_version_id
+        rows: list[ChunkHydrationRow] = await self._retrieval.list_chunks_for_document(
+            workspace_id,
+            document_id,
+            version_id=target,
+        )
+        layout_blocks: list[dict[str, Any]] = []
+        heading_tree: list[dict[str, Any]] = []
+        if target is not None:
+            version = await self._docs.get_version(workspace_id, document_id, target)
+            if version is not None and isinstance(version.layout_metadata, dict):
+                raw_blocks = version.layout_metadata.get("blocks") or []
+                if isinstance(raw_blocks, list):
+                    layout_blocks = [b for b in raw_blocks if isinstance(b, dict)]
+                raw_tree = version.layout_metadata.get("heading_tree") or []
+                if isinstance(raw_tree, list):
+                    heading_tree = [n for n in raw_tree if isinstance(n, dict)]
+
+        items = [
+            DocumentChunkResponse(
+                id=row.chunk_id,
+                document_id=row.document_id,
+                document_version_id=row.document_version_id,
+                chunk_index=int(row.chunk_index or 0),
+                content=row.content,
+                page_number=row.page_number,
+                section_index=row.section_index,
+                section=row.section,
+                heading_path=row.heading_path,
+                section_path=row.heading_path,
+                bounding_box=_match_bbox(layout_blocks, row),
+            )
+            for row in rows
+        ]
+        preview_status = PreviewStatus.pending
+        preview_type = None
+        preview_generated_at = None
+        viewer_kind = "original_download"
+        if target is not None:
+            version = await self._docs.get_version(workspace_id, document_id, target)
+            if version is not None:
+                preview_status = version.preview_status
+                preview_type = version.preview_type
+                preview_generated_at = version.preview_generated_at
+                viewer_kind = _viewer_kind_from_preview(version)
+        return DocumentChunkListResponse(
+            document_id=doc.id,
+            document_version_id=target,
+            document_title=doc.title,
+            file_type=doc.file_type.value,  # type: ignore[arg-type]
+            viewer_kind=viewer_kind,  # type: ignore[arg-type]
+            preview_status=preview_status.value,  # type: ignore[arg-type]
+            preview_type=preview_type.value if preview_type else None,  # type: ignore[arg-type]
+            preview_generated_at=preview_generated_at,
+            heading_tree=heading_tree,
+            items=items,
+        )
+
+    async def get_document_content(
+        self,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        version_id: uuid.UUID | None = None,
+        prefer_preview_pdf: bool = True,
+    ) -> DocumentContentPayload:
+        """Load Original or Preview bytes for the Document Viewer.
+
+        Args:
+            workspace_id: Tenant scope.
+            document_id: Document id.
+            version_id: Optional version; default current.
+            prefer_preview_pdf: When True, require completed Preview Representation.
+
+        Returns:
+            ``DocumentContentPayload`` with bytes + content type.
+
+        Raises:
+            DocumentIngestionError: Missing document/version/object, or preview
+                not ready when prefer_preview_pdf=True.
+        """
+        doc = await self.get_document(workspace_id, document_id)
+        target = version_id or doc.current_version_id
+        if target is None:
+            raise DocumentIngestionError(
+                "not_found",
+                "Document has no current version",
+                status_code=404,
+            )
+        version = await self.get_version(workspace_id, document_id, target)
+        storage_key = version.storage_path
+        content_type = CONTENT_TYPES.get(doc.file_type, "application/octet-stream")
+        viewer_kind = "original_download"
+        filename = storage_key.rsplit("/", 1)[-1] or f"{document_id}"
+
+        if prefer_preview_pdf:
+            if version.preview_status != PreviewStatus.completed:
+                raise DocumentIngestionError(
+                    "preview_not_ready",
+                    f"Preview status is {version.preview_status.value}",
+                    status_code=409,
+                )
+            if not version.preview_file_path:
+                raise DocumentIngestionError(
+                    "preview_missing",
+                    "Preview completed but preview_file_path is empty",
+                    status_code=502,
+                )
+            storage_key = version.preview_file_path
+            content_type = CONTENT_TYPES[FileType.pdf]
+            viewer_kind = "pdf"
+            filename = PREVIEW_PDF_ARTIFACT if doc.file_type != FileType.pdf else filename
+
+        try:
+            data = self._storage.download_bytes(storage_key)
+        except Exception as exc:  # noqa: BLE001 — surface as 404/502 to client
+            logger.exception(
+                "document_content_download_failed",
+                workspace_id=str(workspace_id),
+                document_id=str(document_id),
+                storage_key=storage_key,
+            )
+            raise DocumentIngestionError(
+                "storage_unavailable",
+                "Could not load document from storage",
+                status_code=502,
+            ) from exc
+
+        return DocumentContentPayload(
+            data=data,
+            content_type=content_type,
+            filename=filename,
+            viewer_kind=viewer_kind,
+            storage_key=storage_key,
+        )
 
     async def delete_document(self, workspace_id: uuid.UUID, document_id: uuid.UUID) -> None:
         doc = await self.get_document(workspace_id, document_id)
@@ -408,3 +569,49 @@ class DocumentIngestionService:
 
         run_pipeline.delay(str(pipeline_run_id))
         logger.info("pipeline_enqueued", pipeline_run_id=str(pipeline_run_id))
+
+
+def _viewer_kind_from_preview(version: DocumentVersion) -> str:
+    if (
+        version.preview_status == PreviewStatus.completed
+        and version.preview_file_path
+        and (version.preview_type is None or version.preview_type.value == "pdf")
+    ):
+        return "pdf"
+    return "original_download"
+
+
+def _match_bbox(
+    layout_blocks: list[dict[str, Any]],
+    row: ChunkHydrationRow,
+) -> list[float] | None:
+    """Best-effort bbox from layout blocks on the same page with text overlap."""
+    if not layout_blocks:
+        return None
+    snippet = (row.content or "").strip()
+    if len(snippet) < 12:
+        return None
+    needle = snippet[:80].lower()
+    page = row.page_number
+    best: list[float] | None = None
+    best_score = 0
+    for block in layout_blocks:
+        if page is not None and block.get("page_number") not in (None, page):
+            continue
+        text = str(block.get("text") or block.get("content") or "").lower()
+        if not text:
+            continue
+        if needle not in text and text[:40] not in needle:
+            continue
+        bbox = block.get("bbox")
+        if not isinstance(bbox, list) or len(bbox) < 4:
+            continue
+        try:
+            coords = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        except (TypeError, ValueError):
+            continue
+        score = len(text)
+        if score > best_score:
+            best_score = score
+            best = coords
+    return best

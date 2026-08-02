@@ -3,17 +3,16 @@
  * File: SearchResults.tsx
  * Module/Service: Search Service (Web App)
  * Layer: UI
- * Purpose: Render ranked search hits with method badge and keyword highlight.
+ * Purpose: Render ranked search hits; deep-link to Document Viewer (FR3).
  * Responsibilities:
- *   - Loading / empty / error / result list states; navigate on click
+ *   - Loading / empty / error / result list; router.push with ?chunk=
  * Dependencies:
- *   - lib/search-highlight, next/navigation, types/search
+ *   - lib/search-highlight, search-navigation, next/navigation, types/search
  * Public Exports:
  *   - SearchResults
  * Database/Table: N/A
- * Related Modules: features/search/SearchView.tsx
- * Important Notes: Click analytics via onResultClick (fire-and-forget; must not
- *   block navigation if PATCH fails).
+ * Related Modules: features/search/SearchView.tsx, DocumentViewer
+ * Important Notes: Click analytics via onResultClick (fire-and-forget).
  * =============================================================================
  */
 
@@ -26,6 +25,9 @@ import {
   formatRetrievalMethodLabel,
   highlightSnippetSegments,
 } from "@/lib/search-highlight";
+import { buildDocumentViewerHref } from "@/lib/search-navigation";
+import { saveSearchMatches } from "@/lib/search-matches";
+import { formatContentLocationLabel } from "@/lib/content-location";
 import { cn } from "@/lib/utils";
 import type { SearchResultItem } from "@/types/search";
 
@@ -38,8 +40,10 @@ type Props = {
   error: string | null;
   hasSearched: boolean;
   titles?: Record<string, string>;
-  /** Optional analytics hook — must not block navigation if it fails. */
+  /** Called before navigation — must not block if it fails. */
   onResultClick?: (item: SearchResultItem) => void | Promise<void>;
+  /** Persist search UI state before navigating away. */
+  onBeforeNavigate?: () => void;
 };
 
 export function SearchResults({
@@ -52,16 +56,31 @@ export function SearchResults({
   hasSearched,
   titles = {},
   onResultClick,
+  onBeforeNavigate,
 }: Props) {
   const router = useRouter();
 
-  async function handleClick(item: SearchResultItem) {
-    const href = `/workspaces/${workspaceId}/documents/${item.document_id}`;
-    // Fire-and-forget analytics — never block navigation.
+  function handleClick(item: SearchResultItem) {
+    onBeforeNavigate?.();
     if (onResultClick) {
       void Promise.resolve(onResultClick(item)).catch(() => undefined);
     }
-    router.push(href);
+    // Persist siblings on the same document for Prev/Next in AI panel.
+    const siblings = results
+      .filter((r) => r.document_id === item.document_id && r.chunk_id)
+      .map((r) => ({
+        chunkId: r.chunk_id as string,
+        documentId: r.document_id,
+        pageNumber: r.page_number ?? r.location?.page_number ?? null,
+        score: r.score,
+        retrievalMethod: r.retrieval_method,
+        textSnippet: r.text_snippet,
+        documentTitle: r.document_title ?? titles[r.document_id] ?? null,
+      }));
+    if (item.chunk_id) {
+      saveSearchMatches(workspaceId, item.document_id, siblings, item.chunk_id);
+    }
+    router.push(buildDocumentViewerHref(workspaceId, item));
   }
 
   if (loading) {
@@ -118,21 +137,43 @@ export function SearchResults({
       </p>
       <ul className="flex flex-col gap-2">
         {results.map((item) => {
-          const title = titles[item.document_id] ?? `Tài liệu ${item.document_id.slice(0, 8)}…`;
+          const title =
+            item.document_title ||
+            titles[item.document_id] ||
+            `Tài liệu ${item.document_id.slice(0, 8)}…`;
           const segments = highlightSnippetSegments(item.text_snippet, query);
+          const locLabel = formatContentLocationLabel(
+            item.location ?? {
+              page_number: item.page_number,
+              section_index: null,
+              section_title: null,
+            },
+          );
           return (
             <li key={`${item.document_id}-${item.chunk_id ?? item.rank}`}>
               <button
                 type="button"
-                onClick={() => void handleClick(item)}
+                onClick={() => handleClick(item)}
                 className={cn(
-                  "w-full rounded-lg border border-border-default bg-surface px-4 py-3 text-left transition-colors",
-                  "hover:border-accent-primary/40 hover:bg-elevated/40 focus:outline-none focus:ring-2 focus:ring-accent-primary/20",
+                  "group w-full cursor-pointer rounded-lg border border-border-default bg-surface px-4 py-3 text-left",
+                  "transition-[border-color,box-shadow,background-color] duration-200",
+                  "hover:border-accent-primary/50 hover:bg-elevated/50 hover:shadow-md",
+                  "focus:outline-none focus:ring-2 focus:ring-accent-primary/25",
                 )}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-caption font-semibold text-tertiary">#{item.rank}</span>
-                  <span className="text-body-sm font-semibold text-primary">{title}</span>
+                  <span
+                    className={cn(
+                      "text-body-sm font-semibold text-primary transition-colors",
+                      "group-hover:underline group-hover:decoration-accent-primary/60",
+                    )}
+                  >
+                    {title}
+                  </span>
+                  {locLabel ? (
+                    <span className="text-caption text-tertiary">{locLabel}</span>
+                  ) : null}
                   <span
                     className={cn(
                       "rounded-full px-2 py-0.5 text-[10px] font-medium",

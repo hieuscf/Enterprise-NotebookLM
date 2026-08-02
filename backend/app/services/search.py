@@ -21,10 +21,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.models.enums import FileType
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.search_history import SearchHistoryRepository
+from app.schemas.content_location import ContentLocation
 from app.schemas.search import (
     SearchFilters,
     SearchHistoryItemResponse,
@@ -60,10 +62,12 @@ class SearchService:
         hybrid: HybridRetrievalService,
         history_repo: SearchHistoryRepository,
         retrieval_repo: RetrievalRepository,
+        settings: Settings | None = None,
     ) -> None:
         self._hybrid = hybrid
         self._history = history_repo
         self._retrieval_repo = retrieval_repo
+        self._settings = settings or get_settings()
 
     async def search(
         self,
@@ -100,8 +104,9 @@ class SearchService:
             else None
         )
         has_filters = bool(filters_dict)
-        # Over-fetch when filtering so post-filter still has enough hits.
-        fetch_k = body.top_k * 3 if has_filters else body.top_k
+        min_score = float(self._settings.search_min_score)
+        # Over-fetch when filtering / score-gating so post-filter still has enough hits.
+        fetch_k = body.top_k * 3 if has_filters or min_score > 0 else body.top_k
         fetch_k = max(fetch_k, body.top_k)
 
         try:
@@ -127,6 +132,21 @@ class SearchService:
         items = list(result.items)
         if has_filters and filters_model is not None:
             items = await self._apply_filters(workspace_id, items, filters_model)
+
+        before_score = len(items)
+        items = [
+            c
+            for c in items
+            if float(c.score if c.score is not None else c.raw_score) >= min_score
+        ]
+        if before_score != len(items):
+            logger.info(
+                "search_score_filtered",
+                workspace_id=str(workspace_id),
+                min_score=min_score,
+                before=before_score,
+                after=len(items),
+            )
 
         items = items[: body.top_k]
         for i, cand in enumerate(items, start=1):
@@ -336,14 +356,24 @@ def _to_result_item(cand: RetrievalCandidate) -> SearchResultItem:
         sources = [m for m in cand.source_methods if m in _OPENAPI_METHODS]
         method = sources[0] if len(sources) == 1 else "rerank"
     assert cand.document_id is not None
+    location: ContentLocation | None = None
+    if cand.page_number is not None or cand.section_index is not None:
+        location = ContentLocation(
+            page_number=cand.page_number,
+            section_index=cand.section_index,
+            section_title=cand.section_title,
+        )
     return SearchResultItem(
         chunk_id=cand.chunk_id,
         entity_id=cand.entity_id,
         document_id=cand.document_id,
+        document_title=cand.document_title,
         text_snippet=cand.text_snippet or "",
         retrieval_method=method,  # type: ignore[arg-type]
         score=float(cand.score if cand.score is not None else cand.raw_score),
         rank=int(cand.rank or 0),
+        page_number=cand.page_number,
+        location=location,
     )
 
 

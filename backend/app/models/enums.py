@@ -43,6 +43,19 @@ class DocumentVersionStatus(enum.StrEnum):
     failed = "failed"
 
 
+class PreviewStatus(enum.StrEnum):
+    pending = "pending"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
+class PreviewType(enum.StrEnum):
+    pdf = "pdf"
+    html = "html"
+    image = "image"
+
+
 class PipelineStatus(enum.StrEnum):
     pending = "pending"
     running = "running"
@@ -54,6 +67,8 @@ class PipelineStage(enum.StrEnum):
     # Deprecated v2 — retained in DB enum for historical pipeline_stage_logs rows.
     ocr_cleaning = "ocr_cleaning"
     chunking = "chunking"
+    # Preview Representation (before AI stages) — Original Document Viewer
+    preview_generation = "preview_generation"
     # v3 ingestion stages (preferred for new pipeline runs)
     document_understanding = "document_understanding"
     cleaning_normalize = "cleaning_normalize"

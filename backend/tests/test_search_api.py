@@ -186,6 +186,53 @@ def user_b() -> uuid.UUID:
 
 
 @pytest.mark.asyncio
+async def test_search_filters_results_below_min_score(
+    workspace_id: uuid.UUID,
+    user_a: uuid.UUID,
+) -> None:
+    doc_hi = uuid.uuid4()
+    doc_lo = uuid.uuid4()
+    hybrid = AsyncMock()
+    hybrid.retrieve = AsyncMock(
+        return_value=RetrievalResult(
+            items=[
+                _candidate(workspace_id, doc_hi, score=0.85, rank=1, text="strong"),
+                _candidate(workspace_id, doc_lo, score=0.42, rank=2, text="weak"),
+            ],
+            latency_ms=10,
+            sources_used=["vector"],
+            timings={},
+        )
+    )
+    history = FakeHistoryRepo()
+    from app.core.config import Settings
+
+    service = SearchService(
+        hybrid=hybrid,
+        history_repo=history,  # type: ignore[arg-type]
+        retrieval_repo=FakeRetrievalRepo(),  # type: ignore[arg-type]
+        settings=Settings(
+            embedding_model_name="local-hash-embedding-v1",
+            embedding_dimension=8,
+            embedding_provider="local",
+            search_min_score=0.6,
+            reranker_backend="heuristic",
+        ),
+    )
+
+    resp = await service.search(
+        workspace_id=workspace_id,
+        user_id=user_a,
+        body=SearchRequest(query_text="policy", top_k=10),
+    )
+
+    assert resp.results_count == 1
+    assert resp.results[0].document_id == doc_hi
+    assert resp.results[0].score >= 0.6
+    assert history.rows[0].results_count == 1
+
+
+@pytest.mark.asyncio
 async def test_search_calls_hybrid_and_writes_history(
     workspace_id: uuid.UUID,
     user_a: uuid.UUID,

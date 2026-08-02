@@ -38,6 +38,8 @@ from app.models.enums import (
     MessageRole,
     PipelineStage,
     PipelineStatus,
+    PreviewStatus,
+    PreviewType,
     ReportFormat,
     ReportSourceType,
     ReportStatus,
@@ -84,6 +86,8 @@ user_status_enum = pg_enum(UserStatus, "user_status")
 role_name_enum = pg_enum(RoleName, "role_name")
 file_type_enum = pg_enum(FileType, "file_type")
 document_version_status_enum = pg_enum(DocumentVersionStatus, "document_version_status")
+preview_status_enum = pg_enum(PreviewStatus, "preview_status")
+preview_type_enum = pg_enum(PreviewType, "preview_type")
 pipeline_status_enum = pg_enum(PipelineStatus, "pipeline_status")
 pipeline_stage_enum = pg_enum(PipelineStage, "pipeline_stage")
 confidence_level_enum = pg_enum(ConfidenceLevel, "confidence_level")

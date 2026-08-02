@@ -53,6 +53,7 @@ celery_app = Celery(
     backend=RESULT_BACKEND,
     include=[
         "app.workers.pipeline",
+        "app.workers.previews",
         "app.tasks.cleanup_expired_cache",
     ],
 )

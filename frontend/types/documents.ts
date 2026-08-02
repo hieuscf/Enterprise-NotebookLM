@@ -38,7 +38,39 @@ export type DocumentListResponse = {
   total: number;
 };
 
+export type DocumentChunk = {
+  id: string;
+  document_id: string;
+  document_version_id: string;
+  chunk_index: number;
+  content: string;
+  page_number?: number | null;
+  section_index?: number | null;
+  section?: string | null;
+  heading_path?: string | null;
+  section_path?: string | null;
+  bounding_box?: number[] | null;
+  start_offset?: number | null;
+  end_offset?: number | null;
+};
+
+export type DocumentChunkListResponse = {
+  document_id: string;
+  document_version_id: string | null;
+  document_title: string;
+  file_type: FileType;
+  viewer_kind?: "pdf" | "original_download";
+  preview_status?: PreviewStatus;
+  preview_type?: PreviewType | null;
+  preview_generated_at?: string | null;
+  heading_tree?: Array<Record<string, unknown>>;
+  items: DocumentChunk[];
+};
+
 export type DocumentVersionStatus = "processing" | "ready" | "failed";
+
+export type PreviewStatus = "pending" | "processing" | "completed" | "failed";
+export type PreviewType = "pdf" | "html" | "image";
 
 export type DocumentVersion = {
   id: string;
@@ -51,10 +83,14 @@ export type DocumentVersion = {
   status: DocumentVersionStatus;
   is_current: boolean;
   created_at: string;
+  preview_status?: PreviewStatus;
+  preview_type?: PreviewType | null;
+  preview_generated_at?: string | null;
 };
 
-/** v3 stage order (pipeline_stage_logs.stage) — see database-design-enterprise-notebooklm.md. */
+/** v3 stage order including Preview Generation before AI stages. */
 export type PipelineStageNameV3 =
+  | "preview_generation"
   | "document_understanding"
   | "cleaning_normalize"
   | "hierarchical_chunking"

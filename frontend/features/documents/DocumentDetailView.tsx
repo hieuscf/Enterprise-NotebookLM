@@ -35,6 +35,7 @@ import { useEffect, useState } from "react";
 import { ToastStack } from "@/components/ui/toast";
 import { DocumentUploadDropzone } from "@/features/documents/DocumentUploadDropzone";
 import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHistory";
+import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
 import { AppShell } from "@/features/shell/AppShell";
@@ -50,6 +51,9 @@ import type { Document } from "@/types/documents";
 type Props = {
   workspaceId: string;
   documentId: string;
+  /** Deep-link from Search (?chunk=). */
+  focusChunkId?: string | null;
+  focusPage?: number | null;
 };
 
 function formatDate(iso: string): string {
@@ -60,7 +64,12 @@ function formatDate(iso: string): string {
   }
 }
 
-export function DocumentDetailView({ workspaceId, documentId }: Props) {
+export function DocumentDetailView({
+  workspaceId,
+  documentId,
+  focusChunkId = null,
+  focusPage = null,
+}: Props) {
   const { user } = useAuth();
   const { isEditor } = useWorkspaceRole(workspaceId);
   const { toasts, pushSuccess, pushError, dismiss } = useToasts();
@@ -113,14 +122,24 @@ export function DocumentDetailView({ workspaceId, documentId }: Props) {
 
   return (
     <AppShell active="documents" user={user} workspaceId={workspaceId}>
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-8">
-        <Link
-          href={`/workspaces/${workspaceId}/documents`}
-          className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-secondary hover:text-accent-primary"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-          Quay lại danh sách tài liệu
-        </Link>
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={`/workspaces/${workspaceId}/documents`}
+            className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-secondary hover:text-accent-primary"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            Quay lại danh sách tài liệu
+          </Link>
+          {focusChunkId ? (
+            <Link
+              href={`/workspaces/${workspaceId}/search`}
+              className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-accent-primary hover:underline"
+            >
+              Quay lại tìm kiếm
+            </Link>
+          ) : null}
+        </div>
 
         {docError ? (
           <p
@@ -145,6 +164,19 @@ export function DocumentDetailView({ workspaceId, documentId }: Props) {
             </div>
           </div>
         )}
+
+        <section className="flex flex-col gap-3" aria-label="Nội dung tài liệu">
+          <h2 className="text-h3 text-primary">Nội dung</h2>
+          <DocumentViewer
+            workspaceId={workspaceId}
+            documentId={documentId}
+            focusChunkId={focusChunkId}
+            focusPage={focusPage}
+            onMissingChunk={() =>
+              pushError("Không tìm thấy đoạn được tham chiếu.")
+            }
+          />
+        </section>
 
         <div className="flex flex-col gap-3">
           {isEditor ? (

@@ -78,6 +78,7 @@ def get_search_service(
         hybrid=hybrid,
         history_repo=SearchHistoryRepository(session),
         retrieval_repo=retrieval_repo,
+        settings=settings,
     )
 
 

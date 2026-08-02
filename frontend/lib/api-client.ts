@@ -30,6 +30,7 @@
 import type { User } from "@/types/auth";
 import type {
   Document,
+  DocumentChunkListResponse,
   DocumentListResponse,
   DocumentVersion,
   FileType,
@@ -487,6 +488,34 @@ export async function getDocument(
   documentId: string,
 ): Promise<Document> {
   return apiJson<Document>(`/workspaces/${workspaceId}/documents/${documentId}`);
+}
+
+export async function listDocumentChunks(
+  workspaceId: string,
+  documentId: string,
+  versionId?: string | null,
+): Promise<DocumentChunkListResponse> {
+  const qs =
+    versionId && versionId.trim()
+      ? `?versionId=${encodeURIComponent(versionId)}`
+      : "";
+  return apiJson<DocumentChunkListResponse>(
+    `/workspaces/${workspaceId}/documents/${documentId}/chunks${qs}`,
+  );
+}
+
+/** Same-origin URL for original/preview PDF bytes (BFF proxy + cookies). */
+export function documentContentUrl(
+  workspaceId: string,
+  documentId: string,
+  options?: { versionId?: string | null; download?: boolean },
+): string {
+  const params = new URLSearchParams();
+  if (options?.versionId) params.set("versionId", options.versionId);
+  if (options?.download) params.set("download", "true");
+  const qs = params.toString();
+  const path = `/workspaces/${workspaceId}/documents/${documentId}/content`;
+  return `/api/proxy${path}${qs ? `?${qs}` : ""}`;
 }
 
 export async function listDocumentVersions(

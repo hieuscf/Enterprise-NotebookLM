@@ -36,6 +36,10 @@ class RetrievalCandidate:
     score: float | None = None
     rank: int | None = None
     source_methods: list[str] = field(default_factory=list)
+    page_number: int | None = None
+    section_index: int | None = None
+    section_title: str | None = None
+    document_title: str | None = None
 
 
 @dataclass(slots=True)

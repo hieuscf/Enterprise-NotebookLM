@@ -58,6 +58,9 @@ class DocumentVersionResponse(BaseModel):
     status: Literal["processing", "ready", "failed"]
     is_current: bool
     created_at: datetime
+    preview_status: Literal["pending", "processing", "completed", "failed"] = "pending"
+    preview_type: Literal["pdf", "html", "image"] | None = None
+    preview_generated_at: datetime | None = None
 
 
 class PipelineStageLogResponse(BaseModel):
@@ -67,6 +70,7 @@ class PipelineStageLogResponse(BaseModel):
     stage: Literal[
         "ocr_cleaning",
         "chunking",
+        "preview_generation",
         "document_understanding",
         "cleaning_normalize",
         "hierarchical_chunking",
@@ -89,3 +93,40 @@ class PipelineRunResponse(BaseModel):
     stages: list[PipelineStageLogResponse] = Field(default_factory=list)
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class DocumentChunkResponse(BaseModel):
+    """Viewer / AI-metadata chunk row (deep-link by chunk_id)."""
+
+    id: UUID
+    document_id: UUID
+    document_version_id: UUID
+    chunk_index: int
+    content: str
+    page_number: int | None = None
+    section_index: int | None = None
+    section: str | None = None
+    heading_path: str | None = None
+    section_path: str | None = Field(
+        default=None,
+        description="Alias of heading_path for viewer TOC / AI panel.",
+    )
+    bounding_box: list[float] | None = Field(
+        default=None,
+        description="Optional [x, y, w, h] from layout_metadata when available.",
+    )
+    start_offset: int | None = None
+    end_offset: int | None = None
+
+
+class DocumentChunkListResponse(BaseModel):
+    document_id: UUID
+    document_version_id: UUID | None = None
+    document_title: str
+    file_type: Literal["pdf", "docx", "xlsx", "pptx", "txt"]
+    viewer_kind: Literal["pdf", "original_download"] = "original_download"
+    preview_status: Literal["pending", "processing", "completed", "failed"] = "pending"
+    preview_type: Literal["pdf", "html", "image"] | None = None
+    preview_generated_at: datetime | None = None
+    heading_tree: list[dict[str, Any]] = Field(default_factory=list)
+    items: list[DocumentChunkResponse] = Field(default_factory=list)

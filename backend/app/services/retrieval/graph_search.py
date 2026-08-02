@@ -81,12 +81,20 @@ class GraphSearch:
 
             if chunk_id is not None:
                 snippet = str(row.get("content") or "")[:max_chars]
-                if (not snippet or document_id is None) and self._repo is not None:
+                page_number: int | None = None
+                section_index: int | None = None
+                section_title: str | None = None
+                document_title: str | None = None
+                if self._repo is not None:
                     hydrated = await self._repo.hydrate_chunks(workspace_id, [chunk_id])
                     h = hydrated.get(chunk_id)
                     if h is not None:
                         snippet = (h.content or snippet)[:max_chars]
                         document_id = document_id or h.document_id
+                        page_number = h.page_number
+                        section_index = h.section_index
+                        section_title = h.section
+                        document_title = h.title
                 candidates.append(
                     RetrievalCandidate(
                         workspace_id=workspace_id,
@@ -97,6 +105,10 @@ class GraphSearch:
                         raw_score=score,
                         retrieval_method="knowledge_graph",
                         source_methods=["knowledge_graph"],
+                        page_number=page_number,
+                        section_index=section_index,
+                        section_title=section_title,
+                        document_title=document_title,
                     )
                 )
             elif source_version_id is not None:
@@ -130,6 +142,10 @@ class GraphSearch:
                         raw_score=0.6,
                         retrieval_method="knowledge_graph",
                         source_methods=["knowledge_graph"],
+                        page_number=row.page_number,
+                        section_index=row.section_index,
+                        section_title=row.section,
+                        document_title=row.title,
                     )
                 )
 

@@ -31,10 +31,12 @@ from app.workers.stages.embedding import stage_embedding
 from app.workers.stages.errors import DataPipelineError, TransientPipelineError
 from app.workers.stages.graph_extraction import stage_graph_extraction
 from app.workers.stages.indexing import stage_indexing
+from app.workers.stages.preview_generation import stage_preview_generation
 
 StageHandler = Callable[[UUID], dict[str, Any]]
 
 STAGE_ORDER: tuple[PipelineStage, ...] = (
+    PipelineStage.preview_generation,
     PipelineStage.document_understanding,
     PipelineStage.cleaning_normalize,
     PipelineStage.hierarchical_chunking,
@@ -44,6 +46,7 @@ STAGE_ORDER: tuple[PipelineStage, ...] = (
 )
 
 STAGE_HANDLERS: dict[PipelineStage, StageHandler] = {
+    PipelineStage.preview_generation: stage_preview_generation,
     PipelineStage.document_understanding: stage_document_understanding,
     PipelineStage.cleaning_normalize: stage_cleaning_normalize,
     PipelineStage.hierarchical_chunking: stage_hierarchical_chunking,

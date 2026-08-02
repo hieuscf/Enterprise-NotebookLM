@@ -100,9 +100,17 @@ class VectorSearch:
             row = hydrated.get(cid)
             snippet = ""
             document_id = None
+            page_number = None
+            section_index = None
+            section_title = None
+            document_title = None
             if row is not None:
                 snippet = (row.content or "")[:max_chars]
                 document_id = row.document_id
+                page_number = row.page_number
+                section_index = row.section_index
+                section_title = row.section
+                document_title = row.title
             else:
                 payload = hit.get("payload") or {}
                 snippet = str(payload.get("content") or payload.get("section") or "")[:max_chars]
@@ -122,6 +130,10 @@ class VectorSearch:
                     raw_score=float(hit.get("score") or 0.0),
                     retrieval_method="vector",
                     source_methods=["vector"],
+                    page_number=page_number,
+                    section_index=section_index,
+                    section_title=section_title,
+                    document_title=document_title,
                 )
             )
         return candidates

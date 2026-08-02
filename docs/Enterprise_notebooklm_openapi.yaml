@@ -283,6 +283,74 @@ paths:
       responses:
         "204": { description: Đã xoá }
 
+  /workspaces/{workspaceId}/documents/{documentId}/chunks:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Documents]
+      summary: Danh sách chunk bản hiện hành (Document Viewer / deep-link Search)
+      description: >
+        Trả chunks đã index của current_version (hoặc versionId) để viewer
+        scroll/highlight theo chunk_id. Không gọi Hybrid Retrieval.
+      parameters:
+        - name: versionId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentChunkListResponse" }
+        "404":
+          description: Document không tồn tại
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /workspaces/{workspaceId}/documents/{documentId}/content:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Documents]
+      summary: Stream file gốc (hoặc preview PDF) cho Original Document Viewer
+      description: >
+        Trả bytes Original Representation từ MinIO. Không bao giờ trả markdown.
+        PDF gốc (hoặc document.pdf sibling) dùng để render; download=true để tải về.
+      parameters:
+        - name: versionId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: download
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: >
+            true = tải Original file (DOCX/PDF gốc). false = Preview Representation
+            (chỉ khi preview_status=completed; ngược lại 409).
+      responses:
+        "200":
+          description: Binary content (application/pdf hoặc MIME gốc)
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "409":
+          description: Preview chưa sẵn sàng (pending/processing/failed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Document/version không tồn tại
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /workspaces/{workspaceId}/documents/{documentId}/versions:
     parameters:
       - { $ref: "#/components/parameters/WorkspaceId" }
@@ -1111,12 +1179,17 @@ components:
               chunk_id: { type: string, format: uuid, nullable: true }
               entity_id: { type: string, format: uuid, nullable: true }
               document_id: { type: string, format: uuid }
+              document_title: { type: string, nullable: true }
               text_snippet: { type: string }
               retrieval_method:
                 type: string
                 enum: [vector, bm25, knowledge_graph, rerank]
               score: { type: number, format: float }
               rank: { type: integer }
+              page_number: { type: integer, nullable: true }
+              location:
+                $ref: "#/components/schemas/ContentLocation"
+                nullable: true
 
     SearchHistoryItem:
       type: object
@@ -1185,6 +1258,58 @@ components:
         text_snippet: { type: string }
         verified: { type: boolean }
         order_index: { type: integer }
+
+    ContentLocation:
+      type: object
+      description: Vị trí nội dung — page_number XOR section_index theo file_type (FR5)
+      properties:
+        page_number: { type: integer, nullable: true }
+        section_index: { type: integer, nullable: true }
+        section_title: { type: string, nullable: true }
+
+    DocumentChunkListResponse:
+      type: object
+      properties:
+        document_id: { type: string, format: uuid }
+        document_version_id: { type: string, format: uuid, nullable: true }
+        document_title: { type: string }
+        file_type: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        viewer_kind: { type: string, enum: [pdf, original_download] }
+        preview_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        preview_type:
+          type: string
+          enum: [pdf, html, image]
+          nullable: true
+        preview_generated_at: { type: string, format: date-time, nullable: true }
+        heading_tree:
+          type: array
+          items: { type: object }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentChunk" }
+
+    DocumentChunk:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_version_id: { type: string, format: uuid }
+        chunk_index: { type: integer }
+        content: { type: string }
+        page_number: { type: integer, nullable: true }
+        section_index: { type: integer, nullable: true }
+        section: { type: string, nullable: true }
+        heading_path: { type: string, nullable: true }
+        section_path: { type: string, nullable: true }
+        bounding_box:
+          type: array
+          items: { type: number }
+          nullable: true
+          description: Optional [x, y, w, h] from layout_metadata
+        start_offset: { type: integer, nullable: true }
+        end_offset: { type: integer, nullable: true }
 
     AgentEvent:
       type: object

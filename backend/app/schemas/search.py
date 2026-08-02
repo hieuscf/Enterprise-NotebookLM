@@ -23,6 +23,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.content_location import ContentLocation
+
 
 class SearchFilters(BaseModel):
     """Optional post-retrieval filters (file_type, date window, tags)."""
@@ -47,10 +49,13 @@ class SearchResultItem(BaseModel):
     chunk_id: UUID | None = None
     entity_id: UUID | None = None
     document_id: UUID
+    document_title: str | None = None
     text_snippet: str
     retrieval_method: Literal["vector", "bm25", "knowledge_graph", "rerank"]
     score: float
     rank: int
+    page_number: int | None = None
+    location: ContentLocation | None = None
 
 
 class SearchResultResponse(BaseModel):

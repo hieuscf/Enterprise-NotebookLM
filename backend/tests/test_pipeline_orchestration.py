@@ -161,7 +161,7 @@ def _stub_handlers() -> dict[PipelineStage, Any]:
     }
 
 
-def test_stub_pipeline_completes_all_six_stages() -> None:
+def test_stub_pipeline_completes_all_stages() -> None:
     run, version = _make_run_and_version()
     store = _FakeStore(run, version)
 
@@ -175,7 +175,7 @@ def test_stub_pipeline_completes_all_six_stages() -> None:
     assert result["stages"] == [s.value for s in STAGE_ORDER]
     assert run.status == PipelineStatus.completed
     assert version.status == DocumentVersionStatus.ready
-    assert len(store.stage_logs) == 6
+    assert len(store.stage_logs) == len(STAGE_ORDER)
     assert all(log.status == PipelineStatus.completed for log in store.stage_logs)
     assert [log.stage for log in store.stage_logs] == list(STAGE_ORDER)
 
@@ -193,16 +193,10 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
         call_log.append("embedding")
         raise DataPipelineError("simulated embedding failure")
 
-    handlers = {
-        PipelineStage.document_understanding: lambda v: _ok(
-            v, name="document_understanding"
-        ),
-        PipelineStage.cleaning_normalize: lambda v: _ok(v, name="cleaning_normalize"),
-        PipelineStage.hierarchical_chunking: lambda v: _ok(v, name="hierarchical_chunking"),
-        PipelineStage.embedding: _boom,
-        PipelineStage.graph_extraction: lambda v: _ok(v, name="graph_extraction"),
-        PipelineStage.indexing: lambda v: _ok(v, name="indexing"),
+    handlers: dict[PipelineStage, Any] = {
+        stage: (lambda _v, s=stage: _ok(_v, name=s.value)) for stage in STAGE_ORDER
     }
+    handlers[PipelineStage.embedding] = _boom
 
     with pytest.raises(DataPipelineError, match="simulated embedding failure"):
         execute_pipeline(
@@ -211,24 +205,21 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
             session_factory=_session_factory_for(store),
         )
 
-    assert call_log == [
-        "document_understanding",
-        "cleaning_normalize",
-        "hierarchical_chunking",
-        "embedding",
-    ]
+    failed_index = STAGE_ORDER.index(PipelineStage.embedding)
+    expected_calls = [s.value for s in STAGE_ORDER[:failed_index]]
+    assert call_log == [*expected_calls, "embedding"]
     assert "graph_extraction" not in call_log
     assert "indexing" not in call_log
     assert run.status == PipelineStatus.failed
     assert version.status == DocumentVersionStatus.failed
     assert run.error_message == "simulated embedding failure"
 
-    assert len(store.stage_logs) == 4
-    assert store.stage_logs[0].status == PipelineStatus.completed
-    assert store.stage_logs[1].status == PipelineStatus.completed
-    assert store.stage_logs[2].status == PipelineStatus.completed
-    assert store.stage_logs[3].stage == PipelineStage.embedding
-    assert store.stage_logs[3].status == PipelineStatus.failed
+    assert len(store.stage_logs) == failed_index + 1
+    assert all(
+        log.status == PipelineStatus.completed for log in store.stage_logs[:failed_index]
+    )
+    assert store.stage_logs[failed_index].stage == PipelineStage.embedding
+    assert store.stage_logs[failed_index].status == PipelineStatus.failed
 
 
 def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
@@ -239,14 +230,10 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
     def _timeout(_vid: uuid.UUID) -> dict[str, Any]:
         raise TransientPipelineError("qdrant timeout")
 
-    handlers = {
-        PipelineStage.document_understanding: _timeout,
-        PipelineStage.cleaning_normalize: lambda _v: {"stub": True},
-        PipelineStage.hierarchical_chunking: lambda _v: {"stub": True},
-        PipelineStage.embedding: lambda _v: {"stub": True},
-        PipelineStage.graph_extraction: lambda _v: {"stub": True},
-        PipelineStage.indexing: lambda _v: {"stub": True},
+    handlers: dict[PipelineStage, Any] = {
+        stage: (lambda _v: {"stub": True}) for stage in STAGE_ORDER
     }
+    handlers[STAGE_ORDER[0]] = _timeout
 
     with pytest.raises(TransientPipelineError):
         execute_pipeline(
