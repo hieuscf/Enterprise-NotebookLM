@@ -35,6 +35,8 @@ from app.services.query_router.cache import QueryCacheService, build_normalized_
 from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
+from app.services.query_router.handlers.factoid_handler import FactoidHandler
+from app.services.query_router.interfaces.retriever import RetrievedChunk
 from app.services.query_router.metadata_branch import (
     MetadataBranch,
     MetadataIntent,
@@ -356,6 +358,29 @@ def _build_router(
     return router, repo, hybrid, qdrant
 
 
+class FakeFactoidRetriever:
+    """Deterministic lightweight retriever for orchestrator unit tests."""
+
+    def __init__(self, score: float = 0.95, text: str = "exact snippet text") -> None:
+        self.score = score
+        self.text = text
+        self.calls = 0
+
+    async def retrieve(
+        self, query: str, top_k: int, *, workspace_id: uuid.UUID
+    ) -> list[RetrievedChunk]:
+        self.calls += 1
+        return [
+            RetrievedChunk(
+                chunk_id=uuid.uuid4(),
+                document_id=uuid.uuid4(),
+                text=self.text,
+                score=self.score,
+                page_number=7,
+            )
+        ]
+
+
 def _build_orchestrator(
     *,
     router: QueryRouter | None = None,
@@ -364,6 +389,7 @@ def _build_orchestrator(
     observability: FakeObservability | None = None,
     hybrid: AsyncMock | None = None,
     cache_repo: FakeCacheRepo | None = None,
+    factoid_retriever: FakeFactoidRetriever | None = None,
 ) -> tuple[QueryOrchestrator, FakeObservability, AsyncMock, FakeRetrievalRepo]:
     retrieval_repo = retrieval_repo or FakeRetrievalRepo()
     member_repo = member_repo or FakeMemberRepo()
@@ -372,13 +398,17 @@ def _build_orchestrator(
         router, _, hybrid_out, _ = _build_router(repo=cache_repo, hybrid=hybrid)
     else:
         hybrid_out = hybrid or AsyncMock()
+    retriever = factoid_retriever or FakeFactoidRetriever()
     orch = QueryOrchestrator(
         router=router,
         metadata_branch=MetadataBranch(
             retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
             member_repo=member_repo,  # type: ignore[arg-type]
         ),
-        factoid_branch=FactoidBranch(retrieval_repo=retrieval_repo),  # type: ignore[arg-type]
+        factoid_branch=FactoidBranch(
+            retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
+            retriever=retriever,  # type: ignore[arg-type]
+        ),
         observability=observability,  # type: ignore[arg-type]
     )
     return orch, observability, hybrid_out, retrieval_repo
@@ -557,7 +587,7 @@ async def test_factoid_extractive_answer_and_citation() -> None:
     assert result.route_type == RouteType.factoid
     assert result.answer == snippet
     assert result.verify is True
-    assert result.metadata == {}
+    assert result.metadata.get("top_k") == 1
     assert len(result.citation_refs) == 1
     cite = result.citation_refs[0]
     assert cite.chunk_id == chunk_id
@@ -586,7 +616,8 @@ async def test_factoid_does_not_call_hybrid_again() -> None:
         )
     assert result.route_type == RouteType.factoid
     assert result.answer == "exact snippet text"
-    assert hybrid_out.retrieve.await_count == 1
+    # Router must not hybrid-retrieve for factoid (handler owns lightweight retrieve).
+    hybrid_out.retrieve.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

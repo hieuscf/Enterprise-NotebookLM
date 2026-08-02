@@ -21,7 +21,9 @@ from app.services.query_router.classifier import (
     build_rule_based_classifier,
 )
 from app.services.query_router.exceptions import QueryCacheRepositoryError, QueryRouterError
+from app.services.query_router.handlers import FactoidHandler, MetadataHandler
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
+from app.services.query_router.response_models import QueryRouterResult
 from app.services.query_router.router import QueryRouter
 from app.services.query_router.schemas import (
     CacheEntryView,
@@ -43,6 +45,8 @@ __all__ = [
     "COMPLEX_STATUS",
     "CacheEntryView",
     "CitationRef",
+    "FactoidHandler",
+    "MetadataHandler",
     "QueryCacheRepositoryError",
     "QueryCacheService",
     "QueryCacheWriter",
@@ -51,6 +55,7 @@ __all__ = [
     "QueryOrchestrator",
     "QueryRouter",
     "QueryRouterError",
+    "QueryRouterResult",
     "RuleBasedClassifier",
     "RouteDecision",
     "build_normalized_query",

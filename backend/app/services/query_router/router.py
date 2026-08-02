@@ -5,7 +5,7 @@
 # Purpose: Orchestrate cache check then QueryClassifier (0 LLM).
 # Responsibilities:
 #   - Exact → semantic cache; then classify metadata / factoid / complex
-#   - Retrieve once for factoid/complex so branches can execute extractively
+#   - Factoid retrieval owned by FactoidHandler; complex may probe hybrid
 # Dependencies:
 #   - QueryCacheService, QueryClassifier, HybridRetrievalService, RouterRules
 # Public Exports:
@@ -14,7 +14,7 @@
 # Related Modules: Chat Service, Hybrid Retrieval
 # Important Notes:
 #   - Classifier never decides cache_hit.
-#   - Retrieval called at most once after classification (factoid/complex).
+#   - Metadata / factoid handlers guarantee 0 LLM.
 # =============================================================================
 
 from __future__ import annotations
@@ -147,17 +147,8 @@ class QueryRouter:
                 factoid_score=None,
             )
 
-        # --- 6: Retrieve once for factoid / complex execution ---
-        retrieval = await self._hybrid.retrieve(
-            workspace_id,
-            nq.original.strip() or nq.normalized,
-            top_k=self._rules.factoid_top_k,
-        )
-        if retrieval.items:
-            top = retrieval.items[0]
-            factoid_score = float(top.score if top.score is not None else top.raw_score)
-
         if route_type == RouteType.factoid:
+            # Lightweight retrieval + confidence happen in FactoidHandler (Task 3).
             return self._finish(
                 started=started,
                 workspace_id=workspace_id,
@@ -167,14 +158,23 @@ class QueryRouter:
                     reason=reason,
                     latency_ms=0,
                     query_hash=nq.query_hash,
-                    retrieval_result=retrieval,
                     similarity=similarity,
-                    factoid_score=factoid_score,
+                    extras={"query_text": nq.original.strip() or nq.normalized},
                 ),
                 cache_hit=False,
                 similarity=similarity,
-                factoid_score=factoid_score,
+                factoid_score=None,
             )
+
+        # --- Complex placeholder: optional hybrid probe for downstream Task 4 ---
+        retrieval = await self._hybrid.retrieve(
+            workspace_id,
+            nq.original.strip() or nq.normalized,
+            top_k=self._rules.factoid_top_k,
+        )
+        if retrieval.items:
+            top = retrieval.items[0]
+            factoid_score = float(top.score if top.score is not None else top.raw_score)
 
         return self._finish(
             started=started,

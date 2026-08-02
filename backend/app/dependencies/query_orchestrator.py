@@ -33,6 +33,7 @@ from app.services.query_router.cache import QueryCacheService
 from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.embedding_provider import SettingsEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
+from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import QueryOrchestrator
 from app.services.query_router.router import QueryRouter
@@ -50,13 +51,14 @@ def get_query_orchestrator(
     settings = get_settings()
     rules = get_router_rules()
     retrieval_repo = RetrievalRepository(session)
+    vector_search = VectorSearch(
+        settings=settings,
+        qdrant=get_qdrant_store(),
+        repo=retrieval_repo,
+    )
     hybrid = HybridRetrievalService(
         settings=settings,
-        vector_search=VectorSearch(
-            settings=settings,
-            qdrant=get_qdrant_store(),
-            repo=retrieval_repo,
-        ),
+        vector_search=vector_search,
         bm25_search=Bm25Search(
             settings=settings,
             elasticsearch=get_elasticsearch_bm25(),
@@ -88,6 +90,10 @@ def get_query_orchestrator(
             retrieval_repo=retrieval_repo,
             member_repo=WorkspaceMemberRepository(session),
         ),
-        factoid_branch=FactoidBranch(retrieval_repo=retrieval_repo),
+        factoid_branch=FactoidBranch(
+            retrieval_repo=retrieval_repo,
+            retriever=LightweightVectorRetriever(vector_search),
+            settings=settings,
+        ),
         observability=QueryObservabilityRepository(session),
     )

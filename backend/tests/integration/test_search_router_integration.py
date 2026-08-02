@@ -45,6 +45,7 @@ from app.services.query_router.cache_writer import QueryCacheWriter
 from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
+from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
 from app.services.query_router.router import QueryRouter
@@ -81,6 +82,7 @@ def _settings(**overrides: Any) -> Settings:
         "query_router_minimum_factoid_score": 0.40,
         "query_router_maximum_factoid_length": 200,
         "query_router_factoid_top_k": 1,
+        "search_min_score": 0.0,
     }
     base.update(overrides)
     return Settings(**base)
@@ -597,13 +599,14 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
     es = SeededElasticsearch(world)
     neo4j = SeededNeo4j(world)
     retrieval_repo = SeededRetrievalRepo(world)
+    vector_search = VectorSearch(
+        settings=settings,
+        qdrant=qdrant,  # type: ignore[arg-type]
+        repo=retrieval_repo,  # type: ignore[arg-type]
+    )
     hybrid = HybridRetrievalService(
         settings=settings,
-        vector_search=VectorSearch(
-            settings=settings,
-            qdrant=qdrant,  # type: ignore[arg-type]
-            repo=retrieval_repo,  # type: ignore[arg-type]
-        ),
+        vector_search=vector_search,
         bm25_search=Bm25Search(
             settings=settings,
             elasticsearch=es,  # type: ignore[arg-type]
@@ -621,6 +624,7 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
         hybrid=hybrid,
         history_repo=history,  # type: ignore[arg-type]
         retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
+        settings=settings,
     )
     cache_repo = FakeCacheRepo()
     observability = FakeObservability()
@@ -642,7 +646,11 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
             retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
             member_repo=SeededMemberRepo(world),  # type: ignore[arg-type]
         ),
-        factoid_branch=FactoidBranch(retrieval_repo=retrieval_repo),  # type: ignore[arg-type]
+        factoid_branch=FactoidBranch(
+            retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
+            retriever=LightweightVectorRetriever(vector_search),
+            settings=settings,
+        ),
         observability=observability,  # type: ignore[arg-type]
     )
     writer = QueryCacheWriter(repo=cache_repo, settings=settings)  # type: ignore[arg-type]
@@ -816,7 +824,7 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         # Metadata must not fan out hybrid adapters
         qdrant_before_factoid = stack.qdrant.search_calls
 
-        # --- Factoid (real hybrid retrieve once inside router) ---
+        # --- Factoid (lightweight vector retrieve inside FactoidHandler) ---
         fact_msg = uuid.uuid4()
         calls_before = stack.qdrant.search_calls
         fact = await orch.handle_query(
@@ -831,7 +839,7 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         assert len(fact.citation_refs) == 1
         assert fact.citation_refs[0].chunk_id == world.chunk_id
         assert fact.citation_refs[0].verify is True
-        # Retrieval ran for factoid classification (adapters called)
+        # Lightweight retriever hits Qdrant once (not hybrid fan-out).
         assert stack.qdrant.search_calls > calls_before
         assert stack.qdrant.search_calls > qdrant_before_factoid
 
@@ -989,7 +997,7 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
 
 @pytest.mark.asyncio
 async def test_factoid_retrieval_called_at_most_once(stack: IntegrationStack) -> None:
-    """Router probes hybrid once; FactoidBranch must not retrieve again."""
+    """FactoidHandler uses lightweight vector retrieve; hybrid must not run."""
     world = stack.world
     hybrid_retrieve = stack.hybrid.retrieve
     call_counter = {"n": 0}
@@ -999,7 +1007,7 @@ async def test_factoid_retrieval_called_at_most_once(stack: IntegrationStack) ->
         return await hybrid_retrieve(*args, **kwargs)
 
     stack.hybrid.retrieve = _counting_retrieve  # type: ignore[method-assign]
-    # Re-bind router hybrid reference already points to same object.
+    qdrant_before = stack.qdrant.search_calls
 
     with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
         result = await stack.orchestrator.handle_query(
@@ -1009,7 +1017,9 @@ async def test_factoid_retrieval_called_at_most_once(stack: IntegrationStack) ->
             message_id=uuid.uuid4(),
         )
     assert result.route_type == RouteType.factoid
-    assert call_counter["n"] == 1
+    assert call_counter["n"] == 0
+    # Semantic cache miss (+ optional) then lightweight chunk search.
+    assert stack.qdrant.search_calls >= qdrant_before + 1
 
 
 @pytest.mark.asyncio

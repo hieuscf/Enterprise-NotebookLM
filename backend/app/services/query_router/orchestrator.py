@@ -114,6 +114,7 @@ class QueryOrchestrator:
             branch = await self._factoid.execute(
                 workspace_id=workspace_id,
                 decision=decision,
+                query_text=query_text,
             )
             final_route = branch.route_type
             answer = branch.answer

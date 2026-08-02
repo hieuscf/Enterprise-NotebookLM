@@ -281,9 +281,9 @@ async def test_factoid_classification(query: str) -> None:
     router, _, hybrid_out, _ = _build_router(hybrid=hybrid)
     decision = await router.route(workspace_id, uuid.uuid4(), query)
     assert decision.route_type == RouteType.factoid
-    assert decision.retrieval_result is not None
-    assert decision.factoid_score is not None and decision.factoid_score >= 0.75
-    hybrid_out.retrieve.assert_awaited_once()
+    # Lightweight retrieval is owned by FactoidHandler — router must not hybrid-retrieve.
+    assert decision.retrieval_result is None
+    hybrid_out.retrieve.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -325,10 +325,13 @@ async def test_exact_cache_hit_increments_and_skips_retrieval() -> None:
     query = "What is the leave policy?"
     router, repo, hybrid, qdrant = _build_router()
 
-    # First call — cache miss → complex/factoid path (retrieval once).
+    # First call — cache miss → factoid/complex (factoid skips hybrid).
     first = await router.route(workspace_id, user_id, query)
     assert first.route_type != RouteType.cache_hit
-    assert hybrid.retrieve.await_count == 1
+    if first.route_type == RouteType.complex:
+        assert hybrid.retrieve.await_count == 1
+    else:
+        hybrid.retrieve.assert_not_awaited()
 
     # Seed exact cache as if Part 4 wrote it after answering.
     seeded = repo.add(_make_cache(workspace_id=workspace_id, query_text=query))
@@ -430,7 +433,7 @@ async def test_factoid_and_complex_call_retrieval_once() -> None:
 
     factoid = await router.route(workspace_id, uuid.uuid4(), "What is embedding?")
     assert factoid.route_type == RouteType.factoid
-    assert hybrid_out.retrieve.await_count == 1
+    hybrid_out.retrieve.assert_not_awaited()
 
     hybrid_out.retrieve.reset_mock()
     hybrid_out.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.15))
@@ -443,7 +446,6 @@ async def test_factoid_and_complex_call_retrieval_once() -> None:
     )
     assert complex_decision.route_type == RouteType.complex
     assert hybrid2.retrieve.await_count == 1
-    # Same retrieval_result object reused (not a second call).
     assert complex_decision.retrieval_result is not None
 
 
