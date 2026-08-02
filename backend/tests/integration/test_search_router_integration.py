@@ -77,7 +77,8 @@ def _settings(**overrides: Any) -> Settings:
         "reranker_backend": "heuristic",
         "query_cache_similarity_threshold": 0.90,
         "query_cache_default_ttl_seconds": 3600,
-        "query_cache_cleanup_interval_minutes": 15,
+        "query_cache_cleanup_interval_minutes": 60,
+        "query_cache_cleanup_batch_size": 1000,
         "query_router_factoid_confidence_threshold": 0.50,
         "query_router_minimum_factoid_score": 0.40,
         "query_router_maximum_factoid_length": 200,
@@ -539,13 +540,28 @@ class FakeCacheRepo:
     async def save(self, **kwargs: Any) -> QueryCache:
         return await self.create(**kwargs)
 
-    async def delete_expired(self, *, now: datetime | None = None) -> int:
+    async def delete_expired(
+        self,
+        *,
+        now: datetime | None = None,
+        batch_size: int | None = None,
+    ) -> int:
         ts = now or datetime.now(UTC)
-        doomed = [cid for cid, row in self.rows.items() if row.expires_at < ts]
-        for cid in doomed:
-            row = self.rows.pop(cid)
-            self.by_hash.pop((row.workspace_id, row.query_hash), None)
-        return len(doomed)
+        limit = max(1, int(batch_size or 1000))
+        total = 0
+        while True:
+            doomed = [
+                cid for cid, row in self.rows.items() if row.expires_at < ts
+            ][:limit]
+            if not doomed:
+                break
+            for cid in doomed:
+                row = self.rows.pop(cid)
+                self.by_hash.pop((row.workspace_id, row.query_hash), None)
+            total += len(doomed)
+            if len(doomed) < limit:
+                break
+        return total
 
 
 class FakeObservability:
@@ -991,8 +1007,12 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         MagicMock(rowcount=0),
     ]
     session.flush = MagicMock()
-    first = run_cleanup_expired_query_cache(session, now=now)
-    second = run_cleanup_expired_query_cache(session, now=now)
+    with patch(
+        "app.tasks.cleanup_expired_cache.get_settings",
+        return_value=_settings(),
+    ):
+        first = run_cleanup_expired_query_cache(session, now=now)
+        second = run_cleanup_expired_query_cache(session, now=now)
     assert first["deleted_count"] == 1
     assert second["deleted_count"] == 0
 

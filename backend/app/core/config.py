@@ -144,7 +144,10 @@ class Settings(BaseSettings):
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).
     query_cache_default_ttl_seconds: int = 86_400  # 24h
-    query_cache_cleanup_interval_minutes: int = 15
+    # Celery Beat interval for ``cleanup_expired_query_cache`` (minutes).
+    query_cache_cleanup_interval_minutes: int = 60
+    # Max rows deleted per DELETE statement (batched to avoid long table locks).
+    query_cache_cleanup_batch_size: int = 1000
     # Semantic cache: Qdrant Top-K candidates before per-entry threshold filter.
     query_cache_semantic_top_k: int = 5
     query_router_factoid_confidence_threshold: float = 0.75

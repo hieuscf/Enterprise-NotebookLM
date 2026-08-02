@@ -6,6 +6,7 @@
 # Responsibilities:
 #   - get_exact / get_by_ids / save / update_hit / delete_expired
 #   - Atomic hit_count increment (no lost updates under concurrent hits)
+#   - Batched expired-row DELETE for Celery cleanup (LIMIT per statement)
 # Dependencies:
 #   - SQLAlchemy AsyncSession / Session, app.models.query.QueryCache
 # Public Exports:
@@ -16,6 +17,7 @@
 #   - Always filter by workspace_id on tenant reads.
 #   - Schema is fixed — do not add/drop columns here.
 #   - Vector similarity search lives in Qdrant adapter (not SQL brute-force).
+#   - Cleanup uses ix_query_cache_expires_at / (workspace_id, expires_at).
 # =============================================================================
 
 from __future__ import annotations
@@ -24,12 +26,15 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Sequence
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import Delete, delete, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.models.query import QueryCache
+
+# Default batch size when callers omit Settings (matches Settings default).
+DEFAULT_CLEANUP_BATCH_SIZE = 1000
 
 
 class QueryCacheRepositoryError(Exception):
@@ -39,6 +44,27 @@ class QueryCacheRepositoryError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def _normalize_batch_size(batch_size: int | None) -> int:
+    if batch_size is None:
+        return DEFAULT_CLEANUP_BATCH_SIZE
+    return max(1, int(batch_size))
+
+
+def _expired_batch_delete_stmt(now: datetime, batch_size: int) -> Delete:
+    """Build ``DELETE … WHERE id IN (SELECT id … LIMIT batch_size)``.
+
+    Batched deletes keep each statement short-lived on large ``query_cache``
+    tables. Relies on ``ix_query_cache_expires_at`` (and composite
+    ``ix_query_cache_workspace_id_expires_at``).
+    """
+    expired_ids = (
+        select(QueryCache.id)
+        .where(QueryCache.expires_at < now)
+        .limit(batch_size)
+    )
+    return delete(QueryCache).where(QueryCache.id.in_(expired_ids))
 
 
 class QueryCacheRepository:
@@ -274,51 +300,74 @@ class QueryCacheRepository:
             ) from exc
         return row
 
-    async def delete_expired(self, *, now: datetime | None = None) -> int:
-        """Delete all rows with ``expires_at < now`` (uses expires_at index).
+    async def delete_expired(
+        self,
+        *,
+        now: datetime | None = None,
+        batch_size: int | None = None,
+    ) -> int:
+        """Delete rows with ``expires_at < now`` in batches of ``batch_size``.
+
+        Args:
+            now: Clock override (tests). Defaults to UTC now.
+            batch_size: Max rows per DELETE (default ``DEFAULT_CLEANUP_BATCH_SIZE``).
 
         Returns:
-            Number of deleted rows.
+            Total number of deleted rows across all batches.
 
         Raises:
             QueryCacheRepositoryError: On SQLAlchemy failure.
         """
         ts = now or datetime.now(UTC)
+        limit = _normalize_batch_size(batch_size)
+        total = 0
         try:
-            result = await self._session.execute(
-                delete(QueryCache).where(QueryCache.expires_at < ts)
-            )
-            await self._session.flush()
+            while True:
+                result = await self._session.execute(_expired_batch_delete_stmt(ts, limit))
+                await self._session.flush()
+                deleted = int(result.rowcount or 0)
+                total += deleted
+                if deleted < limit:
+                    break
         except SQLAlchemyError as exc:
             raise QueryCacheRepositoryError(
                 f"Failed to delete expired query_cache: {exc}"
             ) from exc
-        return int(result.rowcount or 0)
+        return total
 
 
 def delete_expired_query_cache_sync(
     session: Session,
     *,
     now: datetime | None = None,
+    batch_size: int | None = None,
 ) -> int:
-    """Synchronous expired-row delete for Celery workers.
+    """Synchronous batched expired-row delete for Celery workers.
 
     Args:
         session: Sync SQLAlchemy session (Celery).
         now: Optional clock override for tests.
+        batch_size: Max rows per DELETE statement (avoids long table locks).
 
     Returns:
-        Number of deleted rows.
+        Total number of deleted rows.
 
     Raises:
         QueryCacheRepositoryError: On SQLAlchemy failure.
     """
     ts = now or datetime.now(UTC)
+    limit = _normalize_batch_size(batch_size)
+    total = 0
     try:
-        result = session.execute(delete(QueryCache).where(QueryCache.expires_at < ts))
-        session.flush()
+        while True:
+            result = session.execute(_expired_batch_delete_stmt(ts, limit))
+            session.flush()
+            deleted = int(result.rowcount or 0)
+            total += deleted
+            if deleted < limit:
+                break
     except SQLAlchemyError as exc:
         raise QueryCacheRepositoryError(
             f"Failed to delete expired query_cache: {exc}"
         ) from exc
-    return int(result.rowcount or 0)
+    return total

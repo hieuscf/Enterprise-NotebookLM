@@ -48,7 +48,8 @@ def _settings(**overrides: Any) -> Settings:
         "embedding_provider": "local",
         "query_cache_similarity_threshold": 0.92,
         "query_cache_default_ttl_seconds": 3600,
-        "query_cache_cleanup_interval_minutes": 15,
+        "query_cache_cleanup_interval_minutes": 60,
+        "query_cache_cleanup_batch_size": 1000,
     }
     base.update(overrides)
     return Settings(**base)
@@ -85,12 +86,27 @@ class FakeQueryCacheRepo:
     async def save(self, **kwargs: Any) -> QueryCache:
         return await self.create(**kwargs)
 
-    async def delete_expired(self, *, now: datetime | None = None) -> int:
+    async def delete_expired(
+        self,
+        *,
+        now: datetime | None = None,
+        batch_size: int | None = None,
+    ) -> int:
         ts = now or datetime.now(UTC)
-        to_delete = [cid for cid, row in self.rows.items() if row.expires_at < ts]
-        for cid in to_delete:
-            del self.rows[cid]
-        return len(to_delete)
+        limit = max(1, int(batch_size or 1000))
+        total = 0
+        while True:
+            to_delete = [
+                cid for cid, row in self.rows.items() if row.expires_at < ts
+            ][:limit]
+            if not to_delete:
+                break
+            for cid in to_delete:
+                del self.rows[cid]
+            total += len(to_delete)
+            if len(to_delete) < limit:
+                break
+        return total
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +281,12 @@ def test_delete_expired_sync_only_removes_expired() -> None:
         store[row.id] = row
 
     session = MagicMock()
+    batch_size = 1000
 
     def _execute(stmt: Any) -> MagicMock:  # noqa: ARG001
-        # Mimic DELETE WHERE expires_at < now
-        deleted_ids = [rid for rid, row in list(store.items()) if row.expires_at < now]
+        deleted_ids = [
+            rid for rid, row in list(store.items()) if row.expires_at < now
+        ][:batch_size]
         for rid in deleted_ids:
             del store[rid]
         result = MagicMock()
@@ -278,14 +296,32 @@ def test_delete_expired_sync_only_removes_expired() -> None:
     session.execute.side_effect = _execute
     session.flush = MagicMock()
 
-    deleted = delete_expired_query_cache_sync(session, now=now)
+    deleted = delete_expired_query_cache_sync(session, now=now, batch_size=batch_size)
     assert deleted == 3
     assert len(store) == 2
     assert all(row.expires_at >= now for row in store.values())
 
-    deleted_again = delete_expired_query_cache_sync(session, now=now)
+    deleted_again = delete_expired_query_cache_sync(session, now=now, batch_size=batch_size)
     assert deleted_again == 0
     assert len(store) == 2
+
+
+def test_delete_expired_sync_respects_batch_size() -> None:
+    """Each DELETE statement is capped; loop until expired rows are gone."""
+    now = datetime(2026, 7, 31, 12, 0, 0, tzinfo=UTC)
+    session = MagicMock()
+    # 5 expired rows, batch_size=2 → three statements (2 + 2 + 1)
+    session.execute.side_effect = [
+        MagicMock(rowcount=2),
+        MagicMock(rowcount=2),
+        MagicMock(rowcount=1),
+    ]
+    session.flush = MagicMock()
+
+    deleted = delete_expired_query_cache_sync(session, now=now, batch_size=2)
+    assert deleted == 5
+    assert session.execute.call_count == 3
+    assert session.flush.call_count == 3
 
 
 def test_cleanup_job_idempotent_second_run() -> None:
@@ -297,21 +333,60 @@ def test_cleanup_job_idempotent_second_run() -> None:
     session.execute.side_effect = [first, second]
     session.flush = MagicMock()
 
-    result1 = run_cleanup_expired_query_cache(session, now=now)
+    with patch(
+        "app.tasks.cleanup_expired_cache.get_settings",
+        return_value=_settings(query_cache_cleanup_batch_size=1000),
+    ):
+        result1 = run_cleanup_expired_query_cache(session, now=now)
     assert result1["deleted_count"] == 2
+    assert result1["batch_size"] == 1000
     assert "started_at" in result1
     assert "finished_at" in result1
     assert "duration_ms" in result1
 
-    result2 = run_cleanup_expired_query_cache(session, now=now)
+    with patch(
+        "app.tasks.cleanup_expired_cache.get_settings",
+        return_value=_settings(query_cache_cleanup_batch_size=1000),
+    ):
+        result2 = run_cleanup_expired_query_cache(session, now=now)
     assert result2["deleted_count"] == 0
 
 
 def test_cleanup_propagates_repository_error() -> None:
     session = MagicMock()
     session.execute.side_effect = SQLAlchemyError("boom")
-    with pytest.raises(QueryCacheRepositoryError):
+    with (
+        patch(
+            "app.tasks.cleanup_expired_cache.get_settings",
+            return_value=_settings(),
+        ),
+        pytest.raises(QueryCacheRepositoryError),
+    ):
         run_cleanup_expired_query_cache(session)
+
+
+def test_cleanup_logs_deleted_count() -> None:
+    session = MagicMock()
+    session.execute.return_value = MagicMock(rowcount=4)
+    session.flush = MagicMock()
+    with (
+        patch(
+            "app.tasks.cleanup_expired_cache.get_settings",
+            return_value=_settings(query_cache_cleanup_batch_size=500),
+        ),
+        patch("app.tasks.cleanup_expired_cache.logger") as mock_logger,
+    ):
+        result = run_cleanup_expired_query_cache(session, batch_size=500)
+    assert result["deleted_count"] == 4
+    assert result["batch_size"] == 500
+    mock_logger.info.assert_any_call(
+        "query_cache_cleanup_finished",
+        deleted_count=4,
+        batch_size=500,
+        duration_ms=result["duration_ms"],
+        started_at=result["started_at"],
+        finished_at=result["finished_at"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +451,12 @@ def test_celery_beat_schedule_uses_settings_interval() -> None:
 
 
 def test_celery_app_registers_cleanup_beat_entry() -> None:
+    from datetime import timedelta
+
     from app.workers import celery_app as celery_mod
 
     assert "cleanup-expired-query-cache" in celery_mod.celery_app.conf.beat_schedule
     entry = celery_mod.celery_app.conf.beat_schedule["cleanup-expired-query-cache"]
     assert entry["task"] == "cleanup_expired_query_cache"
+    assert isinstance(entry["schedule"], timedelta)
+    assert entry["schedule"].total_seconds() >= 60

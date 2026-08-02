@@ -26,6 +26,9 @@ from celery import Celery
 BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
 RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/1")
 
+# Fallback only when Settings / env cannot be read at import time.
+_DEFAULT_CLEANUP_INTERVAL_MINUTES = 60
+
 
 def _cleanup_interval_minutes() -> int:
     """Read cleanup interval from env/Settings without hardcoding Beat period."""
@@ -40,7 +43,7 @@ def _cleanup_interval_minutes() -> int:
 
         return max(1, int(get_settings().query_cache_cleanup_interval_minutes))
     except Exception:  # noqa: BLE001 — Celery boot must not fail on settings load
-        return 15
+        return _DEFAULT_CLEANUP_INTERVAL_MINUTES
 
 
 _CLEANUP_MINUTES = _cleanup_interval_minutes()
