@@ -31,6 +31,7 @@ from app.repositories.retrieval import RetrievalRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.query_router.cache import QueryCacheService
 from app.services.query_router.classifier import build_rule_based_classifier
+from app.services.query_router.embedding_provider import SettingsEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import QueryOrchestrator
@@ -73,6 +74,7 @@ def get_query_orchestrator(
         rules=rules,
         repo=QueryCacheRepository(session),
         qdrant=get_qdrant_store(),
+        embedding=SettingsEmbeddingProvider(settings),
     )
     router = QueryRouter(
         rules=rules,

@@ -82,6 +82,9 @@ class FakeQueryCacheRepo:
         self.rows[row.id] = row
         return row
 
+    async def save(self, **kwargs: Any) -> QueryCache:
+        return await self.create(**kwargs)
+
     async def delete_expired(self, *, now: datetime | None = None) -> int:
         ts = now or datetime.now(UTC)
         to_delete = [cid for cid, row in self.rows.items() if row.expires_at < ts]

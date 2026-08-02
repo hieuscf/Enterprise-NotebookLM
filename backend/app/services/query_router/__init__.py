@@ -30,11 +30,21 @@ from app.services.query_router.schemas import (
     RouteDecision,
 )
 
+# Re-export cache helpers for Task-2 call sites.
+from app.services.query_router.cache import (  # noqa: E402
+    QueryCacheService,
+    build_normalized_query,
+    hash_query,
+    normalize_query,
+    save_query_cache,
+)
+
 __all__ = [
     "COMPLEX_STATUS",
     "CacheEntryView",
     "CitationRef",
     "QueryCacheRepositoryError",
+    "QueryCacheService",
     "QueryCacheWriter",
     "QueryClassifier",
     "QueryExecutionResult",
@@ -43,6 +53,10 @@ __all__ = [
     "QueryRouterError",
     "RuleBasedClassifier",
     "RouteDecision",
+    "build_normalized_query",
     "build_rule_based_classifier",
+    "hash_query",
+    "normalize_query",
+    "save_query_cache",
     "write_cache",
 ]

@@ -33,6 +33,7 @@ from app.models.query import QueryCache
 from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
 from app.services.query_router.cache import QueryCacheService, build_normalized_query
 from app.services.query_router.classifier import build_rule_based_classifier
+from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.metadata_branch import (
     MetadataBranch,
@@ -115,6 +116,17 @@ class FakeCacheRepo:
             return None
         return row
 
+    async def get_exact(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        query_hash: str,
+        now: datetime | None = None,
+    ) -> QueryCache | None:
+        return await self.find_exact_hit(
+            workspace_id=workspace_id, query_hash=query_hash, now=now
+        )
+
     async def get_by_id(
         self,
         *,
@@ -129,6 +141,20 @@ class FakeCacheRepo:
         if row.expires_at <= ts:
             return None
         return row
+
+    async def get_similar(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        cache_ids: list[uuid.UUID],
+        now: datetime | None = None,
+    ) -> list[QueryCache]:
+        out: list[QueryCache] = []
+        for cid in cache_ids:
+            row = await self.get_by_id(workspace_id=workspace_id, cache_id=cid, now=now)
+            if row is not None:
+                out.append(row)
+        return out
 
     async def record_hit(self, cache: QueryCache, *, now: datetime | None = None) -> QueryCache:
         ts = now or datetime.now(UTC)
@@ -319,6 +345,7 @@ def _build_router(
         rules=rules,
         repo=repo,  # type: ignore[arg-type]
         qdrant=qdrant,
+        embedding=HashingNgramEmbeddingProvider(dimension=32),
     )
     router = QueryRouter(
         rules=rules,

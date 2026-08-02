@@ -145,6 +145,8 @@ class Settings(BaseSettings):
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).
     query_cache_default_ttl_seconds: int = 86_400  # 24h
     query_cache_cleanup_interval_minutes: int = 15
+    # Semantic cache: Qdrant Top-K candidates before per-entry threshold filter.
+    query_cache_semantic_top_k: int = 5
     query_router_factoid_confidence_threshold: float = 0.75
     query_router_minimum_factoid_score: float = 0.70
     query_router_maximum_factoid_length: int = 80

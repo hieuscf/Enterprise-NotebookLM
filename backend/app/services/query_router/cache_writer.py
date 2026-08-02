@@ -2,19 +2,18 @@
 # File: cache_writer.py
 # Module/Service: Query Router — Cache Write-back (FR11)
 # Layer: Service
-# Purpose: Persist verified answers into query_cache for Complex branch (later).
+# Purpose: Persist verified answers into query_cache (Postgres row insert).
 # Responsibilities:
-#   - Reuse Part 3 normalize_query / hash_query; apply Settings TTL; insert row
+#   - Reuse normalize/hash; apply caller TTL; insert via Repository.save
 # Dependencies:
-#   - QueryCacheRepository, Settings, CitationRef
+#   - QueryCacheRepository, Settings, cache.serialize_citation_refs
 # Public Exports:
 #   - QueryCacheWriter, write_cache, serialize_citation_refs
 # Database/Table: query_cache
-# Related Modules: Chat Service Complex branch (consumer); QueryCacheService (reader)
+# Related Modules: QueryCacheService.save_query_cache (preferred when Qdrant upsert needed)
 # Important Notes:
-#   - Not wired into Orchestrator in Part 5 — internal API only.
-#   - Does not overwrite existing rows (insert-only; no merge strategy yet).
-#   - Stores normalized query in query_text (schema has no normalized_query col).
+#   - Insert-only; does not overwrite existing rows.
+#   - For semantic reuse prefer QueryCacheService.save_query_cache (upserts Qdrant).
 # =============================================================================
 
 from __future__ import annotations
@@ -27,53 +26,21 @@ from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
 from app.models.query import QueryCache
 from app.repositories.query_cache import QueryCacheRepository, QueryCacheRepositoryError
-from app.services.query_router.cache import build_normalized_query
+from app.services.query_router.cache import (
+    build_normalized_query,
+    serialize_citation_refs,
+)
 from app.services.query_router.schemas import CitationRef
 
 logger = get_logger(__name__)
 
 
-def serialize_citation_refs(
-    citation_refs: Sequence[CitationRef | Mapping[str, Any]] | None,
-) -> list[dict[str, Any]] | None:
-    """Convert citation objects/dicts to JSONB-safe list of dicts.
-
-    Preserves ``chunk_id``, ``document_id``, ``page_number``, ``verify``.
-    """
-    if citation_refs is None:
-        return None
-    out: list[dict[str, Any]] = []
-    for item in citation_refs:
-        if isinstance(item, CitationRef):
-            out.append(
-                {
-                    "chunk_id": str(item.chunk_id) if item.chunk_id else None,
-                    "document_id": str(item.document_id) if item.document_id else None,
-                    "page_number": item.page_number,
-                    "verify": bool(item.verify),
-                }
-            )
-            continue
-        if isinstance(item, Mapping):
-            chunk_id = item.get("chunk_id")
-            document_id = item.get("document_id")
-            page_number = item.get("page_number")
-            verify = item.get("verify", True)
-            out.append(
-                {
-                    "chunk_id": str(chunk_id) if chunk_id is not None else None,
-                    "document_id": str(document_id) if document_id is not None else None,
-                    "page_number": int(page_number) if page_number is not None else None,
-                    "verify": bool(verify),
-                }
-            )
-            continue
-        raise TypeError(f"Unsupported citation_refs element type: {type(item)!r}")
-    return out
-
-
 class QueryCacheWriter:
-    """Write-back API for ``query_cache`` (Complex branch consumer)."""
+    """Postgres-only write-back API for ``query_cache``.
+
+    Prefer ``QueryCacheService.save_query_cache`` when the caller also needs
+    Qdrant vector upsert for semantic hits.
+    """
 
     def __init__(
         self,
@@ -99,7 +66,7 @@ class QueryCacheWriter:
 
         Args:
             workspace_id: Tenant scope — never write across workspaces.
-            query_text: Raw user query (normalized via Part 3 helpers).
+            query_text: Raw user query (normalized via shared helpers).
             query_embedding_id: Optional embedding FK for semantic reuse.
             answer: Verified answer text to cache.
             citation_refs: Citations (``CitationRef`` or mapping).
@@ -130,7 +97,7 @@ class QueryCacheWriter:
         refs_json = serialize_citation_refs(citation_refs)
 
         try:
-            row = await self._repo.create(
+            row = await self._repo.save(
                 workspace_id=workspace_id,
                 query_hash=nq.query_hash,
                 query_text=nq.normalized,
@@ -176,11 +143,7 @@ async def write_cache(
     settings: Settings | None = None,
     now: datetime | None = None,
 ) -> QueryCache:
-    """Module-level write-back helper matching the Part 5 public signature.
-
-    Prefer injecting ``QueryCacheWriter`` in production DI; this helper suits
-    Chat Service call sites and unit tests.
-    """
+    """Module-level write-back helper matching the public signature."""
     writer = QueryCacheWriter(repo=repo, settings=settings)
     return await writer.write_cache(
         workspace_id,
