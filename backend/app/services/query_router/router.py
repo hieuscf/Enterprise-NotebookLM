@@ -2,19 +2,19 @@
 # File: router.py
 # Module/Service: Query Router (FR11)
 # Layer: Service
-# Purpose: Orchestrate cache check then rule-based classification (0 LLM).
+# Purpose: Orchestrate cache check then QueryClassifier (0 LLM).
 # Responsibilities:
-#   - Exact → semantic cache; metadata → factoid retrieve → complex
-#   - Return RouteDecision with reusable cache/retrieval payloads
+#   - Exact → semantic cache; then classify metadata / factoid / complex
+#   - Retrieve once for factoid/complex so branches can execute extractively
 # Dependencies:
-#   - QueryCacheService, RuleBasedClassifier, HybridRetrievalService, RouterRules
+#   - QueryCacheService, QueryClassifier, HybridRetrievalService, RouterRules
 # Public Exports:
 #   - QueryRouter
 # Database/Table: query_cache (via cache service)
-# Related Modules: Chat Service (Part 4), Hybrid Retrieval (Part 1)
+# Related Modules: Chat Service, Hybrid Retrieval
 # Important Notes:
-#   - Pipeline order is fixed — do not reorder steps.
-#   - Retrieval called at most once (factoid probe); complex reuses result.
+#   - Classifier never decides cache_hit.
+#   - Retrieval called at most once after classification (factoid/complex).
 # =============================================================================
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from app.config.router_rules import RouterRules
 from app.core.logging import get_logger
 from app.models.enums import RouteType
 from app.services.query_router.cache import QueryCacheService, build_normalized_query
-from app.services.query_router.classifier import RuleBasedClassifier
+from app.services.query_router.classifier import QueryClassifier
 from app.services.query_router.schemas import RouteDecision
 from app.services.retrieval.hybrid_retrieval_service import HybridRetrievalService
 from app.services.retrieval.schemas import RetrievalResult
@@ -35,14 +35,14 @@ logger = get_logger(__name__)
 
 
 class QueryRouter:
-    """Query Router — cache check + rule-based classification only."""
+    """Query Router — cache check + injected QueryClassifier."""
 
     def __init__(
         self,
         *,
         rules: RouterRules,
         cache: QueryCacheService,
-        classifier: RuleBasedClassifier,
+        classifier: QueryClassifier,
         hybrid: HybridRetrievalService,
     ) -> None:
         self._rules = rules
@@ -121,19 +121,25 @@ class QueryRouter:
                 factoid_score=None,
             )
 
-        # --- 5: Metadata Classification ---
-        meta = self._classifier.match_metadata(nq.normalized)
-        if meta.matched:
+        # --- 5: Intent classification (never cache_hit) ---
+        route_type, reason = self._classify(query_text, workspace_id)
+        if route_type == RouteType.cache_hit:
+            # Defensive: classifiers must not emit cache_hit; treat as complex.
+            logger.warning("classifier_returned_cache_hit_fallback_complex")
+            route_type = RouteType.complex
+            reason = "classifier_forbidden_cache_hit_fallback_complex"
+
+        if route_type == RouteType.metadata:
             return self._finish(
                 started=started,
                 workspace_id=workspace_id,
                 user_id=user_id,
                 decision=RouteDecision(
                     route_type=RouteType.metadata,
-                    reason=f"metadata_pattern={meta.pattern}",
+                    reason=reason,
                     latency_ms=0,
                     query_hash=nq.query_hash,
-                    metadata_payload={"matched_pattern": meta.pattern},
+                    metadata_payload={"reason": reason},
                     similarity=similarity,
                 ),
                 cache_hit=False,
@@ -141,31 +147,24 @@ class QueryRouter:
                 factoid_score=None,
             )
 
-        # --- 6: Factoid Retrieval (at most once) ---
+        # --- 6: Retrieve once for factoid / complex execution ---
         retrieval = await self._hybrid.retrieve(
             workspace_id,
             nq.original.strip() or nq.normalized,
             top_k=self._rules.factoid_top_k,
         )
-        top_score = None
         if retrieval.items:
             top = retrieval.items[0]
-            top_score = float(top.score if top.score is not None else top.raw_score)
-            factoid_score = top_score
+            factoid_score = float(top.score if top.score is not None else top.raw_score)
 
-        # --- 7: Factoid Classification ---
-        is_factoid, factoid_reason = self._classifier.is_factoid(
-            nq.normalized,
-            top_score=top_score,
-        )
-        if is_factoid:
+        if route_type == RouteType.factoid:
             return self._finish(
                 started=started,
                 workspace_id=workspace_id,
                 user_id=user_id,
                 decision=RouteDecision(
                     route_type=RouteType.factoid,
-                    reason=factoid_reason,
+                    reason=reason,
                     latency_ms=0,
                     query_hash=nq.query_hash,
                     retrieval_result=retrieval,
@@ -177,14 +176,13 @@ class QueryRouter:
                 factoid_score=factoid_score,
             )
 
-        # --- 8: Complex (reuse retrieval; no second call) ---
         return self._finish(
             started=started,
             workspace_id=workspace_id,
             user_id=user_id,
             decision=RouteDecision(
                 route_type=RouteType.complex,
-                reason=factoid_reason or "default_complex",
+                reason=reason or "default_complex",
                 latency_ms=0,
                 query_hash=nq.query_hash,
                 retrieval_result=retrieval,
@@ -196,6 +194,15 @@ class QueryRouter:
             similarity=similarity,
             factoid_score=factoid_score,
         )
+
+    def _classify(self, query_text: str, workspace_id: UUID) -> tuple[RouteType, str]:
+        """Run classifier; prefer detailed result when available."""
+        detailed = getattr(self._classifier, "classify_detailed", None)
+        if callable(detailed):
+            result = detailed(query_text, workspace_id)
+            return result.route_type, result.reason
+        route = self._classifier.classify(query_text, workspace_id)
+        return route, f"classified={route.value}"
 
     def _finish(
         self,

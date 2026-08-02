@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import re
-import unicodedata
 from uuid import UUID
 
 from app.adapters.qdrant_store import QdrantStoreAdapter
@@ -30,30 +28,10 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.query import QueryCache
 from app.repositories.query_cache import QueryCacheRepository
+from app.services.query_router.normalizer import normalize_query as normalize_query
 from app.services.query_router.schemas import CacheEntryView, NormalizedQuery
 
 logger = get_logger(__name__)
-
-# Punctuation / symbol strip — keep letters/numbers/spaces (Unicode-aware).
-_PUNCT_RE = re.compile(r"[^\w\s]+", re.UNICODE)
-_SPACE_RE = re.compile(r"\s+")
-
-
-def normalize_query(query_text: str) -> str:
-    """Lowercase, trim, collapse whitespace, strip punctuation.
-
-    Args:
-        query_text: Raw user query.
-
-    Returns:
-        Normalized string used for hashing and rule matching.
-    """
-    text = unicodedata.normalize("NFKC", query_text or "")
-    text = text.lower().strip()
-    text = _PUNCT_RE.sub(" ", text)
-    text = _SPACE_RE.sub(" ", text).strip()
-    return text
-
 
 def hash_query(normalized: str) -> str:
     """SHA-256 hex digest of the normalized query."""

@@ -15,6 +15,11 @@
 # =============================================================================
 
 from app.services.query_router.cache_writer import QueryCacheWriter, write_cache
+from app.services.query_router.classifier import (
+    QueryClassifier,
+    RuleBasedClassifier,
+    build_rule_based_classifier,
+)
 from app.services.query_router.exceptions import QueryCacheRepositoryError, QueryRouterError
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
 from app.services.query_router.router import QueryRouter
@@ -31,10 +36,13 @@ __all__ = [
     "CitationRef",
     "QueryCacheRepositoryError",
     "QueryCacheWriter",
+    "QueryClassifier",
     "QueryExecutionResult",
     "QueryOrchestrator",
     "QueryRouter",
     "QueryRouterError",
+    "RuleBasedClassifier",
     "RouteDecision",
+    "build_rule_based_classifier",
     "write_cache",
 ]

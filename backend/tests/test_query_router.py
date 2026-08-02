@@ -34,7 +34,10 @@ from app.services.query_router.cache import (
     hash_query,
     normalize_query,
 )
-from app.services.query_router.classifier import RuleBasedClassifier
+from app.services.query_router.classifier import (
+    RuleBasedClassifier,
+    build_rule_based_classifier,
+)
 from app.services.query_router.router import QueryRouter
 from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 
@@ -53,6 +56,9 @@ def _settings(**overrides: Any) -> Settings:
         "query_router_minimum_factoid_score": 0.70,
         "query_router_maximum_factoid_length": 80,
         "query_router_factoid_top_k": 1,
+        "query_router_classifier_confidence_threshold": 0.12,
+        "query_router_classifier_margin_threshold": 0.03,
+        "query_router_classifier_embedding_dimension": 256,
         "reranker_backend": "heuristic",
     }
     base.update(overrides)
@@ -185,7 +191,7 @@ def _build_router(
     router = QueryRouter(
         rules=rules,
         cache=cache,
-        classifier=RuleBasedClassifier(rules),
+        classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
     return router, repo, hybrid, qdrant
@@ -421,9 +427,11 @@ async def test_exact_cache_does_not_run_classifier_path() -> None:
     repo = FakeCacheRepo()
     repo.add(_make_cache(workspace_id=workspace_id, query_text=query))
     router, _, hybrid, qdrant = _build_router(repo=repo)
-    with patch.object(RuleBasedClassifier, "match_metadata", autospec=True) as meta_spy:
+    with patch.object(
+        RuleBasedClassifier, "classify_detailed", autospec=True
+    ) as classify_spy:
         decision = await router.route(workspace_id, uuid.uuid4(), query)
         assert decision.route_type == RouteType.cache_hit
-        meta_spy.assert_not_called()
+        classify_spy.assert_not_called()
         hybrid.retrieve.assert_not_awaited()
         qdrant.search_similar.assert_not_called()

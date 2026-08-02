@@ -32,7 +32,7 @@ from app.models.enums import FileType, RouteType
 from app.models.query import QueryCache
 from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
 from app.services.query_router.cache import QueryCacheService, build_normalized_query
-from app.services.query_router.classifier import RuleBasedClassifier
+from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.metadata_branch import (
     MetadataBranch,
@@ -323,7 +323,7 @@ def _build_router(
     router = QueryRouter(
         rules=rules,
         cache=cache,
-        classifier=RuleBasedClassifier(rules),
+        classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
     return router, repo, hybrid, qdrant

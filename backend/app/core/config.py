@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     query_router_minimum_factoid_score: float = 0.70
     query_router_maximum_factoid_length: int = 80
     query_router_factoid_top_k: int = 1
+    # FR11 — Query Classifier (rule + embedding centroid; 0 LLM).
+    query_router_classifier_confidence_threshold: float = 0.12
+    query_router_classifier_margin_threshold: float = 0.03
+    query_router_classifier_embedding_dimension: int = 256
 
 
 @lru_cache

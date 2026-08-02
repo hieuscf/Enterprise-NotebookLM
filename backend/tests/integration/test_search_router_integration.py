@@ -42,7 +42,7 @@ from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.query_router.cache import QueryCacheService, build_normalized_query
 from app.services.query_router.cache_writer import QueryCacheWriter
-from app.services.query_router.classifier import RuleBasedClassifier
+from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
@@ -603,7 +603,7 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
             repo=cache_repo,  # type: ignore[arg-type]
             qdrant=qdrant,  # type: ignore[arg-type]
         ),
-        classifier=RuleBasedClassifier(rules),
+        classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
     orch = QueryOrchestrator(

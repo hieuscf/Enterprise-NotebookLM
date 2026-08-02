@@ -29,9 +29,8 @@ from app.repositories.query_cache import QueryCacheRepository
 from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
-from app.services.embedding import get_embedding_service
 from app.services.query_router.cache import QueryCacheService
-from app.services.query_router.classifier import RuleBasedClassifier
+from app.services.query_router.classifier import build_rule_based_classifier
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import QueryOrchestrator
@@ -70,15 +69,15 @@ def get_query_orchestrator(
         reranker=Reranker(settings),
     )
     cache = QueryCacheService(
+        settings=settings,
+        rules=rules,
         repo=QueryCacheRepository(session),
         qdrant=get_qdrant_store(),
-        embedding=get_embedding_service(),
-        rules=rules,
     )
     router = QueryRouter(
         rules=rules,
         cache=cache,
-        classifier=RuleBasedClassifier(rules),
+        classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
     return QueryOrchestrator(
