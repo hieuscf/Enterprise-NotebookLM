@@ -4,17 +4,17 @@
 # Layer: Service
 # Purpose: Sole internal API for Chat Service — route then execute 0-LLM branches.
 # Responsibilities:
-#   - handle_query → QueryRouter.route → branch switch → unified logging
+#   - handle_query → QueryRouter.route → branch switch → unified log_query_routing
 #   - cache_hit / metadata / factoid execution; complex placeholder only
 # Dependencies:
-#   - QueryRouter, MetadataBranch, FactoidBranch, log_route_decision
+#   - QueryRouter, MetadataBranch, FactoidBranch, logging_service
 # Public Exports:
 #   - QueryOrchestrator, COMPLEX_STATUS
-# Database/Table: query_logs, message_generations (via logging)
-# Related Modules: Chat Service (downstream), Query Router (Part 3)
+# Database/Table: query_logs (via logging_service only)
+# Related Modules: Chat Service (downstream writes message_generations)
 # Important Notes:
 #   - No Prompt Construction / LLM in this module.
-#   - Never return before log_route_decision.
+#   - Never return before log_query_routing completes (best-effort).
 #   - Do not call QueryRouter elsewhere from Chat — use handle_query only.
 # =============================================================================
 
@@ -26,9 +26,10 @@ from uuid import UUID
 
 from app.core.logging import get_logger
 from app.models.enums import RouteType
-from app.repositories.query_logs import QueryObservabilityRepository
 from app.services.query_router.factoid_branch import FactoidBranch
-from app.services.query_router.logging import log_route_decision
+from app.services.query_router.interfaces.query_log_repository import QueryLogRepository
+from app.services.query_router.logging_models import QueryRoutingLogContext
+from app.services.query_router.logging_service import QueryRoutingLogger
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.router import QueryRouter
 from app.services.query_router.schemas import (
@@ -51,12 +52,14 @@ class QueryOrchestrator:
         router: QueryRouter,
         metadata_branch: MetadataBranch,
         factoid_branch: FactoidBranch,
-        observability: QueryObservabilityRepository,
+        query_log_repository: QueryLogRepository,
+        session_id: UUID | None = None,
     ) -> None:
         self._router = router
         self._metadata = metadata_branch
         self._factoid = factoid_branch
-        self._observability = observability
+        self._logger = QueryRoutingLogger(query_log_repository)
+        self._session_id = session_id
 
     async def handle_query(
         self,
@@ -65,20 +68,26 @@ class QueryOrchestrator:
         query_text: str,
         *,
         message_id: UUID | None = None,
+        session_id: UUID | None = None,
+        llm_calls_count: int | None = None,
+        model_used: str | None = None,
     ) -> QueryExecutionResult:
-        """Route and execute a user query; always persist observability rows.
+        """Route and execute a user query; always attempt unified query_logs write.
 
         Args:
             workspace_id: Tenant scope (caller must enforce RBAC).
             user_id: Authenticated user.
             query_text: Raw user question.
-            message_id: Optional assistant ``chat_messages.id`` so
-                ``message_generations`` can be written (FK required). Chat
-                Service should pass this when available.
+            message_id: Optional assistant ``chat_messages.id`` stored on
+                ``query_logs.message_id`` when Chat already created the row.
+            session_id: Optional chat session id (correlation only; not a column).
+            llm_calls_count: Override for Complex pipeline (default 0 for 0-LLM).
+            model_used: Override for Complex pipeline model id (default None).
 
         Returns:
-            Unified ``QueryExecutionResult`` independent of branch.
+            Unified ``QueryExecutionResult`` including logging metadata for Chat.
         """
+        # Monotonic clock — Query Router wall time (not wall-clock datetime).
         started = time.perf_counter()
         decision = await self._router.route(workspace_id, user_id, query_text)
 
@@ -89,12 +98,16 @@ class QueryOrchestrator:
         status: str | None = None
         cache_id: UUID | None = None
         final_route = decision.route_type
+        effective_llm_calls = 0
+        effective_model: str | None = None
 
         if decision.route_type == RouteType.cache_hit:
             answer, citation_refs, metadata, verify, cache_id = _from_cache(
                 decision.cache_entry
             )
             final_route = RouteType.cache_hit
+            effective_llm_calls = 0
+            effective_model = None
 
         elif decision.route_type == RouteType.metadata:
             branch = await self._metadata.execute(
@@ -109,6 +122,8 @@ class QueryOrchestrator:
             metadata = branch.metadata
             verify = branch.verify
             status = branch.status
+            effective_llm_calls = 0
+            effective_model = None
 
         elif decision.route_type == RouteType.factoid:
             branch = await self._factoid.execute(
@@ -122,9 +137,11 @@ class QueryOrchestrator:
             metadata = branch.metadata
             verify = branch.verify
             status = branch.status
+            effective_llm_calls = 0
+            effective_model = None
 
         else:
-            # complex — placeholder only (Chat Service attaches LLM later)
+            # complex — placeholder only (Chat / Complex pipeline attaches LLM later)
             final_route = RouteType.complex
             answer = None
             citation_refs = []
@@ -136,20 +153,32 @@ class QueryOrchestrator:
                 metadata["retrieval_item_count"] = len(decision.retrieval_result.items)
             verify = False
             status = COMPLEX_STATUS
+            # Allow Complex pipeline to pass actual LLM usage when wired.
+            effective_llm_calls = int(llm_calls_count) if llm_calls_count is not None else 0
+            effective_model = model_used
+
+        # If metadata/factoid downgraded to complex, keep 0-LLM until Complex runs.
+        if final_route in {RouteType.metadata, RouteType.factoid, RouteType.cache_hit}:
+            effective_llm_calls = 0
+            effective_model = None
+            if final_route != RouteType.cache_hit:
+                cache_id = None
 
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
 
-        log_result = await log_route_decision(
-            observability=self._observability,
-            workspace_id=workspace_id,
-            user_id=user_id,
-            query_text=query_text,
-            route_type=final_route,
-            message_id=message_id,
-            cache_id=cache_id,
-            latency_ms=latency_ms,
-            llm_calls_count=0,
-            model_used=None,
+        log_result = await self._logger.log_query_routing(
+            QueryRoutingLogContext(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                query_text=query_text,
+                route_type=final_route,
+                latency_ms=latency_ms,
+                llm_calls_count=effective_llm_calls,
+                cache_id=cache_id,
+                message_id=message_id,
+                model_used=effective_model,
+                session_id=session_id or self._session_id,
+            )
         )
 
         return QueryExecutionResult(
@@ -161,8 +190,10 @@ class QueryOrchestrator:
             latency_ms=latency_ms,
             status=status,
             cache_id=cache_id,
+            llm_calls_count=effective_llm_calls,
+            model_used=effective_model,
             query_log_id=log_result.query_log_id,
-            message_generation_id=log_result.message_generation_id,
+            message_generation_id=None,
         )
 
 

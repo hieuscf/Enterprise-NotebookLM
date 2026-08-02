@@ -553,10 +553,13 @@ class FakeObservability:
         self.query_logs: list[dict[str, Any]] = []
         self.generations: list[dict[str, Any]] = []
 
-    async def create_query_log(self, **kwargs: Any) -> Any:
+    async def create_log(self, **kwargs: Any) -> Any:
         row_id = uuid.uuid4()
         self.query_logs.append({"id": row_id, **kwargs})
         return type("QL", (), {"id": row_id})()
+
+    async def create_query_log(self, **kwargs: Any) -> Any:
+        return await self.create_log(**kwargs)
 
     async def create_message_generation(self, **kwargs: Any) -> Any:
         row_id = uuid.uuid4()
@@ -651,7 +654,7 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
             retriever=LightweightVectorRetriever(vector_search),
             settings=settings,
         ),
-        observability=observability,  # type: ignore[arg-type]
+        query_log_repository=observability,  # type: ignore[arg-type]
     )
     writer = QueryCacheWriter(repo=cache_repo, settings=settings)  # type: ignore[arg-type]
     return IntegrationStack(
@@ -903,13 +906,11 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         assert stack.cache_repo.rows[written.id].hit_count == 2
         assert stack.qdrant.search_calls == retrieve_calls_before_hit
 
-    # Unified logging: exactly one log + generation per handle_query (4 routes
-    # + 2 cache hits on same query = 5 handle_query calls above? Wait:
-    # meta, fact, complex, hit, hit2 = 5. Spec asks for 4 routes with 4 logs.
-    # Recount: we need assert for the four representative routes specifically.
+    # Unified logging: exactly one query_logs row per handle_query
+    # (meta + factoid + complex + 2 cache hits = 5). Chat owns message_generations.
     route_logs = obs.query_logs
-    assert len(route_logs) == 5  # meta + factoid + complex + 2 cache hits
-    assert len(obs.generations) == 5
+    assert len(route_logs) == 5
+    assert len(obs.generations) == 0
     routes_seen = {row["route_type"] for row in route_logs}
     assert RouteType.cache_hit in routes_seen
     assert RouteType.metadata in routes_seen
@@ -944,9 +945,10 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
                 message_id=uuid.uuid4(),
             )
             assert result.route_type == expected
+            assert result.message_generation_id is None
 
     assert len(stack2.observability.query_logs) == 4
-    assert len(stack2.observability.generations) == 4
+    assert len(stack2.observability.generations) == 0
     assert {r["route_type"] for r in stack2.observability.query_logs} == {
         RouteType.cache_hit,
         RouteType.metadata,

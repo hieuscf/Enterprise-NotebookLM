@@ -5,7 +5,7 @@
 # Purpose: Unit tests for metadata/factoid/cache branches, logging, orchestrator.
 # Responsibilities:
 #   - Whitelist metadata intents; extractive factoid; cache_hit; complex stub;
-#     unified query_logs + message_generations; 0 LLM
+#     unified query_logs only (message_generations = Chat Service); 0 LLM
 # Dependencies:
 #   - pytest, AsyncMock, app.services.query_router.*
 # Public Exports:
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -170,10 +169,13 @@ class FakeObservability:
         self.query_logs: list[dict[str, Any]] = []
         self.generations: list[dict[str, Any]] = []
 
-    async def create_query_log(self, **kwargs: Any) -> SimpleNamespace:
+    async def create_log(self, **kwargs: Any) -> SimpleNamespace:
         row_id = uuid.uuid4()
         self.query_logs.append({"id": row_id, **kwargs})
         return SimpleNamespace(id=row_id)
+
+    async def create_query_log(self, **kwargs: Any) -> SimpleNamespace:
+        return await self.create_log(**kwargs)
 
     async def create_message_generation(self, **kwargs: Any) -> SimpleNamespace:
         row_id = uuid.uuid4()
@@ -409,7 +411,7 @@ def _build_orchestrator(
             retrieval_repo=retrieval_repo,  # type: ignore[arg-type]
             retriever=retriever,  # type: ignore[arg-type]
         ),
-        observability=observability,  # type: ignore[arg-type]
+        query_log_repository=observability,  # type: ignore[arg-type]
     )
     return orch, observability, hybrid_out, retrieval_repo
 
@@ -658,7 +660,7 @@ async def test_cache_hit_returns_cached_answer_without_branches() -> None:
         router=router,
         metadata_branch=meta,
         factoid_branch=fact,
-        observability=obs,  # type: ignore[arg-type]
+        query_log_repository=obs,  # type: ignore[arg-type]
     )
     with patch(
         "app.adapters.anthropic_client.extract_structured_json",
@@ -680,7 +682,10 @@ async def test_cache_hit_returns_cached_answer_without_branches() -> None:
     meta.execute.assert_not_awaited()
     fact.execute.assert_not_awaited()
     assert len(obs.query_logs) == 1
-    assert len(obs.generations) == 1
+    assert len(obs.generations) == 0
+    assert result.message_generation_id is None
+    assert result.llm_calls_count == 0
+    assert result.model_used is None
 
 
 # ---------------------------------------------------------------------------
@@ -711,11 +716,12 @@ async def test_complex_placeholder_logs_no_llm() -> None:
     assert result.answer is None
     assert result.metadata.get("status") == COMPLEX_STATUS
     assert len(obs.query_logs) == 1
-    assert len(obs.generations) == 1
+    assert len(obs.generations) == 0
     assert obs.query_logs[0]["llm_calls_count"] == 0
     assert obs.query_logs[0]["model_used"] is None
-    assert obs.generations[0]["prompt_tokens"] == 0
-    assert obs.generations[0]["cost_usd"] == Decimal("0")
+    assert result.llm_calls_count == 0
+    assert result.model_used is None
+    assert result.message_generation_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -747,13 +753,13 @@ async def test_handle_query_logs_one_row_each(query: str) -> None:
         )
 
     assert len(obs.query_logs) == 1
-    assert len(obs.generations) == 1
+    assert len(obs.generations) == 0
     assert obs.query_logs[0]["route_type"] == result.route_type
     assert obs.query_logs[0]["llm_calls_count"] == 0
-    assert obs.generations[0]["message_id"] == message_id
-    assert obs.generations[0]["route_type"] == result.route_type
+    assert obs.query_logs[0]["message_id"] == message_id
     assert result.query_log_id == obs.query_logs[0]["id"]
-    assert result.message_generation_id == obs.generations[0]["id"]
+    assert result.message_generation_id is None
+    assert result.llm_calls_count == 0
 
 
 @pytest.mark.asyncio
@@ -768,8 +774,9 @@ async def test_cache_hit_logging_included() -> None:
     )
     assert result.route_type == RouteType.cache_hit
     assert len(obs.query_logs) == 1
-    assert len(obs.generations) == 1
+    assert len(obs.generations) == 0
     assert obs.query_logs[0]["cache_id"] == result.cache_id
+    assert result.message_generation_id is None
     hybrid.retrieve.assert_not_awaited()
 
 

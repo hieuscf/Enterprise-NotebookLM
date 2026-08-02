@@ -22,6 +22,11 @@ from app.services.query_router.classifier import (
 )
 from app.services.query_router.exceptions import QueryCacheRepositoryError, QueryRouterError
 from app.services.query_router.handlers import FactoidHandler, MetadataHandler
+from app.services.query_router.logging_models import (
+    QueryRoutingLogContext,
+    QueryRoutingLogResult,
+)
+from app.services.query_router.logging_service import QueryRoutingLogger, log_query_routing
 from app.services.query_router.orchestrator import COMPLEX_STATUS, QueryOrchestrator
 from app.services.query_router.response_models import QueryRouterResult
 from app.services.query_router.router import QueryRouter
@@ -56,11 +61,15 @@ __all__ = [
     "QueryRouter",
     "QueryRouterError",
     "QueryRouterResult",
+    "QueryRoutingLogContext",
+    "QueryRoutingLogResult",
+    "QueryRoutingLogger",
     "RuleBasedClassifier",
     "RouteDecision",
     "build_normalized_query",
     "build_rule_based_classifier",
     "hash_query",
+    "log_query_routing",
     "normalize_query",
     "save_query_cache",
     "write_cache",

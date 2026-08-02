@@ -1,46 +1,58 @@
 # =============================================================================
 # File: logging.py
-# Module/Service: Query Router Execution / Unified Logging
+# Module/Service: Query Router Execution / Unified Logging (compat facade)
 # Layer: Service
-# Purpose: Persist query_logs (+ message_generations) for every route_type.
+# Purpose: Re-export Task-4 logging entry points; thin legacy wrapper.
 # Responsibilities:
-#   - log_route_decision for cache_hit / metadata / factoid / complex
-#   - 0-LLM branches: llm_calls_count=0, model_used=NULL, tokens/cost=0
+#   - Expose log_query_routing / QueryRoutingLogContext
+#   - log_route_decision → delegates to log_query_routing (query_logs only)
 # Dependencies:
-#   - QueryObservabilityRepository
+#   - logging_service, logging_models, QueryLogRepository
 # Public Exports:
-#   - log_route_decision, RouteLogResult
-# Database/Table: query_logs, message_generations
-# Related Modules: app.services.query_router.orchestrator
-# Important Notes:
-#   - message_generations.message_id is NOT NULL — requires Chat message id.
-#   - Never log full document / chunk text bodies.
+#   - log_query_routing, log_route_decision, QueryRoutingLogContext, RouteLogResult
+# Database/Table: query_logs
+# Related Modules: orchestrator
+# Important Notes: message_generations is Chat Service responsibility (Task 4).
 # =============================================================================
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
 from uuid import UUID
 
-from app.core.logging import get_logger
 from app.models.enums import RouteType
-from app.repositories.query_logs import QueryObservabilityRepository
+from app.services.query_router.interfaces.query_log_repository import QueryLogRepository
+from app.services.query_router.logging_models import (
+    QueryRoutingLogContext,
+    QueryRoutingLogResult,
+)
+from app.services.query_router.logging_service import (
+    QueryRoutingLogger,
+    log_query_routing,
+)
 
-logger = get_logger(__name__)
+__all__ = [
+    "QueryRoutingLogContext",
+    "QueryRoutingLogResult",
+    "QueryRoutingLogger",
+    "RouteLogResult",
+    "log_query_routing",
+    "log_route_decision",
+]
 
 
 @dataclass(slots=True)
 class RouteLogResult:
-    """Ids of observability rows written for one request."""
+    """Legacy result shape for orchestrator / tests."""
 
-    query_log_id: UUID
-    message_generation_id: UUID | None
+    query_log_id: UUID | None
+    message_generation_id: UUID | None = None
+    persisted: bool = True
 
 
 async def log_route_decision(
     *,
-    observability: QueryObservabilityRepository,
+    observability: QueryLogRepository,
     workspace_id: UUID,
     user_id: UUID,
     query_text: str,
@@ -50,75 +62,29 @@ async def log_route_decision(
     latency_ms: int,
     llm_calls_count: int = 0,
     model_used: str | None = None,
+    session_id: UUID | None = None,
 ) -> RouteLogResult:
-    """Write one ``query_logs`` row and optionally one ``message_generations`` row.
+    """Compat wrapper — writes ``query_logs`` only via ``log_query_routing``.
 
-    Always called for every route_type after branch execution. For 0-LLM routes
-    callers must pass ``llm_calls_count=0`` and ``model_used=None``.
-
-    Args:
-        observability: Repository for query_logs / message_generations.
-        workspace_id: Tenant scope.
-        user_id: Authenticated user.
-        query_text: User query (not document body).
-        route_type: Final executed route (after metadata fallback if any).
-        message_id: Assistant ``chat_messages.id`` when available (required for
-            ``message_generations`` FK). Chat Service must supply this.
-        cache_id: ``query_cache.id`` on cache_hit; else None.
-        latency_ms: End-to-end orchestrator latency.
-        llm_calls_count: Number of LLM calls (0 for Part 4 branches).
-        model_used: Model name or None for 0-LLM.
-
-    Returns:
-        ``RouteLogResult`` with persisted ids.
+    Does **not** write ``message_generations`` (Chat Service owns that table).
     """
-    # Truncate for storage safety — never treat as document content dump.
-    safe_query = (query_text or "")[:4000]
-
-    log_row = await observability.create_query_log(
-        workspace_id=workspace_id,
-        user_id=user_id,
-        query_text=safe_query,
-        route_type=route_type,
-        message_id=message_id,
-        cache_id=cache_id,
-        llm_calls_count=llm_calls_count,
-        model_used=model_used,
-        latency_ms=latency_ms,
-    )
-
-    generation_id: UUID | None = None
-    if message_id is not None:
-        gen_row = await observability.create_message_generation(
-            message_id=message_id,
+    result = await log_query_routing(
+        QueryRoutingLogContext(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            query_text=query_text,
             route_type=route_type,
-            model_used=model_used,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            cost_usd=Decimal("0"),
             latency_ms=latency_ms,
-        )
-        generation_id = gen_row.id
-    else:
-        logger.debug(
-            "message_generations_skipped_no_message_id",
-            workspace_id=str(workspace_id),
-            route_type=route_type.value,
-        )
-
-    logger.info(
-        "query_route_logged",
-        workspace_id=str(workspace_id),
-        user_id=str(user_id),
-        route_type=route_type.value,
-        latency_ms=latency_ms,
-        llm_calls_count=llm_calls_count,
-        cache_hit=route_type == RouteType.cache_hit,
-        query_log_id=str(log_row.id),
-        message_generation_id=str(generation_id) if generation_id else None,
+            llm_calls_count=llm_calls_count,
+            cache_id=cache_id,
+            message_id=message_id,
+            model_used=model_used,
+            session_id=session_id,
+        ),
+        repository=observability,
     )
     return RouteLogResult(
-        query_log_id=log_row.id,
-        message_generation_id=generation_id,
+        query_log_id=result.query_log_id,
+        message_generation_id=None,
+        persisted=result.persisted,
     )

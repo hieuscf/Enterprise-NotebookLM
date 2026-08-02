@@ -2,17 +2,17 @@
 # File: query_logs.py
 # Module/Service: Query Router / Observability
 # Layer: Repository
-# Purpose: Persist query_logs and message_generations for router execution (FR11/FR13).
+# Purpose: Persist query_logs (+ optional message_generations for Chat Service).
 # Responsibilities:
-#   - Insert one query_logs row per routed request
-#   - Insert one message_generations row when message_id is provided (FK required)
+#   - QueryLogRepository.create_log — one query_logs row per routed request
+#   - create_message_generation — Chat Service only (not Query Router logging)
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.query, app.models.chat
 # Public Exports:
-#   - QueryObservabilityRepository
+#   - QueryLogRepository, QueryObservabilityRepository
 # Database/Table: query_logs, message_generations
-# Related Modules: app.services.query_router.logging
-# Important Notes: message_generations.message_id is NOT NULL — skip if absent.
+# Related Modules: app.services.query_router.logging_service
+# Important Notes: Schema fixed — no add/drop columns. Router uses create_log only.
 # =============================================================================
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ from app.models.enums import RouteType
 from app.models.query import QueryLog
 
 
-class QueryObservabilityRepository:
-    """Write-side repository for router observability tables."""
+class QueryLogRepository:
+    """Postgres write access for ``query_logs`` (Task 4)."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create_query_log(
+    async def create_log(
         self,
         *,
         workspace_id: uuid.UUID,
@@ -46,6 +46,7 @@ class QueryObservabilityRepository:
         model_used: str | None,
         latency_ms: int | None,
     ) -> QueryLog:
+        """Insert exactly one ``query_logs`` row."""
         row = QueryLog(
             workspace_id=workspace_id,
             user_id=user_id,
@@ -60,6 +61,40 @@ class QueryObservabilityRepository:
         self._session.add(row)
         await self._session.flush()
         return row
+
+    # Backward-compatible alias used by older call sites / fakes.
+    async def create_query_log(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        user_id: uuid.UUID,
+        query_text: str,
+        route_type: RouteType,
+        message_id: uuid.UUID | None,
+        cache_id: uuid.UUID | None,
+        llm_calls_count: int,
+        model_used: str | None,
+        latency_ms: int | None,
+    ) -> QueryLog:
+        return await self.create_log(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            query_text=query_text,
+            route_type=route_type,
+            message_id=message_id,
+            cache_id=cache_id,
+            llm_calls_count=llm_calls_count,
+            model_used=model_used,
+            latency_ms=latency_ms,
+        )
+
+
+class QueryObservabilityRepository(QueryLogRepository):
+    """Extends ``QueryLogRepository`` with Chat-side ``message_generations``.
+
+    Query Router Task-4 logging must use ``create_log`` only. Chat Service may
+    call ``create_message_generation`` with tokens/cost after LLM / 0-LLM answers.
+    """
 
     async def create_message_generation(
         self,

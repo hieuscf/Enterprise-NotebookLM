@@ -26,7 +26,7 @@ from app.config.router_rules import get_router_rules
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.repositories.query_cache import QueryCacheRepository
-from app.repositories.query_logs import QueryObservabilityRepository
+from app.repositories.query_logs import QueryLogRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.query_router.cache import QueryCacheService
@@ -95,5 +95,5 @@ def get_query_orchestrator(
             retriever=LightweightVectorRetriever(vector_search),
             settings=settings,
         ),
-        observability=QueryObservabilityRepository(session),
+        query_log_repository=QueryLogRepository(session),
     )

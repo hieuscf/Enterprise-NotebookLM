@@ -90,5 +90,7 @@ class QueryExecutionResult:
     latency_ms: int
     status: str | None = None
     cache_id: UUID | None = None
+    llm_calls_count: int = 0
+    model_used: str | None = None
     query_log_id: UUID | None = None
     message_generation_id: UUID | None = None
