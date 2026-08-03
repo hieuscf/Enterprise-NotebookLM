@@ -2,16 +2,16 @@
 # File: __init__.py
 # Module/Service: Event Policy Engine / Micro Agents (FR14)
 # Layer: Service
-# Purpose: Package exports for Event Policy + agent orchestration helpers.
+# Purpose: Lightweight package exports (avoid circular imports with Chat).
 # Responsibilities:
-#   - Expose decide_agent, AgentDecision, AgentEventData, agent classes
+#   - Re-export core symbols without pulling QueryOrchestrator cycles
 # Dependencies:
-#   - event_policy_engine, heuristics, models, agents.*
+#   - models, heuristics (lazy-safe)
 # Public Exports:
-#   - decide_agent, AgentDecision, AgentEventData, heuristics, agents
+#   - AgentDecision, AgentEventData, decide_agent, heuristic helpers
 # Database/Table: N/A
-# Related Modules: confidence_engine, Chat Service (Part 4)
-# Important Notes: 0 LLM in Event Policy itself; Rewrite Agent may call Haiku.
+# Related Modules: ComplexQueryPipeline, confidence_engine
+# Important Notes: Keep this file free of Chat / Orchestrator imports.
 # =============================================================================
 
 from app.services.event_policy.event_policy_engine import decide_agent

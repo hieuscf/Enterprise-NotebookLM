@@ -647,18 +647,50 @@ paths:
       - { $ref: "#/components/parameters/MessageId" }
     get:
       tags: [Chat]
-      summary: >
-        (mới v3) Chi tiết Micro Agent đã được kích hoạt cho message này (nếu có).
-        Trả về mảng rỗng nếu message thuộc route cache_hit/metadata/factoid, hoặc
-        route=complex nhưng confidence=high (không cần agent).
+      operationId: listMessageAgentEvents
+      summary: List Micro Agent events for a chat message (FR14)
+      description: >
+        (moi v3) Chi tiet Micro Agent da duoc kich hoat cho message nay (neu co).
+        Tra ve mang rong neu message thuoc route cache_hit/metadata/factoid, hoac
+        route=complex nhung confidence=high (khong can agent). Khong tra
+        input_payload/output_payload. Message khong thuoc workspace -> 404.
+      security:
+        - bearerAuth: []
       responses:
         "200":
-          description: OK
+          description: OK — list of AgentEvent (possibly empty)
           content:
             application/json:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/AgentEvent" }
+              examples:
+                withEvents:
+                  summary: Message had a Rewrite agent
+                  value:
+                    - id: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+                      agent_type: rewrite
+                      trigger_reason: ambiguous_query
+                      confidence_score: 0.42
+                      triggered_second_retrieval: true
+                      model_used: claude-3-5-haiku-latest
+                      cost_usd: 0.00012
+                      latency_ms: 180
+                      created_at: "2026-08-03T08:00:00Z"
+                empty:
+                  summary: High confidence / non-complex — no agents
+                  value: []
+        "403":
+          description: Forbidden — not a workspace member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Message not found in workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 
   # ---------------------------------------------------------------------
   # SUMMARIES (FR6)
@@ -1321,6 +1353,7 @@ components:
         trigger_reason:
           type: string
           enum: [ambiguous_query, multi_hop_reasoning, structured_misclassified]
+        confidence_score: { type: number, format: float, nullable: true }
         triggered_second_retrieval: { type: boolean }
         model_used: { type: string, nullable: true }
         cost_usd: { type: number, format: double }

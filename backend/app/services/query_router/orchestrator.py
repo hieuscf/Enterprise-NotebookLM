@@ -5,23 +5,25 @@
 # Purpose: Sole internal API for Chat Service — route then execute 0-LLM branches.
 # Responsibilities:
 #   - handle_query → QueryRouter.route → branch switch → unified log_query_routing
-#   - cache_hit / metadata / factoid execution; complex placeholder only
+#   - cache_hit / metadata / factoid (0 LLM); complex → ComplexQueryPipeline (FR14)
 # Dependencies:
-#   - QueryRouter, MetadataBranch, FactoidBranch, logging_service
+#   - QueryRouter, MetadataBranch, FactoidBranch, logging_service, ComplexQueryPipeline
 # Public Exports:
 #   - QueryOrchestrator, COMPLEX_STATUS
-# Database/Table: query_logs (via logging_service only)
-# Related Modules: Chat Service (downstream writes message_generations)
+# Database/Table: query_logs (via logging_service); FR14 tables via ComplexQueryPipeline
+# Related Modules: Chat Service (downstream writes message_generations);
+#   ComplexQueryPipeline (FR14) when injected for complex route
 # Important Notes:
-#   - No Prompt Construction / LLM in this module.
+#   - Prompt Construction / answer LLM live in ComplexQueryPipeline (optional port).
 #   - Never return before log_query_routing completes (best-effort).
 #   - Do not call QueryRouter elsewhere from Chat — use handle_query only.
+#   - cache_hit / metadata / factoid unchanged (0 LLM); complex only runs FR14.
 # =============================================================================
 
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from app.core.logging import get_logger
@@ -38,13 +40,16 @@ from app.services.query_router.schemas import (
     QueryExecutionResult,
 )
 
+if TYPE_CHECKING:
+    from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
+
 logger = get_logger(__name__)
 
 COMPLEX_STATUS = "pending_llm_pipeline"
 
 
 class QueryOrchestrator:
-    """Execute routed queries for Chat Service (0-LLM branches + complex stub)."""
+    """Execute routed queries for Chat Service (0-LLM branches + FR14 complex)."""
 
     def __init__(
         self,
@@ -54,12 +59,14 @@ class QueryOrchestrator:
         factoid_branch: FactoidBranch,
         query_log_repository: QueryLogRepository,
         session_id: UUID | None = None,
+        complex_pipeline: ComplexQueryPipeline | None = None,
     ) -> None:
         self._router = router
         self._metadata = metadata_branch
         self._factoid = factoid_branch
         self._logger = QueryRoutingLogger(query_log_repository)
         self._session_id = session_id
+        self._complex_pipeline = complex_pipeline
 
     async def handle_query(
         self,
@@ -71,6 +78,8 @@ class QueryOrchestrator:
         session_id: UUID | None = None,
         llm_calls_count: int | None = None,
         model_used: str | None = None,
+        assistant_message_id: UUID | None = None,
+        chat_history: list[Any] | None = None,
     ) -> QueryExecutionResult:
         """Route and execute a user query; always attempt unified query_logs write.
 
@@ -78,11 +87,12 @@ class QueryOrchestrator:
             workspace_id: Tenant scope (caller must enforce RBAC).
             user_id: Authenticated user.
             query_text: Raw user question.
-            message_id: Optional assistant ``chat_messages.id`` stored on
-                ``query_logs.message_id`` when Chat already created the row.
+            message_id: Optional user ``chat_messages.id`` for retrievals/agent_events.
             session_id: Optional chat session id (correlation only; not a column).
-            llm_calls_count: Override for Complex pipeline (default 0 for 0-LLM).
-            model_used: Override for Complex pipeline model id (default None).
+            llm_calls_count: Override when Complex pipeline is not injected.
+            model_used: Override when Complex pipeline is not injected.
+            assistant_message_id: Optional assistant message for message_generations.
+            chat_history: Optional prior turns for Rewrite Agent.
 
         Returns:
             Unified ``QueryExecutionResult`` including logging metadata for Chat.
@@ -100,6 +110,7 @@ class QueryOrchestrator:
         final_route = decision.route_type
         effective_llm_calls = 0
         effective_model: str | None = None
+        message_generation_id: UUID | None = None
 
         if decision.route_type == RouteType.cache_hit:
             answer, citation_refs, metadata, verify, cache_id = _from_cache(
@@ -141,21 +152,51 @@ class QueryOrchestrator:
             effective_model = None
 
         else:
-            # complex — placeholder only (Chat / Complex pipeline attaches LLM later)
+            # complex — FR14 Confidence Engine + Event Policy + Agents when wired
             final_route = RouteType.complex
-            answer = None
-            citation_refs = []
-            metadata = {
-                "route_type": RouteType.complex.value,
-                "status": COMPLEX_STATUS,
-            }
-            if decision.retrieval_result is not None:
-                metadata["retrieval_item_count"] = len(decision.retrieval_result.items)
-            verify = False
-            status = COMPLEX_STATUS
-            # Allow Complex pipeline to pass actual LLM usage when wired.
-            effective_llm_calls = int(llm_calls_count) if llm_calls_count is not None else 0
-            effective_model = model_used
+            if self._complex_pipeline is not None and message_id is not None:
+                pipeline_result = await self._complex_pipeline.run(
+                    workspace_id=workspace_id,
+                    query_text=query_text,
+                    message_id=message_id,
+                    initial_retrieval=decision.retrieval_result,
+                    assistant_message_id=assistant_message_id,
+                    chat_history=chat_history,
+                )
+                answer = pipeline_result.answer
+                citation_refs = pipeline_result.citation_refs
+                metadata = {
+                    **pipeline_result.metadata,
+                    "confidence_level": (
+                        pipeline_result.confidence_level.value
+                        if pipeline_result.confidence_level
+                        else None
+                    ),
+                    "confidence_score": pipeline_result.confidence_score,
+                    "agent_triggered": pipeline_result.agent_triggered,
+                    "retrieval_pass_final": pipeline_result.retrieval_pass_final,
+                }
+                verify = pipeline_result.verify
+                status = pipeline_result.status
+                # Includes Rewrite lightweight call (exception) + main answer LLM.
+                effective_llm_calls = int(pipeline_result.llm_calls_count)
+                effective_model = pipeline_result.model_used
+                message_generation_id = pipeline_result.message_generation_id
+            else:
+                answer = None
+                citation_refs = []
+                metadata = {
+                    "route_type": RouteType.complex.value,
+                    "status": COMPLEX_STATUS,
+                }
+                if decision.retrieval_result is not None:
+                    metadata["retrieval_item_count"] = len(decision.retrieval_result.items)
+                verify = False
+                status = COMPLEX_STATUS
+                effective_llm_calls = (
+                    int(llm_calls_count) if llm_calls_count is not None else 0
+                )
+                effective_model = model_used
 
         # If metadata/factoid downgraded to complex, keep 0-LLM until Complex runs.
         if final_route in {RouteType.metadata, RouteType.factoid, RouteType.cache_hit}:
@@ -193,7 +234,7 @@ class QueryOrchestrator:
             llm_calls_count=effective_llm_calls,
             model_used=effective_model,
             query_log_id=log_result.query_log_id,
-            message_generation_id=None,
+            message_generation_id=message_generation_id,
         )
 
 

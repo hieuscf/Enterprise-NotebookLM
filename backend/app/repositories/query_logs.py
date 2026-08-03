@@ -23,7 +23,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import MessageGeneration
-from app.models.enums import RouteType
+from app.models.enums import ConfidenceLevel, RouteType
 from app.models.query import QueryLog
 
 
@@ -102,18 +102,21 @@ class QueryObservabilityRepository(QueryLogRepository):
         message_id: uuid.UUID,
         route_type: RouteType,
         model_used: str | None,
-        prompt_tokens: int,
-        completion_tokens: int,
-        total_tokens: int,
-        cost_usd: Decimal,
+        prompt_tokens: int | None,
+        completion_tokens: int | None,
+        total_tokens: int | None,
+        cost_usd: Decimal | None,
         latency_ms: int | None,
+        confidence_level: ConfidenceLevel | None = None,
+        confidence_score: float | None = None,
+        agent_triggered: bool = False,
     ) -> MessageGeneration:
         row = MessageGeneration(
             message_id=message_id,
             route_type=route_type,
-            confidence_level=None,
-            confidence_score=None,
-            agent_triggered=False,
+            confidence_level=confidence_level,
+            confidence_score=confidence_score,
+            agent_triggered=bool(agent_triggered),
             model_used=model_used,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
