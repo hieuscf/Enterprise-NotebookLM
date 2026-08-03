@@ -11,7 +11,8 @@
 #   - AgentEvent
 # Database/Table: agent_events
 # Related Modules: database-design-enterprise-notebooklm.md §5b, message_generations
-# Important Notes: 0–1 optional per assistant message when agent_triggered=true.
+# Important Notes: 0–N per message — one row per Micro Agent activation
+#   (e.g. Rewrite then Graph → 2 rows). Only written when Low Confidence.
 # =============================================================================
 
 import uuid
@@ -19,7 +20,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, Numeric, String, desc
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,7 +36,14 @@ from app.models.types import (
 
 class AgentEvent(Base):
     __tablename__ = "agent_events"
-    __table_args__ = (Index("ix_agent_events_message_id", "message_id"),)
+    __table_args__ = (
+        Index("ix_agent_events_message_id", "message_id"),
+        Index(
+            "ix_agent_events_agent_type_created_at",
+            "agent_type",
+            desc("created_at"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     message_id: Mapped[uuid.UUID] = mapped_column(
@@ -47,6 +55,7 @@ class AgentEvent(Base):
     trigger_reason: Mapped[AgentTriggerReason] = mapped_column(
         agent_trigger_reason_enum, nullable=False
     )
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     input_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     triggered_second_retrieval: Mapped[bool] = mapped_column(

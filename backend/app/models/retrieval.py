@@ -31,6 +31,12 @@ class Retrieval(Base):
     __table_args__ = (
         Index("ix_retrievals_message_id_rank", "message_id", "rank"),
         Index("ix_retrievals_message_id_retrieval_pass", "message_id", "retrieval_pass"),
+        Index(
+            "ix_retrievals_message_id_retrieval_pass_rank",
+            "message_id",
+            "retrieval_pass",
+            "rank",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

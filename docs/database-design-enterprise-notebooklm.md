@@ -9,10 +9,10 @@ So với v1, bản v2 bổ sung 7 bảng mới và sửa 6 bảng để phản �
 | Loại | Bảng | Version |
 |---|---|---|
 | 🆕 Mới | `document_versions`, `embeddings`, `pipeline_runs`, `pipeline_stage_logs`, `retrievals`, `message_generations`, `search_history` | v2 |
-| 🆕 Mới | `agent_events` | v3 |
+| 🆕 Mới | `agent_events` (NEW TABLE) | v3 |
 | ✏️ Đổi tên | `semantic_cache` → `query_cache` | v2 |
 | 🔧 Sửa | `documents`, `document_chunks`, `entities`, `topics`, `chat_messages`, `citations`, `query_logs` | v2 |
-| 🔧 Sửa (bổ sung cột) | `document_versions` (parser info), `document_chunks` (hierarchy), `pipeline_stage_logs` (stage enum), `retrievals` (retrieval_pass), `message_generations` (confidence + agent) | v3 |
+| 🔧 Sửa (bổ sung cột) | `document_versions` (parser info), `document_chunks` (hierarchy), `pipeline_stage_logs` (stage enum), `retrievals` (+ retrieval_pass), `message_generations` (+ confidence_score, + confidence_level, + agent_triggered) | v3 |
 
 ---
 
@@ -193,25 +193,34 @@ Quan hệ 1–1 với `chat_messages` (chỉ tồn tại với message role = as
 
 ## 5b. Confidence Engine & Event-driven Agents (mới v3)
 
-Đáp ứng kiến trúc mới: sau Cross-Encoder Reranker, `Confidence Engine` đánh giá độ tin cậy (ghi lại ở `message_generations.confidence_level/confidence_score`, mục 5). Khi Low Confidence, `Event Policy Engine` kích hoạt 1 trong 3 Micro Agent — bảng dưới đây ghi lại **mỗi lần kích hoạt agent**, độc lập với `message_generations` vì 1 message có thể không cần agent (High Confidence → không có dòng nào ở bảng này).
+Đáp ứng kiến trúc mới: sau Cross-Encoder Reranker, `Confidence Engine` đánh giá độ tin cậy (ghi lại ở `message_generations.confidence_level/confidence_score`, mục 5). Khi Low Confidence, `Event Policy Engine` kích hoạt một hoặc nhiều Micro Agent — bảng dưới đây ghi lại **mỗi lần kích hoạt agent** (audit trail), độc lập với `message_generations` vì 1 message có thể không cần agent (High Confidence → không có dòng nào ở bảng này).
 
 ### `agent_events`
+
+**Purpose:** Lưu mỗi lần một Micro Agent được kích hoạt. Một message có thể có nhiều `agent_events` (vd. Rewrite Agent → Second Retrieval → Graph Agent → 2 records).
 
 | Cột | Kiểu | Mô tả |
 |---|---|---|
 | id | UUID PK | |
-| message_id | UUID FK → chat_messages.id | Message (câu hỏi) nào kích hoạt agent |
-| agent_type | ENUM('rewrite','graph','sql') | Loại Micro Agent được Event Policy Engine chọn |
-| trigger_reason | ENUM('ambiguous_query','multi_hop_reasoning','structured_misclassified') | Loại sự kiện: câu hỏi mơ hồ (Rewrite), cần suy luận đa bước (Graph), thực chất là structured query (SQL) |
-| input_payload | JSONB | Đầu vào cho agent (vd. câu hỏi gốc, reranked candidates) |
-| output_payload | JSONB | Đầu ra: câu hỏi đã viết lại (Rewrite), ngữ cảnh graph mở rộng (Graph), kết quả SQL trực tiếp (SQL) |
-| triggered_second_retrieval | BOOLEAN | Có chạy lại Hybrid Retrieval (retrieval_pass=2) sau agent hay không |
-| model_used | VARCHAR, NULL | Model nhẹ dùng cho agent (nếu có, vd. claude-haiku-4-5) — NULL nếu agent thuần rule-based (Graph/SQL Agent thường không cần LLM) |
-| cost_usd | DECIMAL(10,6), DEFAULT 0 | Chi phí riêng của agent, tách khỏi `message_generations.cost_usd` |
-| latency_ms | INT | |
-| created_at | TIMESTAMP | |
+| message_id | UUID FK → chat_messages.id, ON DELETE CASCADE | Message nào kích hoạt agent |
+| agent_type | ENUM('rewrite','graph','sql') NOT NULL | Loại Micro Agent được Event Policy Engine chọn (PG type: `agent_type`) |
+| trigger_reason | ENUM('ambiguous_query','multi_hop_reasoning','structured_misclassified') NOT NULL | Loại sự kiện: câu hỏi mơ hồ (Rewrite), cần suy luận đa bước (Graph), thực chất là structured query (SQL) (PG type: `agent_trigger_reason`) |
+| confidence_score | FLOAT, NULL | Điểm Confidence Engine **tại thời điểm agent được kích hoạt** — không phải confidence cuối của câu trả lời (`message_generations.confidence_score`) |
+| input_payload | JSONB, NULL | Đầu vào cho agent (vd. `{original_query, language}`, `{entities, depth}`, `{sql, params}`) — migration không validate JSON schema |
+| output_payload | JSONB, NULL | Đầu ra: rewritten query / expanded entities / SQL rows |
+| triggered_second_retrieval | BOOLEAN NOT NULL, DEFAULT false | Có chạy lại Hybrid Retrieval (`retrieval_pass=2`) sau agent hay không |
+| model_used | VARCHAR, NULL | Model nhẹ dùng cho agent (vd. `claude-3-haiku`) — NULL nếu agent thuần rule-based |
+| cost_usd | DECIMAL(10,6) NOT NULL, DEFAULT 0 | Chi phí riêng của agent, tách khỏi `message_generations.cost_usd` |
+| latency_ms | INT NOT NULL | Latency của agent (ms) |
+| created_at | TIMESTAMPTZ NOT NULL, DEFAULT now() | |
 
-> **Quan hệ:** 1 `chat_messages` (role=assistant) có tối đa 1 dòng `agent_events` — chỉ tồn tại khi `message_generations.agent_triggered=true`. Không tạo dòng cho High Confidence/Cache Hit/Metadata/Factoid.
+**Foreign Key:** `message_id` → `chat_messages.id` (ON DELETE CASCADE).
+
+**Index:**
+- `ix_agent_events_message_id` — `(message_id)`
+- `ix_agent_events_agent_type_created_at` — `(agent_type, created_at DESC)`
+
+> **Quan hệ:** 1 `chat_messages` có **0–N** dòng `agent_events` (mỗi lần kích hoạt agent = 1 dòng). Chỉ ghi khi Low Confidence / Event Policy Engine kích hoạt agent. Không tạo dòng cho High Confidence / Cache Hit / Metadata / Factoid.
 
 ---
 
@@ -312,6 +321,6 @@ Ví dụ phân cấp: `level 0`: "Tài chính" → `level 1`: "Báo cáo quý" /
 
 1. **Denormalize có kiểm soát:** `citations` không còn lưu `document_id` trực tiếp — muốn biết tài liệu nguồn phải join qua `retrieval → chunk → document_version → document`. Đánh đổi: query phức tạp hơn 1 bước JOIN, nhưng loại bỏ trùng lặp dữ liệu và tránh lệch dữ liệu khi chunk bị re-index.
 2. **`message_generations` là 1–1 optional với `chat_messages`:** message role='user' sẽ không có dòng tương ứng.
-3. **(v3) `agent_events` là 0–1 optional với `chat_messages`:** chỉ tồn tại khi `message_generations.agent_triggered=true` (Low Confidence). Không cần bảng riêng để đếm "0 lần agent" như cách xử lý của `message_generations` với route 0-LLM, vì đây là sự kiện thực sự tuỳ chọn (event-driven), không phải trạng thái cần thống kê đều cho mọi request.
+3. **(v3) `agent_events` là 0–N optional với `chat_messages`:** mỗi lần Micro Agent kích hoạt = 1 dòng (Rewrite + Graph trên cùng message → 2 dòng). Thường chỉ tồn tại khi `message_generations.agent_triggered=true` (Low Confidence). Không cần bảng riêng để đếm "0 lần agent" như cách xử lý của `message_generations` với route 0-LLM, vì đây là sự kiện thực sự tuỳ chọn (event-driven), không phải trạng thái cần thống kê đều cho mọi request.
 4. **(v3) `retrievals.retrieval_pass`** cho phép 1 message có 2 lượt retrieval (pass 1 trước Confidence Engine, pass 2 sau Agent) — khi tính "Top-K context đưa vào Prompt Construction", luôn lấy `retrieval_pass` lớn nhất hiện có cho message đó (pass 2 nếu tồn tại, ngược lại pass 1).
-5. Đề xuất index bổ sung: `document_versions(document_id, is_current)`, `pipeline_runs(document_version_id, status)`, `retrievals(message_id, rank)`, `retrievals(message_id, retrieval_pass)` *(mới v3)*, `agent_events(message_id)` *(mới v3)*, `document_chunks(parent_chunk_id)` *(mới v3)*, `query_cache(query_hash)` + `query_cache(workspace_id, expires_at)` cho tác vụ dọn cache hết hạn, `search_history(workspace_id, created_at)`, `topics(parent_topic_id)`.
+5. Đề xuất index bổ sung: `document_versions(document_id, is_current)`, `pipeline_runs(document_version_id, status)`, `retrievals(message_id, rank)`, `retrievals(message_id, retrieval_pass)` *(v3)*, `retrievals(message_id, retrieval_pass, rank)` *(v3)*, `agent_events(message_id)` *(v3)*, `agent_events(agent_type, created_at DESC)` *(v3)*, `document_chunks(parent_chunk_id)` *(v3)*, `query_cache(query_hash)` + `query_cache(workspace_id, expires_at)` cho tác vụ dọn cache hết hạn, `search_history(workspace_id, created_at)`, `topics(parent_topic_id)`.
