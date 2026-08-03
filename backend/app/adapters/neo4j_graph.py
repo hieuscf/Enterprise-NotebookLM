@@ -87,6 +87,33 @@ class Neo4jGraphAdapter:
                 )
             )
 
+    def expand_related_entities(
+        self,
+        *,
+        workspace_id: UUID,
+        seed_entity_ids: list[str],
+        max_hops: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Expand seed entities via ``RELATES_TO`` (1–2 hops) + ``MENTIONED_IN`` docs.
+
+        Returns:
+            Rows with ``entity_id``, ``document_id`` (nullable), ``hops``.
+            Empty list on empty seeds. Caps ``max_hops`` at 2.
+        """
+        seeds = [str(eid) for eid in seed_entity_ids if eid]
+        if not seeds:
+            return []
+        hops = max(1, min(2, int(max_hops)))
+        with self._driver.session() as session:
+            return list(
+                session.execute_read(
+                    self._expand_entities,
+                    str(workspace_id),
+                    seeds,
+                    hops,
+                )
+            )
+
     @staticmethod
     def _write_graph(
         tx: Any,
@@ -201,6 +228,45 @@ class Neo4jGraphAdapter:
                     "document_id": record["document_id"],
                     "content": record["content"] or "",
                     "score": float(record["score"] or 0.0),
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _expand_entities(
+        tx: Any,
+        workspace_id: str,
+        seed_entity_ids: list[str],
+        max_hops: int,
+    ) -> list[dict[str, Any]]:
+        """Traverse RELATES_TO up to ``max_hops`` and collect related docs."""
+        result = tx.run(
+            """
+            MATCH (seed:Entity)
+            WHERE seed.workspace_id = $workspace_id
+              AND seed.id IN $seed_ids
+            MATCH path = (seed)-[:RELATES_TO*1..2]-(related:Entity)
+            WHERE related.workspace_id = $workspace_id
+              AND length(path) <= $max_hops
+            WITH related, min(length(path)) AS hops
+            OPTIONAL MATCH (related)-[:MENTIONED_IN]->(c:Chunk)
+            WHERE c IS NULL OR c.workspace_id = $workspace_id
+            RETURN DISTINCT related.id AS entity_id,
+                   c.document_id AS document_id,
+                   hops
+            LIMIT 200
+            """,
+            workspace_id=workspace_id,
+            seed_ids=seed_entity_ids,
+            max_hops=max_hops,
+        )
+        rows: list[dict[str, Any]] = []
+        for record in result:
+            rows.append(
+                {
+                    "entity_id": record["entity_id"],
+                    "document_id": record["document_id"],
+                    "hops": int(record["hops"] or 1),
                 }
             )
         return rows

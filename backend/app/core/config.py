@@ -149,6 +149,20 @@ class Settings(BaseSettings):
     confidence_weight_candidate_count: float = 0.10
     confidence_candidate_count_cap: int = 3
 
+    # FR14 — Event Policy Engine heuristics (0 LLM).
+    event_policy_ambiguous_max_tokens: int = 5
+    event_policy_ambiguous_score_spread_max: float = 0.08
+    event_policy_multi_hop_min_doc_diversity: int = 2
+    event_policy_multi_hop_top_k: int = 5
+
+    # FR14 — Rewrite Agent (Haiku-tier only; never Sonnet for rewrite).
+    rewrite_agent_model: str = "claude-3-5-haiku-latest"
+    rewrite_agent_max_tokens: int = 256
+    rewrite_agent_timeout_seconds: float = 30.0
+
+    # FR14 — Graph Agent Neo4j expansion depth (1–2 only).
+    graph_agent_max_hops: int = 2
+
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).

@@ -42,6 +42,15 @@ class RerankedItem(BaseModel):
 
     score: float | None = None
     rank: int | None = None
+    document_id: str | None = None
+    entity_id: str | None = None
+
+    @field_validator("document_id", "entity_id", mode="before")
+    @classmethod
+    def _coerce_optional_id(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return str(value)
 
 
 class ConfidenceConfig(BaseModel):
