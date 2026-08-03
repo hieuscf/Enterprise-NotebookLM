@@ -140,6 +140,15 @@ class Settings(BaseSettings):
     reranker_backend: Literal["heuristic", "cross_encoder"] = "heuristic"
     reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # FR14 — Confidence Engine (0 LLM). Tunables for post-rerank complex-route gate.
+    # Consumed by app.services.retrieval.confidence_engine.build_confidence_config.
+    confidence_relevance_threshold: float = 0.65
+    confidence_high_threshold: float = 0.65
+    confidence_weight_top_score: float = 0.55
+    confidence_weight_score_spread: float = 0.35
+    confidence_weight_candidate_count: float = 0.10
+    confidence_candidate_count_cap: int = 3
+
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).

@@ -11,7 +11,7 @@
 # Public Exports:
 #   - Reranker
 # Database/Table: N/A
-# Related Modules: HybridRetrievalService, Confidence Engine (later)
+# Related Modules: HybridRetrievalService, confidence_engine (FR14)
 # Important Notes: Never calls Anthropic/LLM. Does not mutate text_snippet.
 # =============================================================================
 
