@@ -1006,7 +1006,7 @@ paths:
       - { $ref: "#/components/parameters/WorkspaceId" }
     get:
       tags: [Admin/Observability]
-      summary: Tổng hợp chi phí LLM theo model/route_type (từ message_generations)
+      summary: Tổng hợp chi phí LLM theo model/route_type (+ by_agent_type từ agent_events)
       parameters:
         - name: from
           in: query
@@ -1448,3 +1448,32 @@ components:
             properties:
               route_type: { type: string }
               count: { type: integer }
+        # FR14 additive field — Micro Agent rollup from agent_events (backward-compatible)
+        by_agent_type:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              total_cost_usd: { type: number, format: double }
+              total_latency_ms: { type: integer }
+              count: { type: integer }
+              average_latency_ms: { type: number, format: double }
+          description: >
+            Per agent_type aggregates from agent_events (rewrite / graph / sql).
+            Optional additive field; clients that ignore unknown keys remain compatible.
+          example:
+            rewrite:
+              total_cost_usd: 0.032
+              total_latency_ms: 1543
+              count: 52
+              average_latency_ms: 29.67
+            graph:
+              total_cost_usd: 0
+              total_latency_ms: 893
+              count: 34
+              average_latency_ms: 26.26
+            sql:
+              total_cost_usd: 0
+              total_latency_ms: 281
+              count: 17
+              average_latency_ms: 16.53

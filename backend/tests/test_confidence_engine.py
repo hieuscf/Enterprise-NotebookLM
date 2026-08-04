@@ -174,3 +174,61 @@ def test_result_json_serializable() -> None:
     payload = result.model_dump(mode="json")
     assert payload["confidence_level"] == "high"
     assert "confidence_score" in payload
+
+
+# ---------------------------------------------------------------------------
+# Boundary tests (Task 5)
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_score_equals_high_threshold_is_high() -> None:
+    """confidence_score == high_threshold → HIGH (>=)."""
+    cfg = _cfg(
+        high_threshold=0.50,
+        weight_top_score=1.0,
+        weight_score_spread=0.0,
+        weight_candidate_count=0.0,
+    )
+    # normalized_top=0.50 → raw = 0.50 * 1.0 == high_threshold
+    result = compute_confidence(_items(0.50, 0.10), cfg)
+    assert result.confidence_score == pytest.approx(0.50)
+    assert result.confidence_level is ConfidenceLevel.high
+
+
+def test_boundary_one_candidate_no_crash() -> None:
+    result = compute_confidence(_items(0.88), _cfg())
+    assert result.top_score == pytest.approx(0.88)
+    assert result.score_spread == pytest.approx(0.88)
+    assert 0.0 <= result.confidence_score <= 1.0
+
+
+def test_boundary_same_scores_zero_spread_low() -> None:
+    result = compute_confidence(_items(0.71, 0.71, 0.71, 0.71), _cfg())
+    assert result.score_spread == pytest.approx(0.0)
+    assert result.confidence_level is ConfidenceLevel.low
+
+
+def test_boundary_empty_list_zero_low() -> None:
+    result = compute_confidence([], _cfg())
+    assert result.confidence_score == 0.0
+    assert result.confidence_level is ConfidenceLevel.low
+
+
+def test_boundary_clamp_above_one_and_below_zero() -> None:
+    high = compute_confidence(
+        _items(9.0, 8.0),
+        _cfg(
+            weight_top_score=5.0,
+            weight_score_spread=5.0,
+            weight_candidate_count=5.0,
+            high_threshold=0.99,
+        ),
+    )
+    assert high.confidence_score == pytest.approx(1.0)
+
+    low = compute_confidence(
+        [RerankedItem(rank=1, score=-5.0), RerankedItem(rank=2, score=-6.0)],
+        _cfg(high_threshold=0.01),
+    )
+    assert low.confidence_score >= 0.0
+    assert low.confidence_score <= 1.0

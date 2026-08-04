@@ -114,14 +114,28 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [BE] Job dọn cache hết hạn theo `expires_at` (cron/Celery beat).
 
 ### 2.3 Confidence Engine & Event-driven Micro Agents (FR14, UC13 — mới v3)
-- [ ] [AI] Confidence Engine — tính `confidence_score` từ kết quả Cross-Encoder Reranker (score cao nhất, độ phân tán điểm, số candidate vượt ngưỡng), phân loại `high`/`low` theo threshold cấu hình được. Chỉ chạy trong nhánh Complex Query, sau Re-ranking.
-- [ ] [AI] Event Policy Engine — xác định `trigger_reason` (ambiguous_query/multi_hop_reasoning/structured_misclassified) và chọn agent tương ứng khi Low Confidence.
-- [ ] [AI] Rewrite Agent — viết lại câu hỏi mơ hồ/thiếu ngữ cảnh (model nhẹ, vd. Haiku).
-- [ ] [AI] Graph Agent — mở rộng truy vấn qua Knowledge Graph (Neo4j) cho câu hỏi multi-hop, không bắt buộc dùng LLM.
-- [ ] [AI] SQL Agent — truy vấn trực tiếp Metadata DB (PostgreSQL) cho câu hỏi structured bị Query Router phân loại nhầm thành Complex.
-- [ ] [AI] Second Retrieval (tuỳ chọn) — chạy lại Hybrid Retrieval với câu hỏi/ngữ cảnh đã qua agent, ghi `retrievals.retrieval_pass=2`.
-- [ ] [BE] Ghi `agent_events` (agent_type, trigger_reason, triggered_second_retrieval, model_used, cost_usd, latency_ms) mỗi lần agent được kích hoạt.
-- [ ] [BE] `GET /workspaces/{id}/chat/messages/{messageId}/agent-events`.
+
+> **Ưu tiên: P1** — Low Confidence nằm trên nhánh Complex Query lõi (UC13); production
+> thường gặp query mơ hồ / multi-hop / structured misclassified. Không đánh P2 vì
+> thiếu Confidence Engine + Agents sẽ làm Complex Query trả lời kém tin cậy dù
+> High-confidence path vẫn chạy được.
+>
+> **Trạng thái Task 5 (Testing & Observability): DONE** — integration A–D, boundary
+> unit tests, `by_agent_type` trên cost-summary, structured `agent_triggered` logs,
+> in-process FR14 metrics (+ TODO Prometheus).
+
+- [x] [AI] Confidence Engine — tính `confidence_score` từ kết quả Cross-Encoder Reranker (score cao nhất, độ phân tán điểm, số candidate vượt ngưỡng), phân loại `high`/`low` theo threshold cấu hình được. Chỉ chạy trong nhánh Complex Query, sau Re-ranking.
+- [x] [AI] Event Policy Engine — xác định `trigger_reason` (ambiguous_query/multi_hop_reasoning/structured_misclassified) và chọn agent tương ứng khi Low Confidence.
+- [x] [AI] Rewrite Agent — viết lại câu hỏi mơ hồ/thiếu ngữ cảnh (model nhẹ, vd. Haiku).
+- [x] [AI] Graph Agent — mở rộng truy vấn qua Knowledge Graph (Neo4j) cho câu hỏi multi-hop, không bắt buộc dùng LLM.
+- [x] [AI] SQL Agent — truy vấn trực tiếp Metadata DB (PostgreSQL) cho câu hỏi structured bị Query Router phân loại nhầm thành Complex.
+- [x] [AI] Second Retrieval (tuỳ chọn) — chạy lại Hybrid Retrieval với câu hỏi/ngữ cảnh đã qua agent, ghi `retrievals.retrieval_pass=2`.
+- [x] [BE] Ghi `agent_events` (agent_type, trigger_reason, triggered_second_retrieval, model_used, cost_usd, latency_ms) mỗi lần agent được kích hoạt.
+- [x] [BE] `GET /workspaces/{id}/chat/messages/{messageId}/agent-events`.
+- [x] [BE][AI] Integration tests Low Confidence (A ambiguous / B multi-hop / C structured / D retry-still-low) — `tests/integration/test_fr14_low_confidence_pipeline.py`.
+- [x] [AI] Boundary unit tests Confidence Engine — `tests/test_confidence_engine.py`.
+- [x] [BE] Structured logging `agent_triggered` + in-process FR14 metrics (`app/core/fr14_metrics.py`; TODO Prometheus khi có exporter).
+- [x] [BE] Mở rộng `GET /admin/workspaces/{id}/cost-summary` với `by_agent_type` (backward-compatible).
 
 ### 2.4 AI Chat + Prompt Construction (FR4, FR10, UC4, UC9)
 - [ ] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory).
@@ -173,7 +187,7 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 ### 3.5 Observability & Reliability (FR13, UC11 phần hệ thống)
 - [ ] [BE] `GET /admin/workspaces/{id}/query-logs` (filter route_type).
 - [ ] [BE] `GET /admin/workspaces/{id}/pipeline-runs` (filter status).
-- [ ] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type).
+- [x] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type; FR14 thêm `by_agent_type` từ `agent_events`, backward-compatible).
 - [ ] [BE] Circuit breaker + fallback khi **LLM provider** lỗi/chậm (Prompt Construction → LLM call). **Tách instance/state/metrics khỏi LlamaParse CB** (`anthropic_cb_*` hoặc tương đương — dùng chung framework `app/core/resilience/`).
 - [ ] [FE] Dashboard admin cơ bản: cost summary, pipeline status, query log.
 

@@ -27,6 +27,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from app.core.config import Settings
+from app.core.fr14_metrics import get_fr14_metrics
 from app.core.logging import get_logger
 from app.models.enums import AgentType, ConfidenceLevel, RouteType
 from app.repositories.agent_events import AgentEventRepository
@@ -109,6 +110,11 @@ class ComplexPipelineResult:
     message_generation_id: UUID | None = None
     agent_event_id: UUID | None = None
     second_retrieval_executed: bool = False
+    confidence_score_before: float | None = None
+    confidence_level_before: ConfidenceLevel | None = None
+    trigger_reason: str | None = None
+    agent_type: str | None = None
+    low_confidence_after_retry: bool = False
 
 
 class ComplexQueryPipeline:
@@ -170,6 +176,8 @@ class ComplexQueryPipeline:
 
         conf_cfg = build_confidence_config(self._settings)
         confidence = compute_confidence(_to_reranked(pass1.items), conf_cfg)
+        confidence_before = confidence
+        get_fr14_metrics().record_confidence(level=confidence.confidence_level.value)
         active_retrieval = pass1
         active_query = query_text
         agent_triggered = False
@@ -179,9 +187,15 @@ class ComplexQueryPipeline:
         rewrite_llm_calls = 0
         sql_answer: str | None = None
         sql_direct = False
+        selected_agent_type: str | None = None
+        selected_trigger: str | None = None
+        event_data: AgentEventData | None = None
 
         logger.info(
-            "complex_confidence",
+            "confidence_evaluated",
+            route_type=RouteType.complex.value,
+            message_id=str(message_id),
+            workspace_id=str(workspace_id),
             confidence_level=confidence.confidence_level.value,
             confidence_score=confidence.confidence_score,
             retrieval_pass=1,
@@ -196,10 +210,15 @@ class ComplexQueryPipeline:
                 RouteType.complex.value,
                 config=policy_cfg,
             )
+            selected_agent_type = decision.agent_type.value
+            selected_trigger = decision.trigger_reason.value
             logger.info(
-                "complex_agent_selected",
-                agent_type=decision.agent_type.value,
-                trigger_reason=decision.trigger_reason.value,
+                "agent_selected",
+                agent_type=selected_agent_type,
+                trigger_reason=selected_trigger,
+                message_id=str(message_id),
+                workspace_id=str(workspace_id),
+                route_type=RouteType.complex.value,
             )
 
             event_data, rewrite_llm_calls, sql_answer, sql_direct, active_query = (
@@ -212,6 +231,13 @@ class ComplexQueryPipeline:
                     confidence_score=confidence.confidence_score,
                     chat_history=chat_history,
                 )
+            )
+
+            get_fr14_metrics().record_agent(
+                agent_type=event_data.agent_type.value,
+                trigger_reason=event_data.trigger_reason.value,
+                latency_ms=event_data.latency_ms,
+                cost_usd=float(event_data.cost_usd or 0),
             )
 
             # INSERT agent_events immediately after agent (before optional pass=2).
@@ -242,11 +268,13 @@ class ComplexQueryPipeline:
                     if agent_event_id is not None:
                         await self._safe_mark_second_retrieval(agent_event_id)
                     logger.info(
-                        "complex_second_retrieval",
+                        "second_retrieval",
                         retrieval_pass=2,
                         confidence_level=confidence.confidence_level.value,
                         confidence_score=confidence.confidence_score,
                         retry_executed=True,
+                        message_id=str(message_id),
+                        workspace_id=str(workspace_id),
                     )
                 except Exception as exc:  # noqa: BLE001
                     # Fallback to pass=1 context — do not retry again.
@@ -259,6 +287,22 @@ class ComplexQueryPipeline:
 
             # After Second Retrieval: even if confidence still LOW, continue to
             # Prompt Construction / LLM. Do NOT invoke Event Policy / agents again.
+
+            _log_agent_triggered(
+                workspace_id=workspace_id,
+                message_id=message_id,
+                confidence_before=confidence_before,
+                confidence_after=confidence,
+                event_data=event_data,
+                second_retrieval=second_retrieval_executed,
+                llm_calls_so_far=rewrite_llm_calls,
+            )
+
+        low_after_retry = (
+            agent_triggered
+            and second_retrieval_executed
+            and confidence.confidence_level is ConfidenceLevel.low
+        )
 
         # --- SQL Agent direct answer (same shape as Metadata Query) ---
         if sql_direct and sql_answer:
@@ -280,6 +324,11 @@ class ComplexQueryPipeline:
                 model_used=None,
                 agent_event_id=agent_event_id,
                 second_retrieval_executed=False,
+                confidence_score_before=confidence_before.confidence_score,
+                confidence_level_before=confidence_before.confidence_level,
+                trigger_reason=selected_trigger,
+                agent_type=selected_agent_type,
+                low_confidence_after_retry=False,
             )
             result.message_generation_id = await self._safe_write_generation(
                 assistant_message_id or message_id,
@@ -291,11 +340,13 @@ class ComplexQueryPipeline:
                 latency_ms=0,
             )
             logger.info(
-                "complex_pipeline_done",
+                "pipeline_done",
                 llm_calls_count=0,
                 retrieval_pass=1,
                 agent_triggered=True,
                 sql_direct=True,
+                message_id=str(message_id),
+                workspace_id=str(workspace_id),
             )
             return result
 
@@ -323,6 +374,7 @@ class ComplexQueryPipeline:
                     "status": PENDING_LLM_STATUS,
                     "retrieval_item_count": len(active_retrieval.items),
                     "second_retrieval_executed": second_retrieval_executed,
+                    "low_confidence_after_retry": low_after_retry,
                 },
                 verify=False,
                 status=PENDING_LLM_STATUS,
@@ -334,6 +386,11 @@ class ComplexQueryPipeline:
                 model_used=None,
                 agent_event_id=agent_event_id,
                 second_retrieval_executed=second_retrieval_executed,
+                confidence_score_before=confidence_before.confidence_score,
+                confidence_level_before=confidence_before.confidence_level,
+                trigger_reason=selected_trigger,
+                agent_type=selected_agent_type,
+                low_confidence_after_retry=low_after_retry,
             )
         else:
             result = ComplexPipelineResult(
@@ -343,6 +400,7 @@ class ComplexQueryPipeline:
                     "route_type": RouteType.complex.value,
                     "second_retrieval_executed": second_retrieval_executed,
                     "retrieval_item_count": len(active_retrieval.items),
+                    "low_confidence_after_retry": low_after_retry,
                 },
                 verify=bool(answer_result.verify),
                 status=COMPLETED_STATUS if answer_result.answer else PENDING_LLM_STATUS,
@@ -354,6 +412,11 @@ class ComplexQueryPipeline:
                 model_used=answer_result.model_used,
                 agent_event_id=agent_event_id,
                 second_retrieval_executed=second_retrieval_executed,
+                confidence_score_before=confidence_before.confidence_score,
+                confidence_level_before=confidence_before.confidence_level,
+                trigger_reason=selected_trigger,
+                agent_type=selected_agent_type,
+                low_confidence_after_retry=low_after_retry,
             )
             result.message_generation_id = await self._safe_write_generation(
                 assistant_message_id or message_id,
@@ -366,7 +429,7 @@ class ComplexQueryPipeline:
             )
 
         logger.info(
-            "complex_pipeline_done",
+            "pipeline_done",
             confidence_level=(
                 result.confidence_level.value if result.confidence_level else None
             ),
@@ -374,6 +437,10 @@ class ComplexQueryPipeline:
             retrieval_pass=result.retrieval_pass_final,
             agent_triggered=result.agent_triggered,
             retry_executed=result.second_retrieval_executed,
+            low_confidence_after_retry=low_after_retry,
+            message_id=str(message_id),
+            workspace_id=str(workspace_id),
+            route_type=RouteType.complex.value,
         )
         return result
 
@@ -563,3 +630,36 @@ def _to_reranked(items: Sequence[RetrievalCandidate]) -> list[RerankedItem]:
             )
         )
     return out
+
+
+def _log_agent_triggered(
+    *,
+    workspace_id: UUID,
+    message_id: UUID,
+    confidence_before: ConfidenceResult,
+    confidence_after: ConfidenceResult,
+    event_data: AgentEventData,
+    second_retrieval: bool,
+    llm_calls_so_far: int,
+) -> None:
+    """Structured JSON log for agent path — no prompts / document / payloads."""
+    logger.info(
+        "agent_triggered",
+        query_id=str(message_id),
+        workspace_id=str(workspace_id),
+        message_id=str(message_id),
+        route_type=RouteType.complex.value,
+        confidence_before=confidence_before.confidence_score,
+        confidence_after=confidence_after.confidence_score,
+        confidence_level_before=confidence_before.confidence_level.value,
+        confidence_level_after=confidence_after.confidence_level.value,
+        trigger_reason=event_data.trigger_reason.value,
+        agent_type=event_data.agent_type.value,
+        triggered_second_retrieval=second_retrieval,
+        retrieval_pass=2 if second_retrieval else 1,
+        model_used=event_data.model_used,
+        cost_usd=float(event_data.cost_usd or 0),
+        latency_ms=event_data.latency_ms,
+        llm_calls_count=llm_calls_so_far,
+        second_retrieval=second_retrieval,
+    )
