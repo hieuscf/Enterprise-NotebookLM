@@ -6,21 +6,23 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ---
 
-## Trạng thái triển khai (cập nhật 2026-07-30)
+## Trạng thái triển khai (cập nhật 2026-08-04)
 
-**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API backend, hạ tầng Docker/CI đã xong.
+**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), `GET .../cost-summary` (+ `by_agent_type`) đã xong.
 
-**Chênh lệch so với tài liệu v3 (còn lại trước GĐ2):**
+**Chênh lệch so với tài liệu v3 (còn lại — lõi GĐ2):**
 
-| Hạng mục | v2 / interim (đã có) | v3 (mục tiêu) |
+| Hạng mục | Đã có | Còn thiếu (mục tiêu) |
 |---|---|---|
-| Schema DB | 29 bảng v3 (enum stage mới, agent_events, cột LlamaParse/confidence) | — (đã khớp) |
-| Pipeline ingestion | 6 stage v3; LlamaParse + fallback OCR local | — (đã khớp backend) |
-| Chunking | Stage `chunking` v2 (legacy test) | Hierarchical (`parent_chunk_id`, `heading_path`, `depth`, `layout_type`) — **đã triển khai** stage `hierarchical_chunking` |
-| LlamaParse resilience | Retry bounded + CB độc lập (`app/clients/llamaparse_client.py`, `app/core/resilience/`) | — (đã khớp) |
-| Chat / Search | Chưa triển khai | Query Router + Confidence Engine + Agents (FR14) |
+| Schema DB / Pipeline / LlamaParse | Khớp v3 | — |
+| Search (FR3) | Hybrid Vector+BM25+Graph → Rerank; Search API + FE | Metadata DB là filter/post-query (`SearchService`), không phải nguồn fan-out thứ 4 |
+| Query Router (FR11) | Classifier + cache + metadata/factoid/complex + `query_logs` + Celery cleanup | — |
+| FR14 Confidence & Agents | Engine + Event Policy + Rewrite/Graph/SQL + Second Retrieval + `agent_events` + tests/metrics | — |
+| Chat / Prompt / Citation | Orchestrator + Complex Query pipeline (pending LLM); persist `retrievals`; `GET .../agent-events` | Chat sessions/messages HTTP + Prompt Construction (1 LLM) + SSE + Citation Verification + FE Chat |
 
-**Tiến độ GĐ1 (P0):** ~95% — backend pipeline v3 xong; còn thiếu **FE** documents/upload + pipeline status UI.
+**Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline xong.
+
+**Tiến độ GĐ2 (P1):** ~65% — Search + Query Router + FR14 xong; còn **Chat HTTP/UI**, **Prompt Construction/SSE**, **Citation Verification**.
 
 ---
 
@@ -87,10 +89,10 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [BE] Cập nhật `pipeline_stage_logs` sang enum v3 (6 stage) — migration `d4e5f6a7b8c9` + `PipelineStage` ORM.
 
 #### Frontend
-- [ ] [FE] UI Upload tài liệu (drag-drop, hiển thị trạng thái pipeline realtime theo `status`, 6 stage v3).
-- [ ] [FE] UI danh sách tài liệu + lịch sử version + nút "Set as current"/rollback.
+- [x] [FE] UI Upload tài liệu (drag-drop, hiển thị trạng thái pipeline realtime theo `status`, 6 stage v3) — `frontend/app/workspaces/[id]/upload/`, `features/documents/DocumentUploadView.tsx`, `PipelineStatusTracker.tsx`.
+- [x] [FE] UI danh sách tài liệu + lịch sử version + nút "Set as current"/rollback — `frontend/app/workspaces/[id]/documents/`, `DocumentVersionHistory.tsx`, `setCurrentVersion` trong `lib/api-client.ts`.
 
-**Tiêu chí hoàn thành GĐ1:** Upload 1 file PDF thật → thấy đủ 6 stage log completed (kể cả `document_understanding` gọi LlamaParse thành công) → có chunk (kèm `parent_chunk_id`/`heading_path`)/entity/topic trong DB → có thể xem lại lịch sử version qua UI.
+**Tiêu chí hoàn thành GĐ1:** Upload 1 file PDF thật → thấy đủ 6 stage log completed (kể cả `document_understanding` gọi LlamaParse thành công) → có chunk (kèm `parent_chunk_id`/`heading_path`)/entity/topic trong DB → có thể xem lại lịch sử version qua UI. **→ Đạt.**
 
 ---
 
@@ -99,19 +101,19 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng sequence diagram Complex Query), tối ưu số lần gọi LLM (FR11).
 
 ### 2.1 Intelligent Search (FR3, UC3, Module 3)
-- [ ] [AI] Hybrid Retrieval: Vector Search (Qdrant/pgvector) + BM25 (Elasticsearch) + Knowledge Graph query (Neo4j) + Metadata DB query (PostgreSQL).
-- [ ] [AI] Re-ranking Layer bằng cross-encoder (non-LLM).
-- [ ] [BE] `POST /workspaces/{id}/search` — trả kết quả đã rerank, ghi `search_history` (query_text, filters, results_count, clicked_document_id).
-- [ ] [BE] `GET /workspaces/{id}/search/history`.
-- [ ] [FE] UI tìm kiếm ngữ nghĩa: input query, filter (file_type, thời gian, tag), hiển thị kết quả kèm score/rank.
+- [x] [AI] Hybrid Retrieval: Vector Search (Qdrant/pgvector) + BM25 (Elasticsearch) + Knowledge Graph (Neo4j) fan-out song song → merge/dedupe — `app/services/retrieval/hybrid_retrieval_service.py` (+ `vector_search`, `bm25_search`, `graph_search`). Metadata DB dùng làm **filter/post-query** trên Search API (`metadata_search.py`, `SearchService._apply_filters`), không fan-out song song trong Hybrid.
+- [x] [AI] Re-ranking Layer bằng cross-encoder (non-LLM) — `app/services/retrieval/reranker.py` (backend `cross_encoder` + heuristic fallback).
+- [x] [BE] `POST /workspaces/{id}/search` — trả kết quả đã rerank, ghi `search_history` — `app/api/search.py`, `app/services/search.py`.
+- [x] [BE] `GET /workspaces/{id}/search/history` (+ `PATCH .../history/{id}` click tracking).
+- [x] [FE] UI tìm kiếm ngữ nghĩa: input query, filter, kết quả + history — `frontend/app/workspaces/[id]/search/`, `features/search/*`, `hooks/useSearch.ts`.
 
 ### 2.2 Query Router (FR11, UC12)
-- [ ] [AI] Rule-based classifier cho 4 nhóm: cache_hit / metadata / factoid / complex (không dùng LLM).
-- [ ] [BE] Bảng `query_cache`: check `query_hash` (exact) trước, sau đó so cosine similarity qua `query_embedding_id`.
-- [ ] [AI] Nhánh Metadata Query — map câu hỏi liệt kê/thống kê sang query DB trực tiếp (0 LLM call).
-- [ ] [AI] Nhánh Simple Factoid — trả lời extractive từ chunk có confidence cao (0 LLM call).
-- [ ] [BE] Ghi `query_logs` (route_type, llm_calls_count, cache_id, message_id, latency_ms) cho **cả 4 nhánh** kể cả 0-LLM.
-- [ ] [BE] Job dọn cache hết hạn theo `expires_at` (cron/Celery beat).
+- [x] [AI] Rule-based classifier cho 4 nhóm: cache_hit / metadata / factoid / complex (không dùng LLM) — `app/services/query_router/router.py`, `rule_classifier.py` / `classifier.py`.
+- [x] [BE] Bảng `query_cache`: check `query_hash` (exact) trước, sau đó cosine similarity qua embedding — `app/services/query_router/cache.py`, `app/repositories/query_cache.py`.
+- [x] [AI] Nhánh Metadata Query — map câu hỏi liệt kê/thống kê sang query DB trực tiếp (0 LLM call) — `metadata_branch.py`, `handlers/metadata_handler.py`.
+- [x] [AI] Nhánh Simple Factoid — trả lời extractive từ chunk có confidence cao (0 LLM call) — `factoid_branch.py`, `handlers/factoid_handler.py`, `lightweight_retriever.py`.
+- [x] [BE] Ghi `query_logs` (route_type, llm_calls_count, cache_id, message_id, latency_ms) cho **cả 4 nhánh** kể cả 0-LLM — `orchestrator.py` → `logging_service.py`.
+- [x] [BE] Job dọn cache hết hạn theo `expires_at` (Celery beat) — `app/tasks/cleanup_expired_cache.py`, schedule trong `workers/celery_app.py`.
 
 ### 2.3 Confidence Engine & Event-driven Micro Agents (FR14, UC13 — mới v3)
 
@@ -138,26 +140,34 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [x] [BE] Mở rộng `GET /admin/workspaces/{id}/cost-summary` với `by_agent_type` (backward-compatible).
 
 ### 2.4 AI Chat + Prompt Construction (FR4, FR10, UC4, UC9)
-- [ ] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory).
-- [ ] [BE] `GET .../sessions/{id}/messages`.
-- [ ] [BE] `POST .../sessions/{id}/messages` — nhận câu hỏi, ghi `chat_messages` (role=user), gọi Query Router.
-- [ ] [AI] Prompt Construction — dựng prompt từ Top-K context (lấy `retrieval_pass` mới nhất: pass 2 nếu có Second Retrieval, ngược lại pass 1), gọi LLM **1 lần duy nhất** với structured output (JSON: answer + citation_ids), áp dụng model tiering (Haiku cho đơn giản, Sonnet cho phức tạp).
+
+> **Part 1/3 DONE (2026-08-06):** Conversation Memory — session CRUD (soft-delete
+> `deleted_at`/`deleted_by`) + GET messages (nested generation/citations).  
+> **Còn lại Part 2–3:** POST messages → Query Router, Prompt Construction (1 LLM),
+> SSE streaming, FE Chat UI.
+
+- [x] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory) — `ChatSessionService` + soft-delete migration `c0d1e2f3a4b5`; tests `tests/test_chat_sessions.py`.
+- [x] [BE] `GET .../sessions/{id}/messages` — nested `generation` + `citations`; user → generation=null, citations=[].
+- [ ] [BE] `POST .../sessions/{id}/messages` — nhận câu hỏi, ghi `chat_messages` (role=user), gọi Query Router (`handle_query` / orchestrator đã sẵn, chưa wire HTTP).
+- [ ] [AI] Prompt Construction — dựng prompt từ Top-K context (lấy `retrieval_pass` mới nhất: pass 2 nếu có Second Retrieval, ngược lại pass 1), gọi LLM **1 lần duy nhất** với structured output (JSON: answer + citation_ids), áp dụng model tiering (Haiku cho đơn giản, Sonnet cho phức tạp). (`AnswerGeneratorPort` optional; pipeline mặc định `PENDING_LLM`.)
 - [ ] [BE] Streaming response (SSE) cho endpoint chat message; hỗ trợ fallback JSON khi `Accept: application/json`.
-- [ ] [BE] Ghi `message_generations` (route_type, confidence_level, confidence_score, agent_triggered, model_used, tokens, cost_usd, latency_ms, temperature, top_p, finish_reason) — kể cả route 0-LLM (giá trị 0/NULL, confidence_level=NULL).
-- [ ] [FE] UI Chat: gửi câu hỏi, hiển thị streaming answer, hiển thị session list (tiếp tục ngữ cảnh cũ).
+- [ ] [BE] Ghi `message_generations` (route_type, confidence_level, confidence_score, agent_triggered, model_used, tokens, cost_usd, latency_ms, temperature, top_p, finish_reason) — kể cả route 0-LLM (giá trị 0/NULL, confidence_level=NULL). *(Write path partial trong `ComplexQueryPipeline._safe_write_generation`; chưa dùng hết vì thiếu answer generator + chat messages API.)*
+- [ ] [FE] UI Chat: gửi câu hỏi, hiển thị streaming answer, hiển thị session list (tiếp tục ngữ cảnh cũ). (Sidebar: badge "Sắp có"; chưa có route chat.)
 
 ### 2.5 Citation & Verification (FR5, UC4, UC11)
-- [ ] [AI] Ghi toàn bộ ứng viên retrieval vào bảng `retrievals` (chunk_id/entity_id, retrieval_method, score, rank, retrieval_pass) trước khi lọc.
-- [ ] [AI] Citation Verification Layer — đối chiếu deterministic `citation_ids` LLM trả về với `retrievals` đã lưu (cả pass 1 và pass 2 nếu có); set `verified=true/false`.
+- [x] [AI] Ghi toàn bộ ứng viên retrieval vào bảng `retrievals` (chunk_id/entity_id, retrieval_method, score, rank, retrieval_pass) trước khi lọc — `RetrievalRecordsRepository` trong `complex_query_pipeline.py` (pass 1/2).
+- [ ] [AI] Citation Verification Layer — đối chiếu deterministic `citation_ids` LLM trả về với `retrievals` đã lưu (cả pass 1 và pass 2 nếu có); set `verified=true/false`. (ORM `Citation` có sẵn; chưa có service/write path.)
 - [ ] [AI] Cơ chế fallback "không đủ căn cứ trong tài liệu" khi citation không hợp lệ, hoặc sinh lại tối đa 1 lần.
 - [ ] [BE] `GET /workspaces/{id}/chat/messages/{messageId}/citations`.
-- [ ] [FE] Hiển thị citation dưới câu trả lời + click để highlight đoạn văn bản gốc trên tài liệu (dùng `text_snippet`).
+- [ ] [FE] Hiển thị citation dưới câu trả lời + click để highlight đoạn văn bản gốc trên tài liệu (dùng `text_snippet`). (Stub: `features/citation/CitationLocationLabel.tsx` — chưa gắn Chat.)
 - [ ] [FE] Hiển thị badge nhỏ khi câu trả lời đã đi qua Agent (vd. "Đã mở rộng truy vấn qua Knowledge Graph") — lấy từ `agent-events`, tăng độ tin tưởng người dùng.
 
 **Tiêu chí hoàn thành GĐ2:**
 - Đặt câu hỏi phức tạp, High Confidence → đi đúng luồng (Router miss cache → Hybrid Retrieval → Rerank → Confidence Engine=high → 1 LLM call → Citation Verification) → trả lời kèm citation bấm được, verified=true.
 - Đặt câu hỏi mơ hồ/multi-hop cố tình → Confidence Engine=low → thấy đúng agent được kích hoạt trong `agent_events`, có Second Retrieval (`retrieval_pass=2`), vẫn ra câu trả lời kèm citation verified.
 - Hỏi lại câu tương tự → cache hit, 0 LLM call, không có `agent_events`.
+
+> **Hiện trạng (2026-08-04):** Search + Router + FR14 (kể cả integration A–D) đạt; tiêu chí end-to-end Chat+Citation **chưa đạt** — phụ thuộc mục 2.4–2.5 còn mở.
 
 ---
 

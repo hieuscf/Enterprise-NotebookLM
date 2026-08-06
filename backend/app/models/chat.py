@@ -13,13 +13,14 @@
 # Related Modules: database-design-enterprise-notebooklm.md §5
 # Important Notes: chat_messages hold content only; metrics live in
 #   message_generations (1–1 optional via UNIQUE message_id).
+#   Soft-delete: deleted_at / deleted_by on chat_sessions (c0d1e2f3a4b5).
 # =============================================================================
 
 import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +53,16 @@ class ChatSession(Base):
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = created_at_col()
     updated_at: Mapped[datetime] = updated_at_col()
+    # Soft-delete (Phase 2.4 Part 1): DELETE sets deleted_at/deleted_by; list/get
+    # filter deleted_at IS NULL. Rows retained for audit / cost-summary.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class ChatMessage(Base):

@@ -4,10 +4,11 @@
 # Layer: Service
 # Purpose: Package marker for Chat / Complex Query / agent-events services.
 # Responsibilities:
-#   - Export ComplexQueryPipeline and AgentEventsService
+#   - Export Conversation Memory, ComplexQueryPipeline, AgentEventsService
 # Dependencies:
-#   - complex_query_pipeline, agent_events_service
+#   - session_service, complex_query_pipeline, agent_events_service
 # Public Exports:
+#   - ChatSessionService, ChatServiceError
 #   - ComplexQueryPipeline, AgentEventsService
 # Database/Table: N/A
 # Related Modules: QueryOrchestrator, app.api.chat
@@ -16,5 +17,11 @@
 
 from app.services.chat.agent_events_service import AgentEventsService
 from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
+from app.services.chat.session_service import ChatServiceError, ChatSessionService
 
-__all__ = ["AgentEventsService", "ComplexQueryPipeline"]
+__all__ = [
+    "AgentEventsService",
+    "ChatServiceError",
+    "ChatSessionService",
+    "ComplexQueryPipeline",
+]
