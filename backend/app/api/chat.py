@@ -2,36 +2,46 @@
 # File: chat.py
 # Module/Service: Chat Service
 # Layer: Presentation
-# Purpose: FastAPI routes for Conversation Memory (FR4) + agent-events (FR14).
+# Purpose: FastAPI routes for Conversation Memory (FR4) + POST messages + FR14.
 # Responsibilities:
 #   - CRUD chat sessions (soft-delete) + GET message history
+#   - POST .../messages — Query Router + Prompt Construction (SSE / JSON)
 #   - GET /chat/messages/{messageId}/agent-events
 # Dependencies:
-#   - require_workspace_member_rl, ChatSessionService, AgentEventsService
+#   - require_workspace_member_rl, ChatSessionService, MessageProcessingService,
+#     AgentEventsService, get_query_orchestrator
 # Public Exports:
 #   - router
 # Database/Table: chat_sessions, chat_messages, agent_events (via services)
 # Related Modules: docs/Enterprise_notebooklm_openapi.yaml §Chat
 # Important Notes:
-#   - Part 1: NO POST .../messages (Query Router / LLM / SSE = Part 2).
+#   - Default POST response is text/event-stream; Accept: application/json → JSON.
 #   - Delete RBAC: owner or workspace admin (checked in service).
 # =============================================================================
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_db_session
+from app.dependencies.query_orchestrator import get_query_orchestrator
 from app.dependencies.rate_limit import require_workspace_member_rl
 from app.dependencies.rbac import WorkspaceAccess
 from app.repositories.agent_events import AgentEventRepository
 from app.repositories.chat_messages import ChatMessageRepository
 from app.repositories.chat_sessions import ChatSessionRepository
+from app.repositories.citations import CitationRepository
+from app.repositories.query_logs import QueryObservabilityRepository
+from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.schemas.chat import (
     AgentEventResponse,
+    ChatMessageCreateRequest,
     ChatMessageResponse,
     ChatSessionCreateRequest,
     ChatSessionResponse,
@@ -41,7 +51,9 @@ from app.services.chat.agent_events_service import (
     AgentEventsService,
     AgentEventsServiceError,
 )
+from app.services.chat.message_service import MessageProcessingService, format_sse
 from app.services.chat.session_service import ChatServiceError, ChatSessionService
+from app.services.query_router.orchestrator import QueryOrchestrator
 
 router = APIRouter(prefix="/workspaces", tags=["Chat"])
 
@@ -61,6 +73,21 @@ def get_chat_session_service(
     )
 
 
+def get_message_processing_service(
+    session: AsyncSession = Depends(get_db_session),
+    orchestrator: QueryOrchestrator = Depends(get_query_orchestrator),
+) -> MessageProcessingService:
+    return MessageProcessingService(
+        settings=get_settings(),
+        sessions=ChatSessionRepository(session),
+        messages=ChatMessageRepository(session),
+        citations=CitationRepository(session),
+        retrieval_records=RetrievalRecordRepository(session),
+        observability=QueryObservabilityRepository(session),
+        orchestrator=orchestrator,
+    )
+
+
 def _agent_http_error(exc: AgentEventsServiceError) -> HTTPException:
     return HTTPException(
         status_code=exc.status_code,
@@ -73,6 +100,21 @@ def _chat_http_error(exc: ChatServiceError) -> HTTPException:
         status_code=exc.status_code,
         detail=ErrorResponse(code=exc.code, message=exc.message).model_dump(),
     )
+
+
+def _wants_json(accept: str | None, request: Request) -> bool:
+    """Prefer JSON only when client explicitly asks for application/json."""
+    header = (accept or request.headers.get("accept") or "").lower()
+    if not header or header == "*/*":
+        return False
+    if "text/event-stream" in header and "application/json" not in header:
+        return False
+    # Explicit JSON (and not primarily SSE).
+    if header.strip().startswith("application/json"):
+        return True
+    if "application/json" in header and "text/event-stream" not in header.split(",")[0]:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +238,7 @@ async def delete_chat_session(
 
 
 # ---------------------------------------------------------------------------
-# Messages (history only — Part 1)
+# Messages
 # ---------------------------------------------------------------------------
 
 
@@ -231,6 +273,63 @@ async def list_chat_session_messages(
         )
     except ChatServiceError as exc:
         raise _chat_http_error(exc) from exc
+
+
+@router.post(
+    "/{workspaceId}/chat/sessions/{sessionId}/messages",
+    response_model=None,
+    summary="Gửi câu hỏi (Query Router → answer; SSE mặc định)",
+    operation_id="createChatSessionMessage",
+    responses={
+        status.HTTP_200_OK: {
+            "description": "SSE stream or JSON ChatMessage",
+            "content": {
+                "text/event-stream": {"schema": {"type": "string"}},
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/ChatMessage"}
+                },
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_ENTITY: {"model": ErrorResponse},
+    },
+)
+async def create_chat_session_message(
+    request: Request,
+    body: ChatMessageCreateRequest,
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    session_id: uuid.UUID = Path(..., alias="sessionId"),
+    accept: str | None = Header(default=None, alias="Accept"),
+    service: MessageProcessingService = Depends(get_message_processing_service),
+) -> Response:
+    """Process one user question via shared ``generate_answer`` business flow."""
+    if _wants_json(accept, request):
+        try:
+            result = await service.generate_answer(
+                workspace_id=access.workspace_id,
+                session_id=session_id,
+                user_id=access.user_id,
+                content=body.content,
+            )
+        except ChatServiceError as exc:
+            raise _chat_http_error(exc) from exc
+        return JSONResponse(
+            content=result.assistant.model_dump(mode="json"),
+            media_type="application/json",
+        )
+
+    async def event_source() -> AsyncIterator[str]:
+        async for event in service.stream_answer_events(
+            workspace_id=access.workspace_id,
+            session_id=session_id,
+            user_id=access.user_id,
+            content=body.content,
+        ):
+            yield format_sse(event)
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------

@@ -8,14 +8,12 @@
 # Dependencies:
 #   - httpx, app.core.config
 # Public Exports:
-#   - AnthropicExtractionResult, extract_structured_json
+#   - AnthropicExtractionResult, extract_structured_json, extract_structured_json_async
 # Database/Table: N/A
-# Related Modules: app.ai.lightrag_extraction, app.workers.stages.graph_extraction
+# Related Modules: app.ai.lightrag_extraction, app.services.chat.answer_generator
 # Important Notes:
-#   - THIS IS THE ONLY ingestion-pipeline step that incurs LLM (chat) cost.
-#   - Default model: Haiku-class (cheap structured extraction, not Sonnet/Opus).
-#   - Architecture preference: only backend-api calls Anthropic; this worker call is
-#     the explicit FR2 graph-extraction exception. Prefer proxy URL when configured.
+#   - Graph extraction (worker) and Chat answer (backend-api) share this adapter.
+#   - Chat answer path uses extract_structured_json_async (exactly 1 call / complex).
 # =============================================================================
 
 from __future__ import annotations
@@ -117,6 +115,67 @@ def extract_structured_json(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         ),
+    )
+
+
+async def extract_structured_json_async(
+    *,
+    system: str,
+    user: str,
+    model: str,
+    api_key: str,
+    api_base: str = "https://api.anthropic.com",
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+    top_p: float = 1.0,
+    timeout_seconds: float = 120.0,
+    cost_estimator: Any | None = None,
+) -> AnthropicExtractionResult:
+    """Async Anthropic Messages call returning a parsed JSON object (Chat FR4)."""
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        resp = await client.post(
+            f"{api_base.rstrip('/')}/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p,
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+            },
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+    text_parts = [
+        block.get("text", "")
+        for block in body.get("content", [])
+        if block.get("type") == "text"
+    ]
+    raw_text = "\n".join(text_parts).strip()
+    data = _parse_json_object(raw_text)
+    usage = body.get("usage") or {}
+    input_tokens = int(usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or 0)
+    if callable(cost_estimator):
+        estimated = float(
+            cost_estimator(input_tokens=input_tokens, output_tokens=output_tokens)
+        )
+    else:
+        estimated = estimate_haiku_cost_usd(
+            input_tokens=input_tokens, output_tokens=output_tokens
+        )
+    return AnthropicExtractionResult(
+        data=data,
+        model=str(body.get("model") or model),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        estimated_cost_usd=estimated,
     )
 
 

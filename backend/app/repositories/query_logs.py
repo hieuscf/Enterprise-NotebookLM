@@ -23,7 +23,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import MessageGeneration
-from app.models.enums import ConfidenceLevel, RouteType
+from app.models.enums import ConfidenceLevel, FinishReason, RouteType
 from app.models.query import QueryLog
 
 
@@ -110,6 +110,9 @@ class QueryObservabilityRepository(QueryLogRepository):
         confidence_level: ConfidenceLevel | None = None,
         confidence_score: float | None = None,
         agent_triggered: bool = False,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        finish_reason: FinishReason | None = None,
     ) -> MessageGeneration:
         row = MessageGeneration(
             message_id=message_id,
@@ -123,9 +126,9 @@ class QueryObservabilityRepository(QueryLogRepository):
             total_tokens=total_tokens,
             cost_usd=cost_usd,
             latency_ms=latency_ms,
-            temperature=None,
-            top_p=None,
-            finish_reason=None,
+            temperature=temperature,
+            top_p=top_p,
+            finish_reason=finish_reason,
         )
         self._session.add(row)
         await self._session.flush()

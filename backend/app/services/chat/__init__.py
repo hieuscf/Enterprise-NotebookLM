@@ -16,7 +16,9 @@
 # =============================================================================
 
 from app.services.chat.agent_events_service import AgentEventsService
+from app.services.chat.answer_generator import PromptAnswerGenerator
 from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
+from app.services.chat.message_service import MessageProcessingService
 from app.services.chat.session_service import ChatServiceError, ChatSessionService
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "ChatServiceError",
     "ChatSessionService",
     "ComplexQueryPipeline",
+    "MessageProcessingService",
+    "PromptAnswerGenerator",
 ]

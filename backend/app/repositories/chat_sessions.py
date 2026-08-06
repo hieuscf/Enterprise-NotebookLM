@@ -130,6 +130,34 @@ class ChatSessionRepository:
         result = await self._session.execute(stmt)
         return bool(result.rowcount)
 
+    async def touch_after_message(
+        self,
+        *,
+        session_id: uuid.UUID,
+        preview: str,
+        message_at: datetime,
+        message_count: int,
+    ) -> bool:
+        """Update updated_at + denormalized last-message summary after insert."""
+        preview_clean = (preview or "").strip()
+        if len(preview_clean) > 512:
+            preview_clean = preview_clean[:512]
+        stmt = (
+            update(ChatSession)
+            .where(
+                ChatSession.id == session_id,
+                ChatSession.deleted_at.is_(None),
+            )
+            .values(
+                updated_at=datetime.now(UTC),
+                last_message_preview=preview_clean or None,
+                last_message_at=message_at,
+                message_count=max(0, int(message_count)),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return bool(result.rowcount)
+
     async def soft_delete(
         self,
         *,

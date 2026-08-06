@@ -163,6 +163,24 @@ class Settings(BaseSettings):
     # FR14 — Graph Agent Neo4j expansion depth (1–2 only).
     graph_agent_max_hops: int = 2
 
+    # FR4 Part 2 — Answer LLM model tiering (Prompt Construction). Config-only;
+    # never hardcode model ids in services. agent_force_strong_model overrides
+    # to the strong model when any Micro Agent ran on the complex path.
+    chat_answer_light_model: str = "claude-3-5-haiku-latest"
+    chat_answer_strong_model: str = "claude-sonnet-4-20250514"
+    chat_agent_force_strong_model: bool = True
+    chat_answer_max_tokens: int = 4096
+    chat_answer_temperature: float = 0.0
+    chat_answer_top_p: float = 1.0
+    chat_answer_timeout_seconds: float = 120.0
+    # Approximate USD / 1M tokens for cost_usd estimates (observability).
+    chat_answer_light_input_usd_per_mtok: float = 0.25
+    chat_answer_light_output_usd_per_mtok: float = 1.25
+    chat_answer_strong_input_usd_per_mtok: float = 3.0
+    chat_answer_strong_output_usd_per_mtok: float = 15.0
+    # Token-chunk size when emitting SSE after structured generation completes.
+    chat_sse_token_chunk_chars: int = 24
+
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).

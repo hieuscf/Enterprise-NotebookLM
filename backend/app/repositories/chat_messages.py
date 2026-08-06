@@ -30,6 +30,7 @@ from sqlalchemy.orm import aliased
 
 from app.models.chat import ChatMessage, MessageGeneration
 from app.models.documents import DocumentVersion
+from app.models.enums import MessageRole
 from app.models.knowledge import DocumentChunk, Entity
 from app.models.retrieval import Citation, Retrieval
 
@@ -86,6 +87,41 @@ class ChatMessageRepository:
             )
             for m in messages
         ]
+
+    async def create(
+        self,
+        *,
+        session_id: uuid.UUID,
+        role: MessageRole,
+        content: str,
+    ) -> ChatMessage:
+        """Insert a chat message (user or assistant)."""
+        row = ChatMessage(
+            session_id=session_id,
+            role=role,
+            content=content,
+        )
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def update_content(self, message_id: uuid.UUID, content: str) -> ChatMessage | None:
+        """Replace assistant content after generation completes."""
+        result = await self._session.execute(
+            select(ChatMessage).where(ChatMessage.id == message_id)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        row.content = content
+        await self._session.flush()
+        return row
+
+    async def get(self, message_id: uuid.UUID) -> ChatMessage | None:
+        result = await self._session.execute(
+            select(ChatMessage).where(ChatMessage.id == message_id)
+        )
+        return result.scalar_one_or_none()
 
     async def count(self, *, session_id: uuid.UUID) -> int:
         """Total messages in a session (for Part 2 last_message summary)."""

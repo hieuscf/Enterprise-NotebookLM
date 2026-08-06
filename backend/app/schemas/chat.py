@@ -54,6 +54,12 @@ class ChatSessionCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=512)
 
 
+class ChatMessageCreateRequest(BaseModel):
+    """POST /chat/sessions/{id}/messages body."""
+
+    content: str = Field(min_length=1)
+
+
 class ChatSessionResponse(BaseModel):
     """OpenAPI ChatSession summary/detail (no nested messages)."""
 

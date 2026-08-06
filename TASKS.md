@@ -22,7 +22,7 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 **Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline xong.
 
-**Tiến độ GĐ2 (P1):** ~65% — Search + Query Router + FR14 xong; còn **Chat HTTP/UI**, **Prompt Construction/SSE**, **Citation Verification**.
+**Tiến độ GĐ2 (P1):** ~80% — Search + Query Router + FR14 + Chat Memory + POST messages/Prompt/SSE xong; còn **Citation Verification cứng (2.5)** + **FE Chat**.
 
 ---
 
@@ -143,15 +143,17 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 
 > **Part 1/3 DONE (2026-08-06):** Conversation Memory — session CRUD (soft-delete
 > `deleted_at`/`deleted_by`) + GET messages (nested generation/citations).  
-> **Còn lại Part 2–3:** POST messages → Query Router, Prompt Construction (1 LLM),
-> SSE streaming, FE Chat UI.
+> **Part 2/3 DONE (2026-08-06):** POST messages → Query Router → Prompt Construction
+> (1 answer LLM) + model tiering + SSE/JSON; `get_latest_retrieval_pass` helper;
+> tests `tests/test_chat_message_processing.py`.  
+> **Còn lại Part 3:** FE Chat UI (+ citation highlight / agent badge).
 
 - [x] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory) — `ChatSessionService` + soft-delete migration `c0d1e2f3a4b5`; tests `tests/test_chat_sessions.py`.
 - [x] [BE] `GET .../sessions/{id}/messages` — nested `generation` + `citations`; user → generation=null, citations=[].
-- [ ] [BE] `POST .../sessions/{id}/messages` — nhận câu hỏi, ghi `chat_messages` (role=user), gọi Query Router (`handle_query` / orchestrator đã sẵn, chưa wire HTTP).
-- [ ] [AI] Prompt Construction — dựng prompt từ Top-K context (lấy `retrieval_pass` mới nhất: pass 2 nếu có Second Retrieval, ngược lại pass 1), gọi LLM **1 lần duy nhất** với structured output (JSON: answer + citation_ids), áp dụng model tiering (Haiku cho đơn giản, Sonnet cho phức tạp). (`AnswerGeneratorPort` optional; pipeline mặc định `PENDING_LLM`.)
-- [ ] [BE] Streaming response (SSE) cho endpoint chat message; hỗ trợ fallback JSON khi `Accept: application/json`.
-- [ ] [BE] Ghi `message_generations` (route_type, confidence_level, confidence_score, agent_triggered, model_used, tokens, cost_usd, latency_ms, temperature, top_p, finish_reason) — kể cả route 0-LLM (giá trị 0/NULL, confidence_level=NULL). *(Write path partial trong `ComplexQueryPipeline._safe_write_generation`; chưa dùng hết vì thiếu answer generator + chat messages API.)*
+- [x] [BE] `POST .../sessions/{id}/messages` — user insert → Query Router → 0-LLM persist / complex FR14 + Prompt Construction; `MessageProcessingService.generate_answer`.
+- [x] [AI] Prompt Construction — `prompt_builder.build_prompt` + `PromptAnswerGenerator` (structured `{answer, citation_ids}`); latest retrieval pass only via `RetrievalRecordRepository.list_for_latest_pass`.
+- [x] [BE] Streaming response (SSE) mặc định; `Accept: application/json` → JSON `ChatMessage`.
+- [x] [BE] Ghi `message_generations` (0-LLM + complex); `agent_triggered` / confidence từ pipeline; session `touch_after_message` (+ `last_message_*` / `message_count` migration `c1d2e3f4a5b6`).
 - [ ] [FE] UI Chat: gửi câu hỏi, hiển thị streaming answer, hiển thị session list (tiếp tục ngữ cảnh cũ). (Sidebar: badge "Sắp có"; chưa có route chat.)
 
 ### 2.5 Citation & Verification (FR5, UC4, UC11)

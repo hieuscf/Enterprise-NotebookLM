@@ -63,6 +63,12 @@ class ChatSession(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Denormalized summary (Part 2) — not in OpenAPI ChatSession yet.
+    last_message_preview: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
 
 class ChatMessage(Base):

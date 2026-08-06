@@ -89,6 +89,9 @@ class AnswerGeneratorPort(Protocol):
         query_text: str,
         retrieval_result: RetrievalResult,
         confidence: ConfidenceResult,
+        agent_triggered: bool = False,
+        chat_history: Sequence[Any] | None = None,
+        message_id: UUID | None = None,
     ) -> AnswerGenerationResult: ...
 
 
@@ -356,6 +359,9 @@ class ComplexQueryPipeline:
             query_text=active_query,
             retrieval_result=active_retrieval,
             confidence=confidence,
+            agent_triggered=agent_triggered,
+            chat_history=chat_history,
+            message_id=message_id,
         )
 
         # llm_calls_count = Rewrite lightweight calls (0|1) + main answer LLM (0|1).
@@ -527,15 +533,36 @@ class ComplexQueryPipeline:
         query_text: str,
         retrieval_result: RetrievalResult,
         confidence: ConfidenceResult,
+        agent_triggered: bool = False,
+        chat_history: Sequence[ChatTurn | dict[str, str]] | None = None,
+        message_id: UUID | None = None,
     ) -> AnswerGenerationResult | None:
         if self._answer_generator is None:
             return None
+        history_dicts: list[dict[str, str]] | None = None
+        if chat_history:
+            history_dicts = []
+            for turn in chat_history:
+                if isinstance(turn, dict):
+                    history_dicts.append(
+                        {
+                            "role": str(turn.get("role") or ""),
+                            "content": str(turn.get("content") or ""),
+                        }
+                    )
+                else:
+                    history_dicts.append(
+                        {"role": str(turn.role), "content": str(turn.content)}
+                    )
         try:
             return await self._answer_generator.generate(
                 workspace_id=workspace_id,
                 query_text=query_text,
                 retrieval_result=retrieval_result,
                 confidence=confidence,
+                agent_triggered=agent_triggered,
+                chat_history=history_dicts,
+                message_id=message_id,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("complex_answer_generator_failed", error=str(exc))

@@ -32,6 +32,7 @@ from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
+from app.services.chat.answer_generator import PromptAnswerGenerator
 from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
 from app.services.event_policy.agents.graph_agent import GraphAgent
 from app.services.event_policy.agents.rewrite_agent import RewriteAgent
@@ -105,7 +106,7 @@ def get_query_orchestrator(
         rewrite_agent=RewriteAgent(settings),
         graph_agent=GraphAgent(settings, get_neo4j_graph()),
         sql_agent=SqlAgent(metadata_handler),
-        answer_generator=None,  # Prompt Construction / answer LLM wired in Chat Task
+        answer_generator=PromptAnswerGenerator(settings),
         retrieval_top_k=max(1, int(settings.retrieval_per_source_top_k)),
     )
     return QueryOrchestrator(
