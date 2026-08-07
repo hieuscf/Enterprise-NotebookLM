@@ -2,21 +2,24 @@
 # File: extraction_service.py
 # Module/Service: Extraction Service (FR7)
 # Layer: Service
-# Purpose: Version-bound structured Information Extraction for documents (UC6).
+# Purpose: Async Information Extraction request + generation for document versions (UC6).
 # Responsibilities:
-#   - Resolve document.current_version_id → source_version_id
-#   - Load only chunks for that version
-#   - Dispatch per-type strategies (table / figures / entities / timeline)
-#   - Persist Extraction + LLM observability metadata
+#   - request_extraction: create processing row, commit, enqueue Celery (no LLM)
+#   - process_extraction: generate into existing row using persisted source_version_id
+#   - list / get / delete for HTTP API
+#   - extract_information: in-process create+process for sync / Part 4 tests
 # Dependencies:
 #   - DocumentRepository, RetrievalRepository, ExtractionRepository
 #   - chat_llm adapter, model_tiering, count_tokens
+#   - app.workers.extractions (Celery enqueue)
 # Public Exports:
 #   - ExtractionService, ExtractionServiceError
 # Database/Table: extractions, documents, document_versions, document_chunks,
 #   entities
 # Related Modules: prompts, result_schemas, timeline_sort, OpenAPI Extraction
 # Important Notes:
+#   - HTTP path must not call the LLM; generation runs in process_extraction only.
+#   - Celery MUST use source_version_id (never re-read current_version_id).
 #   - Standard extraction_type=entities reuses Graph/LightRAG entities
 #     (Entity.source_version_id) — ZERO LLM calls (REUSE_EXISTING_ENTITIES).
 #   - LLM_ENTITY_EXTRACTION is an explicit isolated fallback mode only.
@@ -41,10 +44,12 @@ from app.ai.tokens import count_tokens
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.artifacts import Extraction
+from app.models.documents import Document, DocumentVersion
 from app.models.enums import (
     DocumentVersionStatus,
     EntityExtractionMode,
     ExtractionOutputFormat,
+    ExtractionStatus,
     ExtractionType,
 )
 from app.repositories.documents import DocumentRepository
@@ -78,6 +83,7 @@ from app.services.extraction.timeline_sort import sort_timeline_events
 logger = get_logger(__name__)
 
 PromptBuilder = Callable[..., tuple[str, str]]
+EnqueueFn = Callable[[uuid.UUID], None]
 
 
 class ExtractionServiceError(Exception):
@@ -91,7 +97,7 @@ class ExtractionServiceError(Exception):
 
 
 class ExtractionService:
-    """Application service for FR7 Information Extraction."""
+    """Application service for FR7 Information Extraction (request + generation)."""
 
     def __init__(
         self,
@@ -102,6 +108,8 @@ class ExtractionService:
         retrieval: RetrievalRepository,
         extractions: ExtractionRepository,
         llm_call: Any | None = None,
+        enqueue: bool = True,
+        enqueue_fn: EnqueueFn | None = None,
     ) -> None:
         self._settings = settings
         self._session = session
@@ -109,6 +117,8 @@ class ExtractionService:
         self._retrieval = retrieval
         self._extractions = extractions
         self._llm_call = llm_call
+        self._enqueue = enqueue
+        self._enqueue_fn = enqueue_fn
         self._llm_call_count = 0
 
     @property
@@ -116,7 +126,11 @@ class ExtractionService:
         """Number of LLM invocations in this service instance (tests)."""
         return self._llm_call_count
 
-    async def extract_information(
+    # ------------------------------------------------------------------
+    # HTTP API operations
+    # ------------------------------------------------------------------
+
+    async def request_extraction(
         self,
         *,
         workspace_id: uuid.UUID,
@@ -124,9 +138,8 @@ class ExtractionService:
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat = ExtractionOutputFormat.json,
         created_by: uuid.UUID,
-        entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
     ) -> Extraction:
-        """Run extraction for the document's current version and persist the row."""
+        """Create processing Extraction, commit, enqueue Celery — no LLM in-request."""
         if extraction_type not in ExtractionType:
             raise ExtractionServiceError(
                 "invalid_extraction_type",
@@ -140,123 +153,38 @@ class ExtractionService:
                 status_code=422,
             )
 
-        document = await self._documents.get_document(workspace_id, document_id)
-        if document is None:
-            raise ExtractionServiceError("not_found", "Document not found", status_code=404)
-        if document.current_version_id is None:
-            raise ExtractionServiceError(
-                "no_current_version",
-                "Document has no current version",
-                status_code=409,
-            )
-
-        version = await self._documents.get_version(
-            workspace_id, document_id, document.current_version_id
+        document, version = await self._resolve_ready_current_version(
+            workspace_id=workspace_id,
+            document_id=document_id,
         )
-        if version is None:
-            raise ExtractionServiceError(
-                "no_current_version",
-                "Current document version not found",
-                status_code=409,
-            )
-        if version.status != DocumentVersionStatus.ready:
-            raise ExtractionServiceError(
-                "version_not_ready",
-                f"Current version status is {version.status.value}; must be ready",
-                status_code=409,
-            )
 
-        # Pin authoritative source version before any later version flip.
+        # Capture authoritative source version BEFORE enqueue / any later version flip.
         source_version_id = version.id
-
-        chunks = await self._retrieval.list_chunks_for_document(
-            workspace_id,
-            document_id,
-            version_id=source_version_id,
-        )
-        # Entity reuse does not require chunks; LLM paths do.
-        needs_chunks = not (
-            extraction_type == ExtractionType.entities
-            and entity_mode == EntityExtractionMode.REUSE_EXISTING_ENTITIES
-        )
-        if needs_chunks and not chunks:
-            raise ExtractionServiceError(
-                "no_chunks",
-                "Source document version has no chunks to extract from",
-                status_code=409,
-            )
-
-        if extraction_type == ExtractionType.entities:
-            if entity_mode == EntityExtractionMode.REUSE_EXISTING_ENTITIES:
-                canonical, meta = await self._extract_entities_reuse(
-                    workspace_id=workspace_id,
-                    source_version_id=source_version_id,
-                )
-            elif entity_mode == EntityExtractionMode.LLM_ENTITY_EXTRACTION:
-                canonical, meta = await self._extract_via_llm(
-                    extraction_type=ExtractionType.entities,
-                    document_title=document.title or "",
-                    chunks=chunks,
-                )
-            else:
-                raise ExtractionServiceError(
-                    "invalid_entity_mode",
-                    f"Unsupported entity_mode: {entity_mode}",
-                    status_code=422,
-                )
-        elif extraction_type == ExtractionType.table:
-            canonical, meta = await self._extract_via_llm(
-                extraction_type=ExtractionType.table,
-                document_title=document.title or "",
-                chunks=chunks,
-            )
-        elif extraction_type == ExtractionType.figures:
-            canonical, meta = await self._extract_via_llm(
-                extraction_type=ExtractionType.figures,
-                document_title=document.title or "",
-                chunks=chunks,
-            )
-        elif extraction_type == ExtractionType.timeline:
-            canonical, meta = await self._extract_via_llm(
-                extraction_type=ExtractionType.timeline,
-                document_title=document.title or "",
-                chunks=chunks,
-            )
-        else:
-            raise ExtractionServiceError(
-                "invalid_extraction_type",
-                f"Unsupported extraction_type: {extraction_type}",
-                status_code=422,
-            )
-
-        result_json = self._apply_output_format(
-            canonical,
-            extraction_type=extraction_type,
-            output_format=output_format,
-        )
-
-        row = await self._extractions.create(
+        row = await self._extractions.create_processing(
             document_id=document.id,
             created_by=created_by,
             source_version_id=source_version_id,
             extraction_type=extraction_type,
             output_format=output_format,
-            result_json=result_json,
-            model_used=meta["model_used"],
-            prompt_tokens=meta["prompt_tokens"],
-            completion_tokens=meta["completion_tokens"],
-            cost_usd=meta["cost_usd"],
-            latency_ms=meta["latency_ms"],
         )
-        logger.info(
-            "extraction_created",
-            extraction_id=str(row.id),
-            extraction_type=extraction_type.value,
-            source_version_id=str(source_version_id),
-            model_used=meta["model_used"],
-            llm_calls=self._llm_call_count,
-        )
-        return row
+        # Commit before enqueue so the worker can see the row (documents pattern).
+        await self._session.commit()
+
+        try:
+            self._enqueue_extraction(row.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("extraction_enqueue_failed", extraction_id=str(row.id))
+            await self._extractions.mark_failed(extraction_id=row.id)
+            await self._session.commit()
+            raise ExtractionServiceError(
+                "enqueue_failed",
+                "Failed to schedule extraction generation",
+                status_code=503,
+            ) from exc
+
+        # Refresh after commit so response reflects persisted processing state.
+        refreshed = await self._extractions.get_by_id(row.id)
+        return refreshed or row
 
     async def list_extractions(
         self,
@@ -297,6 +225,279 @@ class ExtractionService:
         if row is None:
             raise ExtractionServiceError("not_found", "Extraction not found", status_code=404)
         await self._extractions.delete(row)
+
+    # ------------------------------------------------------------------
+    # Celery / generation
+    # ------------------------------------------------------------------
+
+    async def process_extraction(
+        self,
+        extraction_id: uuid.UUID,
+        *,
+        entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
+    ) -> Extraction | None:
+        """Generate into an existing processing Extraction using source_version_id.
+
+        Idempotent:
+          - missing / deleted → None (exit safely)
+          - not processing → return row unchanged (no regenerate)
+        """
+        row = await self._extractions.get_by_id(extraction_id)
+        if row is None:
+            logger.info("extraction_process_missing", extraction_id=str(extraction_id))
+            return None
+        if row.status != ExtractionStatus.processing:
+            logger.info(
+                "extraction_process_skip_status",
+                extraction_id=str(extraction_id),
+                status=row.status.value,
+            )
+            return row
+
+        document = await self._documents.get_document_by_id(row.document_id)
+        if document is None:
+            await self._extractions.mark_failed(extraction_id=row.id)
+            return await self._extractions.get_by_id(row.id)
+
+        workspace_id = document.workspace_id
+        version = await self._documents.get_version(
+            workspace_id, row.document_id, row.source_version_id
+        )
+        if version is None:
+            await self._fail_safe(row.id, "source_version_missing")
+            return await self._extractions.get_by_id(row.id)
+
+        try:
+            result = await self._run_strategy(
+                workspace_id=workspace_id,
+                document_id=row.document_id,
+                document_title=document.title or "",
+                source_version_id=row.source_version_id,
+                extraction_type=row.extraction_type,
+                output_format=row.output_format,
+                entity_mode=entity_mode,
+            )
+        except ExtractionServiceError as exc:
+            logger.warning(
+                "extraction_generation_failed",
+                extraction_id=str(row.id),
+                code=exc.code,
+            )
+            await self._extractions.mark_failed(extraction_id=row.id)
+            return await self._extractions.get_by_id(row.id)
+        except Exception:  # noqa: BLE001
+            logger.exception("extraction_generation_unexpected", extraction_id=str(row.id))
+            await self._extractions.mark_failed(extraction_id=row.id)
+            return await self._extractions.get_by_id(row.id)
+
+        updated = await self._extractions.update_generation_result(
+            extraction_id=row.id,
+            result_json=result["result_json"],
+            model_used=result["model_used"],
+            prompt_tokens=result["prompt_tokens"],
+            completion_tokens=result["completion_tokens"],
+            cost_usd=result["cost_usd"],
+            latency_ms=result["latency_ms"],
+        )
+        if not updated:
+            # Race: deleted or status flipped while generating.
+            logger.info("extraction_process_race_skip", extraction_id=str(row.id))
+            return await self._extractions.get_by_id(row.id)
+
+        final = await self._extractions.get_by_id(row.id)
+        logger.info(
+            "extraction_generated",
+            extraction_id=str(row.id),
+            extraction_type=row.extraction_type.value,
+            source_version_id=str(row.source_version_id),
+            model_used=result["model_used"],
+            llm_calls=self._llm_call_count,
+        )
+        return final
+
+    async def extract_information(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        extraction_type: ExtractionType,
+        output_format: ExtractionOutputFormat = ExtractionOutputFormat.json,
+        created_by: uuid.UUID,
+        entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
+    ) -> Extraction:
+        """In-process create+process (tests / sync callers). Still one Extraction row."""
+        if extraction_type not in ExtractionType:
+            raise ExtractionServiceError(
+                "invalid_extraction_type",
+                f"Unsupported extraction_type: {extraction_type}",
+                status_code=422,
+            )
+        if output_format not in ExtractionOutputFormat:
+            raise ExtractionServiceError(
+                "invalid_output_format",
+                f"Unsupported output_format: {output_format}",
+                status_code=422,
+            )
+
+        document, version = await self._resolve_ready_current_version(
+            workspace_id=workspace_id,
+            document_id=document_id,
+        )
+        row = await self._extractions.create_processing(
+            document_id=document.id,
+            created_by=created_by,
+            source_version_id=version.id,
+            extraction_type=extraction_type,
+            output_format=output_format,
+        )
+        await self._session.flush()
+        final = await self.process_extraction(row.id, entity_mode=entity_mode)
+        if final is None or final.status != ExtractionStatus.completed:
+            raise ExtractionServiceError(
+                "llm_failed",
+                "Extraction generation failed",
+                status_code=502,
+            )
+        return final
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _enqueue_extraction(self, extraction_id: uuid.UUID) -> None:
+        if not self._enqueue:
+            return
+        if self._enqueue_fn is not None:
+            self._enqueue_fn(extraction_id)
+            return
+        from app.workers.extractions import generate_extraction as generate_extraction_task
+
+        generate_extraction_task.delay(str(extraction_id))
+
+    async def _fail_safe(self, extraction_id: uuid.UUID, reason: str) -> None:
+        logger.warning(
+            "extraction_mark_failed", extraction_id=str(extraction_id), reason=reason
+        )
+        await self._extractions.mark_failed(extraction_id=extraction_id)
+
+    async def _resolve_ready_current_version(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> tuple[Document, DocumentVersion]:
+        document = await self._documents.get_document(workspace_id, document_id)
+        if document is None:
+            raise ExtractionServiceError("not_found", "Document not found", status_code=404)
+        if document.current_version_id is None:
+            raise ExtractionServiceError(
+                "no_current_version",
+                "Document has no current version",
+                status_code=409,
+            )
+
+        version = await self._documents.get_version(
+            workspace_id, document_id, document.current_version_id
+        )
+        if version is None:
+            raise ExtractionServiceError(
+                "no_current_version",
+                "Current document version not found",
+                status_code=409,
+            )
+        if version.status != DocumentVersionStatus.ready:
+            raise ExtractionServiceError(
+                "version_not_ready",
+                f"Current version status is {version.status.value}; must be ready",
+                status_code=409,
+            )
+        return document, version
+
+    async def _run_strategy(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        document_title: str,
+        source_version_id: uuid.UUID,
+        extraction_type: ExtractionType,
+        output_format: ExtractionOutputFormat,
+        entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
+    ) -> dict[str, Any]:
+        """Dispatch type strategy for a pinned source_version_id (no Extraction insert)."""
+        chunks = await self._retrieval.list_chunks_for_document(
+            workspace_id,
+            document_id,
+            version_id=source_version_id,
+        )
+        # Entity reuse does not require chunks; LLM paths do.
+        needs_chunks = not (
+            extraction_type == ExtractionType.entities
+            and entity_mode == EntityExtractionMode.REUSE_EXISTING_ENTITIES
+        )
+        if needs_chunks and not chunks:
+            raise ExtractionServiceError(
+                "no_chunks",
+                "Source document version has no chunks to extract from",
+                status_code=409,
+            )
+
+        if extraction_type == ExtractionType.entities:
+            if entity_mode == EntityExtractionMode.REUSE_EXISTING_ENTITIES:
+                canonical, meta = await self._extract_entities_reuse(
+                    workspace_id=workspace_id,
+                    source_version_id=source_version_id,
+                )
+            elif entity_mode == EntityExtractionMode.LLM_ENTITY_EXTRACTION:
+                canonical, meta = await self._extract_via_llm(
+                    extraction_type=ExtractionType.entities,
+                    document_title=document_title,
+                    chunks=chunks,
+                )
+            else:
+                raise ExtractionServiceError(
+                    "invalid_entity_mode",
+                    f"Unsupported entity_mode: {entity_mode}",
+                    status_code=422,
+                )
+        elif extraction_type == ExtractionType.table:
+            canonical, meta = await self._extract_via_llm(
+                extraction_type=ExtractionType.table,
+                document_title=document_title,
+                chunks=chunks,
+            )
+        elif extraction_type == ExtractionType.figures:
+            canonical, meta = await self._extract_via_llm(
+                extraction_type=ExtractionType.figures,
+                document_title=document_title,
+                chunks=chunks,
+            )
+        elif extraction_type == ExtractionType.timeline:
+            canonical, meta = await self._extract_via_llm(
+                extraction_type=ExtractionType.timeline,
+                document_title=document_title,
+                chunks=chunks,
+            )
+        else:
+            raise ExtractionServiceError(
+                "invalid_extraction_type",
+                f"Unsupported extraction_type: {extraction_type}",
+                status_code=422,
+            )
+
+        result_json = self._apply_output_format(
+            canonical,
+            extraction_type=extraction_type,
+            output_format=output_format,
+        )
+        return {
+            "result_json": result_json,
+            "model_used": meta["model_used"],
+            "prompt_tokens": meta["prompt_tokens"],
+            "completion_tokens": meta["completion_tokens"],
+            "cost_usd": meta["cost_usd"],
+            "latency_ms": meta["latency_ms"],
+        }
 
     # ------------------------------------------------------------------
     # Strategies

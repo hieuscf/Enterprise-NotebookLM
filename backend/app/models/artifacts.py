@@ -32,6 +32,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.models.enums import (
     ExtractionOutputFormat,
+    ExtractionStatus,
     ExtractionType,
     ReportFormat,
     ReportSourceType,
@@ -42,6 +43,7 @@ from app.models.enums import (
 from app.models.types import (
     created_at_col,
     extraction_output_format_enum,
+    extraction_status_enum,
     extraction_type_enum,
     report_format_enum,
     report_source_type_enum,
@@ -100,6 +102,7 @@ class Extraction(Base):
     __table_args__ = (
         Index("ix_extractions_document_id_extraction_type", "document_id", "extraction_type"),
         Index("ix_extractions_source_version_id", "source_version_id"),
+        Index("ix_extractions_status", "status"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -123,7 +126,12 @@ class Extraction(Base):
         nullable=False,
         server_default=ExtractionOutputFormat.json.value,
     )
-    result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[ExtractionStatus] = mapped_column(
+        extraction_status_enum,
+        nullable=False,
+        server_default=ExtractionStatus.processing.value,
+    )
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(

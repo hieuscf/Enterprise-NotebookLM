@@ -12,10 +12,11 @@
 # Public Exports:
 #   - celery_app
 # Database/Table: N/A
-# Related Modules: app.workers.pipeline, app.workers.summaries, app.tasks.cleanup_expired_cache
+# Related Modules: app.workers.pipeline, app.workers.summaries,
+#   app.workers.extractions, app.tasks.cleanup_expired_cache
 # Important Notes:
 #   - Prefer LLM calls from backend-api; documented exceptions: graph_extraction
-#     (ingestion) and generate_summary (FR6 async summary).
+#     (ingestion), generate_summary (FR6), generate_extraction (FR7).
 # =============================================================================
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ celery_app = Celery(
         "app.workers.pipeline",
         "app.workers.previews",
         "app.workers.summaries",
+        "app.workers.extractions",
         "app.tasks.cleanup_expired_cache",
     ],
 )

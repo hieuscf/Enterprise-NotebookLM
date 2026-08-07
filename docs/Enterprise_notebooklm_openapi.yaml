@@ -782,13 +782,18 @@ paths:
                 items: { $ref: "#/components/schemas/Extraction" }
     post:
       tags: [Extractions]
-      summary: Trích xuất thông tin có cấu trúc (bảng/số liệu/entity/mốc thời gian)
+      summary: Yêu cầu trích xuất có cấu trúc (async — Celery)
+      description: >
+        Tạo Extraction với status=processing, enqueue Celery generation, trả 202 ngay.
+        FE poll GET detail/list đến khi status=completed|failed. result=null khi processing.
+        extraction_type=entities tái sử dụng Graph entities (0 LLM) trong worker.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [extraction_type]
               properties:
                 extraction_type:
                   type: string
@@ -798,11 +803,19 @@ paths:
                   enum: [json, table]
                   default: json
       responses:
-        "201":
-          description: Đã tạo
+        "202":
+          description: Accepted — generation job đang xử lý
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Extraction" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /workspaces/{workspaceId}/extractions/{extractionId}:
     parameters:
@@ -1417,23 +1430,30 @@ components:
     Extraction:
       type: object
       required:
-        [id, document_id, source_version_id, extraction_type, output_format, result, created_at]
+        - id
+        - document_id
+        - source_version_id
+        - extraction_type
+        - output_format
+        - status
+        - created_at
       properties:
         id: { type: string, format: uuid }
         document_id: { type: string, format: uuid }
         source_version_id:
           type: string
           format: uuid
-          description: document_versions.id captured at extraction time (pinned)
+          description: document_versions.id captured at POST (pinned for generation)
         extraction_type: { type: string, enum: [table, figures, entities, timeline] }
         output_format: { type: string, enum: [json, table] }
+        status: { type: string, enum: [processing, completed, failed] }
         result:
           type: object
+          nullable: true
           description: >
-            Canonical structured payload for output_format=json
-            (table→headers+rows; figures→figures[]; entities→entities[];
-            timeline→events[]). For output_format=table, always headers+rows
-            so the client does not infer columns.
+            null khi processing/failed. Khi completed: structured payload —
+            output_format=json → type-specific (table headers+rows; figures[];
+            entities[]; timeline events[]). output_format=table → luôn headers+rows.
         created_at: { type: string, format: date-time }
 
     Comparison:

@@ -5,15 +5,16 @@
 # Purpose: Pydantic request/response models for Extractions API (OpenAPI).
 # Responsibilities:
 #   - ExtractionCreateRequest
-#   - ExtractionResponse (maps ORM result_json → result)
+#   - ExtractionResponse (maps ORM result_json → result; includes status)
 # Dependencies:
 #   - Pydantic, app.models.enums
 # Public Exports:
 #   - ExtractionCreateRequest, ExtractionResponse
 # Database/Table: extractions (read mapping only)
-# Related Modules: OpenAPI Extraction schema (API wired in Part 5)
+# Related Modules: app.api.extractions, Enterprise_notebooklm_openapi.yaml
 # Important Notes:
-#   - Exposes source_version_id for FE current-vs-old version UX.
+#   - Exposes source_version_id + status for async FE polling (Summary convention).
+#   - result is null while processing/failed; structured object when completed.
 #   - Cost/token fields are internal (not in public OpenAPI response).
 # =============================================================================
 
@@ -23,9 +24,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import ExtractionOutputFormat, ExtractionType
+from app.models.enums import ExtractionOutputFormat, ExtractionStatus, ExtractionType
 
 
 class ExtractionCreateRequest(BaseModel):
@@ -41,5 +42,6 @@ class ExtractionResponse(BaseModel):
     source_version_id: uuid.UUID
     extraction_type: ExtractionType
     output_format: ExtractionOutputFormat
-    result: dict[str, Any] = Field(validation_alias="result_json")
+    status: ExtractionStatus
+    result: dict[str, Any] | None = None
     created_at: datetime

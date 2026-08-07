@@ -32,6 +32,7 @@ from app.models.enums import (
     ConfidenceLevel,
     DocumentVersionStatus,
     ExtractionOutputFormat,
+    ExtractionStatus,
     ExtractionType,
     FileType,
     FinishReason,
@@ -103,6 +104,7 @@ retrieval_method_enum = pg_enum(RetrievalMethod, "retrieval_method")
 summary_type_enum = pg_enum(SummaryType, "summary_type")
 summary_status_enum = pg_enum(SummaryStatus, "summary_status")
 extraction_type_enum = pg_enum(ExtractionType, "extraction_type")
+extraction_status_enum = pg_enum(ExtractionStatus, "extraction_status")
 extraction_output_format_enum = pg_enum(ExtractionOutputFormat, "extraction_output_format")
 report_format_enum = pg_enum(ReportFormat, "report_format")
 report_status_enum = pg_enum(ReportStatus, "report_status")

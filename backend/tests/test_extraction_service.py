@@ -35,6 +35,7 @@ from app.models.enums import (
     DocumentVersionStatus,
     EntityExtractionMode,
     ExtractionOutputFormat,
+    ExtractionStatus,
     ExtractionType,
     FileType,
 )
@@ -50,8 +51,13 @@ from app.services.extraction.timeline_sort import sort_timeline_events
 
 @dataclass
 class FakeSession:
+    commits: int = 0
+
     async def flush(self) -> None:
         return None
+
+    async def commit(self) -> None:
+        self.commits += 1
 
 
 @dataclass
@@ -66,6 +72,11 @@ class FakeDocumentRepo:
         if self.document is None:
             return None
         if self.document.workspace_id != workspace_id or self.document.id != document_id:
+            return None
+        return self.document
+
+    async def get_document_by_id(self, document_id: uuid.UUID) -> Document | None:
+        if self.document is None or self.document.id != document_id:
             return None
         return self.document
 
@@ -113,7 +124,7 @@ class FakeExtractionRepo:
         self.rows: dict[uuid.UUID, Extraction] = {}
         self.entities: list[EntityReuseRow] = []
 
-    async def create(self, **kwargs: Any) -> Extraction:
+    async def create_processing(self, **kwargs: Any) -> Extraction:
         row = Extraction(
             id=uuid.uuid4(),
             document_id=kwargs["document_id"],
@@ -121,16 +132,41 @@ class FakeExtractionRepo:
             source_version_id=kwargs["source_version_id"],
             extraction_type=kwargs["extraction_type"],
             output_format=kwargs["output_format"],
-            result_json=kwargs["result_json"],
-            model_used=kwargs["model_used"],
-            prompt_tokens=kwargs["prompt_tokens"],
-            completion_tokens=kwargs["completion_tokens"],
-            cost_usd=kwargs["cost_usd"],
-            latency_ms=kwargs["latency_ms"],
+            status=ExtractionStatus.processing,
+            result_json=None,
+            model_used=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=Decimal("0"),
+            latency_ms=None,
             created_at=datetime.now(UTC),
         )
         self.rows[row.id] = row
         return row
+
+    async def get_by_id(self, extraction_id: uuid.UUID) -> Extraction | None:
+        return self.rows.get(extraction_id)
+
+    async def update_generation_result(self, *, extraction_id: uuid.UUID, **kwargs: Any) -> bool:
+        row = self.rows.get(extraction_id)
+        if row is None or row.status != ExtractionStatus.processing:
+            return False
+        row.result_json = kwargs["result_json"]
+        row.model_used = kwargs["model_used"]
+        row.prompt_tokens = kwargs["prompt_tokens"]
+        row.completion_tokens = kwargs["completion_tokens"]
+        row.cost_usd = kwargs["cost_usd"]
+        row.latency_ms = kwargs["latency_ms"]
+        row.status = ExtractionStatus.completed
+        return True
+
+    async def mark_failed(self, *, extraction_id: uuid.UUID) -> bool:
+        row = self.rows.get(extraction_id)
+        if row is None or row.status != ExtractionStatus.processing:
+            return False
+        row.status = ExtractionStatus.failed
+        row.result_json = None
+        return True
 
     async def list_entities_for_version(
         self,
@@ -224,6 +260,7 @@ def _service(
         retrieval=retrieval,  # type: ignore[arg-type]
         extractions=extractions,  # type: ignore[arg-type]
         llm_call=llm_call,
+        enqueue=False,
     )
     return svc, retrieval, extractions
 
@@ -301,7 +338,7 @@ async def test_table_malformed_structured_output_rejected() -> None:
             estimated_cost_usd=0.0,
         )
 
-    svc, _, _ = _service(
+    svc, _, repo = _service(
         document=document,
         version=version,
         chunks_by_version={ver_id: [chunk]},
@@ -314,7 +351,10 @@ async def test_table_malformed_structured_output_rejected() -> None:
             extraction_type=ExtractionType.table,
             created_by=user_id,
         )
-    assert exc.value.code == "invalid_structured_output"
+    assert exc.value.code == "llm_failed"
+    # process_extraction marks the row failed without re-raising domain codes.
+    failed = next(iter(repo.rows.values()))
+    assert failed.status == ExtractionStatus.failed
 
 
 def test_table_schema_rejects_duplicate_headers() -> None:
@@ -731,4 +771,4 @@ async def test_no_chunks_errors_for_llm_paths() -> None:
             extraction_type=ExtractionType.table,
             created_by=user_id,
         )
-    assert exc.value.code == "no_chunks"
+    assert exc.value.code == "llm_failed"
