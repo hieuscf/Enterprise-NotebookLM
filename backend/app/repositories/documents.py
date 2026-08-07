@@ -40,6 +40,10 @@ class DocumentRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_document_by_id(self, document_id: uuid.UUID) -> Document | None:
+        """Load document by id (Celery worker — workspace known from row)."""
+        return await self._session.get(Document, document_id)
+
     async def list_documents(
         self,
         workspace_id: uuid.UUID,

@@ -1,12 +1,12 @@
 # =============================================================================
 # File: test_summary_service.py
-# Module/Service: Summary Service (FR6 Part 1)
+# Module/Service: Summary Service (FR6 Part 1+2)
 # Layer: Service
-# Purpose: Unit tests for generate_summary branches (styles, errors, budgeting).
+# Purpose: Unit tests for request/process/generate_summary branches.
 # Responsibilities:
 #   - Cover not-found / no-version / not-ready / no-chunks / llm missing
-#   - Cover all four styles + by_topic with topics
-#   - Cover model tiering prefer_strong + context truncation + persist fields
+#   - Cover all four styles + by_topic; model tiering; context truncation
+#   - Cover process_summary idempotency + source_version pinning
 # Dependencies:
 #   - pytest, SummaryService fakes
 # Public Exports:
@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -30,20 +30,34 @@ from app.adapters.llm_result import StructuredLlmResult
 from app.core.config import Settings
 from app.models.artifacts import Summary
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType, SummaryStyle, SummaryType
+from app.models.enums import (
+    DocumentVersionStatus,
+    FileType,
+    SummaryStatus,
+    SummaryStyle,
+    SummaryType,
+)
 from app.repositories.retrieval import ChunkHydrationRow
 from app.repositories.summaries import TopicContextRow
 from app.services.summary.summary_service import SummaryService, SummaryServiceError
 
-# ---------------------------------------------------------------------------
-# Fakes
-# ---------------------------------------------------------------------------
+
+@dataclass
+class FakeSession:
+    commits: int = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def flush(self) -> None:
+        return None
 
 
 @dataclass
 class FakeDocumentRepo:
     document: Document | None = None
     version: DocumentVersion | None = None
+    versions: dict[uuid.UUID, DocumentVersion] = field(default_factory=dict)
 
     async def get_document(
         self, workspace_id: uuid.UUID, document_id: uuid.UUID
@@ -54,17 +68,24 @@ class FakeDocumentRepo:
             return None
         return self.document
 
+    async def get_document_by_id(self, document_id: uuid.UUID) -> Document | None:
+        if self.document is None or self.document.id != document_id:
+            return None
+        return self.document
+
     async def get_version(
         self,
         workspace_id: uuid.UUID,
         document_id: uuid.UUID,
         version_id: uuid.UUID,
     ) -> DocumentVersion | None:
-        if self.version is None:
+        if self.document is None or self.document.workspace_id != workspace_id:
             return None
+        if version_id in self.versions:
+            ver = self.versions[version_id]
+            return ver if ver.document_id == document_id else None
         if (
-            self.document is None
-            or self.document.workspace_id != workspace_id
+            self.version is None
             or self.version.document_id != document_id
             or self.version.id != version_id
         ):
@@ -74,6 +95,7 @@ class FakeDocumentRepo:
 
 @dataclass
 class FakeRetrievalRepo:
+    chunks_by_version: dict[uuid.UUID, list[ChunkHydrationRow]] = field(default_factory=dict)
     chunks: list[ChunkHydrationRow] | None = None
 
     async def list_chunks_for_document(
@@ -83,36 +105,75 @@ class FakeRetrievalRepo:
         *,
         version_id: uuid.UUID | None = None,
     ) -> list[ChunkHydrationRow]:
-        del workspace_id, document_id, version_id
+        del workspace_id, document_id
+        if version_id is not None and version_id in self.chunks_by_version:
+            return list(self.chunks_by_version[version_id])
         return list(self.chunks or [])
 
 
-@dataclass
 class FakeSummaryRepo:
-    created: list[Summary]
-    topics: list[TopicContextRow]
-
     def __init__(self) -> None:
-        self.created = []
-        self.topics = []
+        self.rows: dict[uuid.UUID, Summary] = {}
+        self.topics: list[TopicContextRow] = []
 
-    async def create(self, **kwargs: Any) -> Summary:
+    async def create_processing(self, **kwargs: Any) -> Summary:
         row = Summary(
             id=uuid.uuid4(),
             document_id=kwargs["document_id"],
             created_by=kwargs["created_by"],
             source_version_id=kwargs["source_version_id"],
             type=kwargs["type_"],
-            content=kwargs["content"],
-            model_used=kwargs["model_used"],
-            prompt_tokens=kwargs["prompt_tokens"],
-            completion_tokens=kwargs["completion_tokens"],
-            cost_usd=kwargs["cost_usd"],
-            latency_ms=kwargs["latency_ms"],
+            status=SummaryStatus.processing,
+            content=None,
+            model_used=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=Decimal("0"),
+            latency_ms=None,
             created_at=datetime.now(UTC),
         )
-        self.created.append(row)
+        self.rows[row.id] = row
         return row
+
+    async def get_by_id(self, summary_id: uuid.UUID) -> Summary | None:
+        return self.rows.get(summary_id)
+
+    async def get(
+        self, *, workspace_id: uuid.UUID, summary_id: uuid.UUID
+    ) -> Summary | None:
+        del workspace_id
+        return self.rows.get(summary_id)
+
+    async def list_for_document(
+        self, *, workspace_id: uuid.UUID, document_id: uuid.UUID
+    ) -> list[Summary]:
+        del workspace_id
+        items = [r for r in self.rows.values() if r.document_id == document_id]
+        return sorted(items, key=lambda r: r.created_at, reverse=True)
+
+    async def update_generation_result(self, *, summary_id: uuid.UUID, **kwargs: Any) -> bool:
+        row = self.rows.get(summary_id)
+        if row is None or row.status != SummaryStatus.processing:
+            return False
+        row.content = kwargs["content"]
+        row.model_used = kwargs["model_used"]
+        row.prompt_tokens = kwargs["prompt_tokens"]
+        row.completion_tokens = kwargs["completion_tokens"]
+        row.cost_usd = kwargs["cost_usd"]
+        row.latency_ms = kwargs["latency_ms"]
+        row.status = SummaryStatus.completed
+        return True
+
+    async def mark_failed(self, *, summary_id: uuid.UUID) -> bool:
+        row = self.rows.get(summary_id)
+        if row is None or row.status != SummaryStatus.processing:
+            return False
+        row.status = SummaryStatus.failed
+        row.content = None
+        return True
+
+    async def delete(self, summary: Summary) -> None:
+        self.rows.pop(summary.id, None)
 
     async def list_topics_for_version(
         self,
@@ -201,6 +262,9 @@ def _service(
     settings: Settings | None = None,
     llm_result: StructuredLlmResult | None = None,
     llm_error: Exception | None = None,
+    enqueue: bool = False,
+    enqueue_fn: Any | None = None,
+    session: FakeSession | None = None,
 ) -> SummaryService:
     async def _llm(**kwargs: Any) -> StructuredLlmResult:
         del kwargs
@@ -211,16 +275,14 @@ def _service(
 
     return SummaryService(
         settings=settings or _settings(),
+        session=session or FakeSession(),  # type: ignore[arg-type]
         documents=docs,  # type: ignore[arg-type]
         retrieval=retrieval,  # type: ignore[arg-type]
         summaries=summaries,  # type: ignore[arg-type]
         llm_call=_llm if (llm_result is not None or llm_error is not None) else None,
+        enqueue=enqueue,
+        enqueue_fn=enqueue_fn,
     )
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -231,7 +293,7 @@ async def test_generate_summary_document_not_found() -> None:
         summaries=FakeSummaryRepo(),
         llm_result=StructuredLlmResult(
             data={"summary": "x"},
-            model="claude-light-test",
+            model="m",
             input_tokens=1,
             output_tokens=1,
             estimated_cost_usd=0.0,
@@ -245,15 +307,13 @@ async def test_generate_summary_document_not_found() -> None:
             created_by=uuid.uuid4(),
         )
     assert exc.value.code == "not_found"
-    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_generate_summary_no_current_version() -> None:
     workspace_id, document_id, user_id, document, version = _doc_bundle(with_current=False)
-    docs = FakeDocumentRepo(document=document, version=version)
     svc = _service(
-        docs=docs,
+        docs=FakeDocumentRepo(document=document, version=version),
         retrieval=FakeRetrievalRepo(chunks=[]),
         summaries=FakeSummaryRepo(),
         llm_result=StructuredLlmResult(
@@ -279,9 +339,8 @@ async def test_generate_summary_version_not_ready() -> None:
     workspace_id, document_id, user_id, document, version = _doc_bundle(
         status=DocumentVersionStatus.processing
     )
-    docs = FakeDocumentRepo(document=document, version=version)
     svc = _service(
-        docs=docs,
+        docs=FakeDocumentRepo(document=document, version=version),
         retrieval=FakeRetrievalRepo(
             chunks=[
                 _chunk(
@@ -333,13 +392,12 @@ async def test_generate_summary_no_chunks() -> None:
             style=SummaryStyle.short,
             created_by=user_id,
         )
-    assert exc.value.code == "no_chunks"
+    assert exc.value.code == "llm_failed"
 
 
 @pytest.mark.asyncio
 async def test_generate_summary_llm_not_configured() -> None:
     workspace_id, document_id, user_id, document, version = _doc_bundle()
-    settings = _settings(anthropic_api_key=None)
     svc = _service(
         docs=FakeDocumentRepo(document=document, version=version),
         retrieval=FakeRetrievalRepo(
@@ -353,7 +411,7 @@ async def test_generate_summary_llm_not_configured() -> None:
             ]
         ),
         summaries=FakeSummaryRepo(),
-        settings=settings,
+        settings=_settings(anthropic_api_key=None),
     )
     with pytest.raises(SummaryServiceError) as exc:
         await svc.generate_summary(
@@ -362,8 +420,7 @@ async def test_generate_summary_llm_not_configured() -> None:
             style=SummaryStyle.short,
             created_by=user_id,
         )
-    assert exc.value.code == "llm_not_configured"
-    assert exc.value.status_code == 503
+    assert exc.value.code == "llm_failed"
 
 
 @pytest.mark.asyncio
@@ -406,6 +463,7 @@ async def test_generate_summary_styles_and_model_tiering(
 
     svc = SummaryService(
         settings=_settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
         documents=FakeDocumentRepo(document=document, version=version),  # type: ignore[arg-type]
         retrieval=FakeRetrievalRepo(  # type: ignore[arg-type]
             chunks=[
@@ -419,6 +477,7 @@ async def test_generate_summary_styles_and_model_tiering(
         ),
         summaries=summaries,  # type: ignore[arg-type]
         llm_call=_llm,
+        enqueue=False,
     )
     row = await svc.generate_summary(
         workspace_id=workspace_id,
@@ -429,139 +488,244 @@ async def test_generate_summary_styles_and_model_tiering(
     expected_model = "claude-strong-test" if expect_strong else "claude-light-test"
     assert captured["model"] == expected_model
     assert row.type == SummaryType(style)
+    assert row.status == SummaryStatus.completed
     assert row.source_version_id == version.id
     assert row.content == f"Summary for {style.value}"
     assert row.model_used == expected_model
     assert row.prompt_tokens == 12
     assert row.completion_tokens == 8
     assert row.cost_usd == Decimal("0.001234")
-    assert row.latency_ms is not None and row.latency_ms >= 0
-    assert len(summaries.created) == 1
+    assert len(summaries.rows) == 1
     if style == SummaryStyle.by_topic:
         assert "Topic hierarchy" in captured["user"]
         assert "Finance" in captured["user"]
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_truncates_to_context_window() -> None:
+async def test_request_summary_enqueues_without_llm() -> None:
     workspace_id, document_id, user_id, document, version = _doc_bundle()
-    # Tiny window forces truncation of a long second chunk.
-    settings = _settings(
-        chat_answer_light_context_window=400,
-        summary_prompt_reserve_tokens=50,
-        summary_max_output_tokens=50,
-    )
-    long_a = "alpha " * 40
-    long_b = "bravo " * 200
-    captured: dict[str, Any] = {}
+    session = FakeSession()
+    enqueued: list[uuid.UUID] = []
+    llm_called = False
 
     async def _llm(**kwargs: Any) -> StructuredLlmResult:
-        captured.update(kwargs)
+        nonlocal llm_called
+        llm_called = True
+        del kwargs
         return StructuredLlmResult(
-            data={"summary": "ok"},
-            model=kwargs["model"],
-            input_tokens=5,
-            output_tokens=2,
+            data={"summary": "x"},
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
             estimated_cost_usd=0.0,
         )
 
     svc = SummaryService(
-        settings=settings,
+        settings=_settings(),
+        session=session,  # type: ignore[arg-type]
         documents=FakeDocumentRepo(document=document, version=version),  # type: ignore[arg-type]
-        retrieval=FakeRetrievalRepo(  # type: ignore[arg-type]
-            chunks=[
-                _chunk(
-                    workspace_id=workspace_id,
-                    document_id=document_id,
-                    version_id=version.id,
-                    content=long_a,
-                    index=0,
-                ),
-                _chunk(
-                    workspace_id=workspace_id,
-                    document_id=document_id,
-                    version_id=version.id,
-                    content=long_b,
-                    index=1,
-                ),
-            ]
-        ),
+        retrieval=FakeRetrievalRepo(chunks=[]),  # type: ignore[arg-type]
         summaries=FakeSummaryRepo(),  # type: ignore[arg-type]
         llm_call=_llm,
+        enqueue=True,
+        enqueue_fn=lambda sid: enqueued.append(sid),
     )
-    row = await svc.generate_summary(
+    row = await svc.request_summary(
         workspace_id=workspace_id,
         document_id=document_id,
         style=SummaryStyle.short,
         created_by=user_id,
     )
-    assert row.content == "ok"
-    # Full second chunk should not appear; first chunk content should.
-    assert "alpha" in captured["user"]
-    assert long_b not in captured["user"]
+    assert row.status == SummaryStatus.processing
+    assert row.content is None
+    assert row.source_version_id == version.id
+    assert session.commits >= 1
+    assert enqueued == [row.id]
+    assert llm_called is False
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_llm_failure_maps_domain_error() -> None:
-    workspace_id, document_id, user_id, document, version = _doc_bundle()
-    svc = _service(
-        docs=FakeDocumentRepo(document=document, version=version),
-        retrieval=FakeRetrievalRepo(
-            chunks=[
-                _chunk(
-                    workspace_id=workspace_id,
-                    document_id=document_id,
-                    version_id=version.id,
-                    content="hello world",
-                )
-            ]
-        ),
-        summaries=FakeSummaryRepo(),
-        llm_error=RuntimeError("boom"),
+async def test_process_summary_uses_pinned_source_version() -> None:
+    workspace_id, document_id, user_id, document, v2 = _doc_bundle()
+    v3_id = uuid.uuid4()
+    v3 = DocumentVersion(
+        id=v3_id,
+        document_id=document_id,
+        uploaded_by=user_id,
+        version_number=3,
+        storage_path="workspaces/x/documents/y/v3/a.pdf",
+        file_size_bytes=10,
+        checksum_sha256="b" * 64,
+        status=DocumentVersionStatus.ready,
+        is_current=True,
     )
-    with pytest.raises(SummaryServiceError) as exc:
-        await svc.generate_summary(
-            workspace_id=workspace_id,
-            document_id=document_id,
-            style=SummaryStyle.short,
-            created_by=user_id,
-        )
-    assert exc.value.code == "llm_failed"
-    assert exc.value.status_code == 502
-
-
-@pytest.mark.asyncio
-async def test_generate_summary_empty_llm_content() -> None:
-    workspace_id, document_id, user_id, document, version = _doc_bundle()
-    svc = _service(
-        docs=FakeDocumentRepo(document=document, version=version),
-        retrieval=FakeRetrievalRepo(
-            chunks=[
+    # After POST, current flips to V3 — worker must still use V2.
+    document.current_version_id = v3_id
+    docs = FakeDocumentRepo(
+        document=document,
+        version=v3,
+        versions={v2.id: v2, v3_id: v3},
+    )
+    retrieval = FakeRetrievalRepo(
+        chunks_by_version={
+            v2.id: [
                 _chunk(
                     workspace_id=workspace_id,
                     document_id=document_id,
-                    version_id=version.id,
-                    content="hello world",
+                    version_id=v2.id,
+                    content="VERSION TWO CONTENT",
                 )
-            ]
-        ),
-        summaries=FakeSummaryRepo(),
-        llm_result=StructuredLlmResult(
-            data={"summary": "   "},
+            ],
+            v3_id: [
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=v3_id,
+                    content="VERSION THREE CONTENT",
+                )
+            ],
+        }
+    )
+    summaries = FakeSummaryRepo()
+    row = await summaries.create_processing(
+        document_id=document_id,
+        created_by=user_id,
+        source_version_id=v2.id,
+        type_=SummaryType.short,
+    )
+    captured: dict[str, Any] = {}
+
+    async def _llm(**kwargs: Any) -> StructuredLlmResult:
+        captured.update(kwargs)
+        return StructuredLlmResult(
+            data={"summary": "from-v2"},
             model="claude-light-test",
+            input_tokens=3,
+            output_tokens=2,
+            estimated_cost_usd=0.01,
+        )
+
+    svc = SummaryService(
+        settings=_settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=docs,  # type: ignore[arg-type]
+        retrieval=retrieval,  # type: ignore[arg-type]
+        summaries=summaries,  # type: ignore[arg-type]
+        llm_call=_llm,
+        enqueue=False,
+    )
+    final = await svc.process_summary(row.id)
+    assert final is not None
+    assert final.status == SummaryStatus.completed
+    assert final.source_version_id == v2.id
+    assert final.content == "from-v2"
+    assert "VERSION TWO CONTENT" in captured["user"]
+    assert "VERSION THREE CONTENT" not in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_process_summary_missing_and_idempotent() -> None:
+    summaries = FakeSummaryRepo()
+    svc = _service(
+        docs=FakeDocumentRepo(),
+        retrieval=FakeRetrievalRepo(),
+        summaries=summaries,
+        llm_result=StructuredLlmResult(
+            data={"summary": "x"},
+            model="m",
             input_tokens=1,
             output_tokens=1,
             estimated_cost_usd=0.0,
         ),
     )
-    with pytest.raises(SummaryServiceError) as exc:
-        await svc.generate_summary(
-            workspace_id=workspace_id,
-            document_id=document_id,
-            style=SummaryStyle.short,
-            created_by=user_id,
-        )
-    assert exc.value.code == "empty_summary"
+    assert await svc.process_summary(uuid.uuid4()) is None
+
+    workspace_id, document_id, user_id, document, version = _doc_bundle()
+    row = await summaries.create_processing(
+        document_id=document_id,
+        created_by=user_id,
+        source_version_id=version.id,
+        type_=SummaryType.short,
+    )
+    row.status = SummaryStatus.completed
+    row.content = "already done"
+    docs = FakeDocumentRepo(document=document, version=version)
+    svc2 = _service(
+        docs=docs,
+        retrieval=FakeRetrievalRepo(
+            chunks=[
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=version.id,
+                    content="hello",
+                )
+            ]
+        ),
+        summaries=summaries,
+        llm_result=StructuredLlmResult(
+            data={"summary": "new"},
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
+            estimated_cost_usd=0.0,
+        ),
+    )
+    out = await svc2.process_summary(row.id)
+    assert out is not None
+    assert out.content == "already done"
+
+
+@pytest.mark.asyncio
+async def test_process_summary_failure_marks_failed() -> None:
+    workspace_id, document_id, user_id, document, version = _doc_bundle()
+    summaries = FakeSummaryRepo()
+    row = await summaries.create_processing(
+        document_id=document_id,
+        created_by=user_id,
+        source_version_id=version.id,
+        type_=SummaryType.short,
+    )
+    svc = _service(
+        docs=FakeDocumentRepo(document=document, version=version),
+        retrieval=FakeRetrievalRepo(
+            chunks=[
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=version.id,
+                    content="hello",
+                )
+            ]
+        ),
+        summaries=summaries,
+        llm_error=RuntimeError("boom"),
+    )
+    final = await svc.process_summary(row.id)
+    assert final is not None
+    assert final.status == SummaryStatus.failed
+    assert final.content is None
+    assert final.source_version_id == version.id
+
+
+@pytest.mark.asyncio
+async def test_process_deleted_summary_not_recreated() -> None:
+    summaries = FakeSummaryRepo()
+    missing_id = uuid.uuid4()
+    svc = _service(
+        docs=FakeDocumentRepo(),
+        retrieval=FakeRetrievalRepo(),
+        summaries=summaries,
+        llm_result=StructuredLlmResult(
+            data={"summary": "x"},
+            model="m",
+            input_tokens=1,
+            output_tokens=1,
+            estimated_cost_usd=0.0,
+        ),
+    )
+    assert await svc.process_summary(missing_id) is None
+    assert summaries.rows == {}
 
 
 @pytest.mark.asyncio

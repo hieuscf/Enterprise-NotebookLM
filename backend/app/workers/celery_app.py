@@ -12,8 +12,10 @@
 # Public Exports:
 #   - celery_app
 # Database/Table: N/A
-# Related Modules: app.workers.pipeline, app.tasks.cleanup_expired_cache
-# Important Notes: Workers must NOT call LLM Provider (Anthropic).
+# Related Modules: app.workers.pipeline, app.workers.summaries, app.tasks.cleanup_expired_cache
+# Important Notes:
+#   - Prefer LLM calls from backend-api; documented exceptions: graph_extraction
+#     (ingestion) and generate_summary (FR6 async summary).
 # =============================================================================
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ celery_app = Celery(
     include=[
         "app.workers.pipeline",
         "app.workers.previews",
+        "app.workers.summaries",
         "app.tasks.cleanup_expired_cache",
     ],
 )

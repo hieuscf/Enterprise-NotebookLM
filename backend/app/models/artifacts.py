@@ -34,6 +34,7 @@ from app.models.enums import (
     ReportFormat,
     ReportSourceType,
     ReportStatus,
+    SummaryStatus,
     SummaryType,
 )
 from app.models.types import (
@@ -43,6 +44,7 @@ from app.models.types import (
     report_format_enum,
     report_source_type_enum,
     report_status_enum,
+    summary_status_enum,
     summary_type_enum,
     uuid_pk,
 )
@@ -53,6 +55,7 @@ class Summary(Base):
     __table_args__ = (
         Index("ix_summaries_document_id_type", "document_id", "type"),
         Index("ix_summaries_source_version_id", "source_version_id"),
+        Index("ix_summaries_status", "status"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -71,7 +74,12 @@ class Summary(Base):
         nullable=False,
     )
     type: Mapped[SummaryType] = mapped_column(summary_type_enum, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[SummaryStatus] = mapped_column(
+        summary_status_enum,
+        nullable=False,
+        server_default=SummaryStatus.processing.value,
+    )
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(

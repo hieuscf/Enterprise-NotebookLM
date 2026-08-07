@@ -4,15 +4,18 @@
 # Layer: Repository
 # Purpose: Async data access for summaries + topic context for by_topic style.
 # Responsibilities:
-#   - CRUD summaries scoped via document → workspace join
-#   - List topics linked to chunks of a document_version (topic hierarchy)
+#   - Create processing summaries; update completed/failed results
+#   - Workspace-scoped get/list/delete; worker get_by_id
+#   - List topics linked to chunks of a document_version
 # Dependencies:
 #   - SQLAlchemy AsyncSession; artifacts / knowledge / documents models
 # Public Exports:
 #   - SummaryRepository, TopicContextRow
 # Database/Table: summaries, topics, topic_chunks, document_chunks, documents
 # Related Modules: app.services.summary.summary_service
-# Important Notes: Always filter by workspace_id for multi-tenant isolation.
+# Important Notes:
+#   - Always filter by workspace_id for HTTP multi-tenant isolation.
+#   - Status transitions: processing → completed|failed only (optimistic WHERE).
 # =============================================================================
 
 from __future__ import annotations
@@ -21,12 +24,12 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifacts import Summary
 from app.models.documents import Document
-from app.models.enums import SummaryType
+from app.models.enums import SummaryStatus, SummaryType
 from app.models.knowledge import DocumentChunk, Topic, TopicChunk
 
 
@@ -47,31 +50,27 @@ class SummaryRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def create(
+    async def create_processing(
         self,
         *,
         document_id: uuid.UUID,
         created_by: uuid.UUID,
         source_version_id: uuid.UUID,
         type_: SummaryType,
-        content: str,
-        model_used: str | None,
-        prompt_tokens: int,
-        completion_tokens: int,
-        cost_usd: Decimal,
-        latency_ms: int | None,
     ) -> Summary:
+        """Insert a processing Summary with null content (POST / 202 path)."""
         row = Summary(
             document_id=document_id,
             created_by=created_by,
             source_version_id=source_version_id,
             type=type_,
-            content=content,
-            model_used=model_used,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cost_usd=cost_usd,
-            latency_ms=latency_ms,
+            status=SummaryStatus.processing,
+            content=None,
+            model_used=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=Decimal("0"),
+            latency_ms=None,
         )
         self._session.add(row)
         await self._session.flush()
@@ -93,12 +92,17 @@ class SummaryRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_by_id(self, summary_id: uuid.UUID) -> Summary | None:
+        """Load by primary key (Celery worker — no workspace filter)."""
+        return await self._session.get(Summary, summary_id)
+
     async def list_for_document(
         self,
         *,
         workspace_id: uuid.UUID,
         document_id: uuid.UUID,
     ) -> list[Summary]:
+        """All summary history for a document (all styles / versions), newest first."""
         stmt = (
             select(Summary)
             .join(Document, Document.id == Summary.document_id)
@@ -109,6 +113,55 @@ class SummaryRepository:
             .order_by(Summary.created_at.desc())
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def update_generation_result(
+        self,
+        *,
+        summary_id: uuid.UUID,
+        content: str,
+        model_used: str | None,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost_usd: Decimal,
+        latency_ms: int | None,
+    ) -> bool:
+        """processing → completed. Returns False if row missing or not processing."""
+        stmt = (
+            update(Summary)
+            .where(
+                Summary.id == summary_id,
+                Summary.status == SummaryStatus.processing,
+            )
+            .values(
+                content=content,
+                model_used=model_used,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+                status=SummaryStatus.completed,
+            )
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return bool(result.rowcount)
+
+    async def mark_failed(self, *, summary_id: uuid.UUID) -> bool:
+        """processing → failed. Safe public API: no error payload persisted."""
+        stmt = (
+            update(Summary)
+            .where(
+                Summary.id == summary_id,
+                Summary.status == SummaryStatus.processing,
+            )
+            .values(
+                status=SummaryStatus.failed,
+                content=None,
+            )
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return bool(result.rowcount)
 
     async def delete(self, summary: Summary) -> None:
         await self._session.delete(summary)

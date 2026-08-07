@@ -150,6 +150,14 @@ class SummaryType(enum.StrEnum):
 SummaryStyle = SummaryType
 
 
+class SummaryStatus(enum.StrEnum):
+    """Async generation lifecycle for summaries (FR6 Part 2)."""
+
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
 class ExtractionType(enum.StrEnum):
     """Aligned with OpenAPI Extraction.extraction_type."""
 

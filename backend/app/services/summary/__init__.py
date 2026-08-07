@@ -14,12 +14,13 @@
 # Important Notes: API ``style`` maps to DB ``type`` via SummaryType/SummaryStyle.
 # =============================================================================
 
-from app.models.enums import SummaryStyle, SummaryType
+from app.models.enums import SummaryStyle, SummaryStatus, SummaryType
 from app.services.summary.summary_service import SummaryService, SummaryServiceError
 
 __all__ = [
     "SummaryService",
     "SummaryServiceError",
     "SummaryStyle",
+    "SummaryStatus",
     "SummaryType",
 ]
