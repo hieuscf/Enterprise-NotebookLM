@@ -1,16 +1,18 @@
 # =============================================================================
 # File: model_tiering.py
-# Module/Service: Chat Service / Prompt Construction (FR4, FR11)
+# Module/Service: Chat Service / Prompt Construction (FR4, FR11) + Summary (FR6)
 # Layer: Service
 # Purpose: Select answer LLM model from Settings (no hardcoded model ids).
 # Responsibilities:
 #   - Light vs strong model; optional force-strong when agent_triggered
+#   - Context-window + cost estimates shared by chat answer and AI Summary
 # Dependencies:
 #   - app.core.config.Settings
 # Public Exports:
-#   - select_answer_model, select_rewrite_model, estimate_answer_cost_usd
+#   - select_answer_model, select_rewrite_model, estimate_answer_cost_usd,
+#     model_context_window, is_strong_model
 # Database/Table: N/A
-# Related Modules: answer_generator, ComplexQueryPipeline
+# Related Modules: answer_generator, ComplexQueryPipeline, SummaryService
 # Important Notes: All thresholds/flags come from Settings — never if "sonnet" in code.
 # =============================================================================
 
@@ -25,7 +27,7 @@ def select_answer_model(
     agent_triggered: bool = False,
     prefer_strong: bool = False,
 ) -> str:
-    """Pick the configured answer model for one complex-query LLM call.
+    """Pick the configured answer model for one LLM call.
 
     Rules (config-driven):
       - Provider ``openai``: ``openai_chat_model`` / ``openai_chat_strong_model``
@@ -54,6 +56,23 @@ def select_rewrite_model(settings: Settings) -> str:
     return str(settings.rewrite_agent_model)
 
 
+def is_strong_model(settings: Settings, model: str) -> bool:
+    """Return True when ``model`` matches the configured strong tier id."""
+    provider = (settings.chat_llm_provider or "anthropic").strip().lower()
+    if provider in {"openai", "gpt", "gpt-5", "chatgpt"}:
+        strong = str(settings.openai_chat_strong_model or settings.openai_chat_model)
+    else:
+        strong = str(settings.chat_answer_strong_model)
+    return model == strong
+
+
+def model_context_window(settings: Settings, model: str) -> int:
+    """Configured context-window tokens for the selected model tier."""
+    if is_strong_model(settings, model):
+        return int(settings.chat_answer_strong_context_window)
+    return int(settings.chat_answer_light_context_window)
+
+
 def estimate_answer_cost_usd(
     settings: Settings,
     *,
@@ -62,12 +81,7 @@ def estimate_answer_cost_usd(
     output_tokens: int,
 ) -> float:
     """Estimate USD cost from configured per-model rates."""
-    provider = (settings.chat_llm_provider or "anthropic").strip().lower()
-    if provider in {"openai", "gpt", "gpt-5", "chatgpt"}:
-        strong = str(settings.openai_chat_strong_model or settings.openai_chat_model)
-    else:
-        strong = str(settings.chat_answer_strong_model)
-    if model == strong:
+    if is_strong_model(settings, model):
         in_rate = float(settings.chat_answer_strong_input_usd_per_mtok)
         out_rate = float(settings.chat_answer_strong_output_usd_per_mtok)
     else:

@@ -190,8 +190,17 @@ class Settings(BaseSettings):
     chat_answer_light_output_usd_per_mtok: float = 1.25
     chat_answer_strong_input_usd_per_mtok: float = 3.0
     chat_answer_strong_output_usd_per_mtok: float = 15.0
+    # Context windows (tokens) for prompt budgeting — chat + FR6 summary share these.
+    chat_answer_light_context_window: int = 200_000
+    chat_answer_strong_context_window: int = 200_000
     # Token-chunk size when emitting SSE after structured generation completes.
     chat_sse_token_chunk_chars: int = 24
+
+    # FR6 — AI Summary (reuses chat LLM provider + model tiering above).
+    summary_max_output_tokens: int = 4096
+    summary_timeout_seconds: float = 120.0
+    # Reserve this many tokens for system/style instructions + completion budget.
+    summary_prompt_reserve_tokens: int = 4_096
 
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92

@@ -135,12 +135,19 @@ class RetrievalMethod(enum.StrEnum):
 
 
 class SummaryType(enum.StrEnum):
-    """Aligned with OpenAPI Summary.style (by_topic / bullet_points)."""
+    """Aligned with OpenAPI Summary.style (by_topic / bullet_points).
+
+    DB column is ``summaries.type``; API contract uses the name ``style``.
+    """
 
     short = "short"
     detailed = "detailed"
     by_topic = "by_topic"
     bullet_points = "bullet_points"
+
+
+# OpenAPI / service parameter alias — same enum, not a second type.
+SummaryStyle = SummaryType
 
 
 class ExtractionType(enum.StrEnum):

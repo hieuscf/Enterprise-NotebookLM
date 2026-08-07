@@ -6,23 +6,26 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ---
 
-## Trạng thái triển khai (cập nhật 2026-08-04)
+## Trạng thái triển khai (cập nhật 2026-08-08)
 
-**Baseline code hiện tại:** schema **v3** (Alembic `d4e5f6a7b8c9`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), `GET .../cost-summary` (+ `by_agent_type`) đã xong.
+**Baseline code hiện tại:** schema **v3** + chat migrations (Alembic head `c1d2e3f4a5b6`: soft-delete + `last_message_*` trên `chat_sessions`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), Chat API + Prompt/SSE + **FE Chat UI**, `GET .../cost-summary` (+ `by_agent_type`) đã xong.
+
+**Chat LLM provider (2026-08-08):** `CHAT_LLM_PROVIDER=anthropic|openai` — answer + rewrite dùng provider đã chọn; OpenAI Chat Completions wired (`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`); Gemini chỉ placeholder env. Embedding vẫn `EMBEDDING_*` (độc lập). Qdrant adapter dùng `query_points` (client 1.18+ bỏ `.search`).
 
 **Chênh lệch so với tài liệu v3 (còn lại — lõi GĐ2):**
 
 | Hạng mục | Đã có | Còn thiếu (mục tiêu) |
 |---|---|---|
-| Schema DB / Pipeline / LlamaParse | Khớp v3 | — |
+| Schema DB / Pipeline / LlamaParse | Khớp v3 + chat soft-delete / last-message | — |
 | Search (FR3) | Hybrid Vector+BM25+Graph → Rerank; Search API + FE | Metadata DB là filter/post-query (`SearchService`), không phải nguồn fan-out thứ 4 |
 | Query Router (FR11) | Classifier + cache + metadata/factoid/complex + `query_logs` + Celery cleanup | — |
 | FR14 Confidence & Agents | Engine + Event Policy + Rewrite/Graph/SQL + Second Retrieval + `agent_events` + tests/metrics | — |
-| Chat / Prompt / Citation | Orchestrator + Complex Query pipeline (pending LLM); persist `retrievals`; `GET .../agent-events` | Chat sessions/messages HTTP + Prompt Construction (1 LLM) + SSE + Citation Verification + FE Chat |
+| Chat / Prompt | Sessions/messages HTTP + Prompt Construction (1 LLM) + SSE/JSON + FE Chat (sessions, stream, citations UI, agent badge) + multi-provider Anthropic/OpenAI | — |
+| Citation (FR5) | Persist `retrievals`; map `citation_ids` → `citations` trên POST message; FE `CitationSection` | Citation Verification Layer cứng (verified vs DB) + fallback regenerate + `GET .../citations` + highlight đoạn gốc trên document viewer |
 
 **Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline xong.
 
-**Tiến độ GĐ2 (P1):** ~80% — Search + Query Router + FR14 + Chat Memory + POST messages/Prompt/SSE xong; còn **Citation Verification cứng (2.5)** + **FE Chat**.
+**Tiến độ GĐ2 (P1):** ~90% — Search + Query Router + FR14 + Chat Memory + POST messages/Prompt/SSE + **FE Chat** xong; còn **Citation Verification cứng (2.5)** (+ GET citations / highlight viewer).
 
 ---
 
@@ -146,7 +149,11 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 > **Part 2/3 DONE (2026-08-06):** POST messages → Query Router → Prompt Construction
 > (1 answer LLM) + model tiering + SSE/JSON; `get_latest_retrieval_pass` helper;
 > tests `tests/test_chat_message_processing.py`.  
-> **Còn lại Part 3:** FE Chat UI (+ citation highlight / agent badge).
+> **Part 3/3 DONE (2026-08-07/08):** FE Chat UI — routes `/workspaces/[id]/chat`,
+> session sidebar, SSE stream, citations list, agent badge; Sidebar link enabled
+> khi có `workspaceId`.  
+> **Ops (2026-08-08):** Multi-provider chat LLM — `CHAT_LLM_PROVIDER` + OpenAI
+> adapter (`app/adapters/openai_chat.py`, `chat_llm.py`); Qdrant `query_points` fix.
 
 - [x] [BE] `POST/GET /workspaces/{id}/chat/sessions`, `GET/DELETE .../sessions/{id}` (Conversation Memory) — `ChatSessionService` + soft-delete migration `c0d1e2f3a4b5`; tests `tests/test_chat_sessions.py`.
 - [x] [BE] `GET .../sessions/{id}/messages` — nested `generation` + `citations`; user → generation=null, citations=[].
@@ -154,22 +161,23 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [x] [AI] Prompt Construction — `prompt_builder.build_prompt` + `PromptAnswerGenerator` (structured `{answer, citation_ids}`); latest retrieval pass only via `RetrievalRecordRepository.list_for_latest_pass`.
 - [x] [BE] Streaming response (SSE) mặc định; `Accept: application/json` → JSON `ChatMessage`.
 - [x] [BE] Ghi `message_generations` (0-LLM + complex); `agent_triggered` / confidence từ pipeline; session `touch_after_message` (+ `last_message_*` / `message_count` migration `c1d2e3f4a5b6`).
-- [ ] [FE] UI Chat: gửi câu hỏi, hiển thị streaming answer, hiển thị session list (tiếp tục ngữ cảnh cũ). (Sidebar: badge "Sắp có"; chưa có route chat.)
+- [x] [BE] Chat LLM provider switch — `CHAT_LLM_PROVIDER=anthropic|openai` (Gemini env placeholder); answer + rewrite qua `app/adapters/chat_llm.py`; tests `tests/test_openai_chat.py`.
+- [x] [FE] UI Chat: gửi câu hỏi, streaming answer, session list / tiếp tục ngữ cảnh — `frontend/app/workspaces/[id]/chat/`, `features/chat/*`, `hooks/useChat*.ts`, `lib/chat.api.ts`.
 
 ### 2.5 Citation & Verification (FR5, UC4, UC11)
 - [x] [AI] Ghi toàn bộ ứng viên retrieval vào bảng `retrievals` (chunk_id/entity_id, retrieval_method, score, rank, retrieval_pass) trước khi lọc — `RetrievalRecordsRepository` trong `complex_query_pipeline.py` (pass 1/2).
-- [ ] [AI] Citation Verification Layer — đối chiếu deterministic `citation_ids` LLM trả về với `retrievals` đã lưu (cả pass 1 và pass 2 nếu có); set `verified=true/false`. (ORM `Citation` có sẵn; chưa có service/write path.)
+- [ ] [AI] Citation Verification Layer — đối chiếu deterministic `citation_ids` LLM trả về với `retrievals` đã lưu (cả pass 1 và pass 2 nếu có); set `verified=true/false`. (Map citation trên POST message đã có; chưa có verification service / regenerate.)
 - [ ] [AI] Cơ chế fallback "không đủ căn cứ trong tài liệu" khi citation không hợp lệ, hoặc sinh lại tối đa 1 lần.
 - [ ] [BE] `GET /workspaces/{id}/chat/messages/{messageId}/citations`.
-- [ ] [FE] Hiển thị citation dưới câu trả lời + click để highlight đoạn văn bản gốc trên tài liệu (dùng `text_snippet`). (Stub: `features/citation/CitationLocationLabel.tsx` — chưa gắn Chat.)
-- [ ] [FE] Hiển thị badge nhỏ khi câu trả lời đã đi qua Agent (vd. "Đã mở rộng truy vấn qua Knowledge Graph") — lấy từ `agent-events`, tăng độ tin tưởng người dùng.
+- [x] [FE] Hiển thị citation dưới câu trả lời trong Chat — `features/chat/CitationSection.tsx` (+ link document). **Còn lại:** click → highlight đoạn gốc trên document viewer (`text_snippet`).
+- [x] [FE] Badge khi `generation.agent_triggered` — `features/chat/AgentBadge.tsx` (copy generic; không gọi `agent-events` chỉ để label). **Tuỳ chọn sau:** copy theo `agent_type` từ Admin/agent-events.
 
 **Tiêu chí hoàn thành GĐ2:**
 - Đặt câu hỏi phức tạp, High Confidence → đi đúng luồng (Router miss cache → Hybrid Retrieval → Rerank → Confidence Engine=high → 1 LLM call → Citation Verification) → trả lời kèm citation bấm được, verified=true.
 - Đặt câu hỏi mơ hồ/multi-hop cố tình → Confidence Engine=low → thấy đúng agent được kích hoạt trong `agent_events`, có Second Retrieval (`retrieval_pass=2`), vẫn ra câu trả lời kèm citation verified.
 - Hỏi lại câu tương tự → cache hit, 0 LLM call, không có `agent_events`.
 
-> **Hiện trạng (2026-08-04):** Search + Router + FR14 (kể cả integration A–D) đạt; tiêu chí end-to-end Chat+Citation **chưa đạt** — phụ thuộc mục 2.4–2.5 còn mở.
+> **Hiện trạng (2026-08-08):** Search + Router + FR14 + Chat API/Prompt/SSE + FE Chat đạt; tiêu chí end-to-end **Citation Verification cứng** (verified + GET citations + highlight viewer) **chưa đạt** — còn mục 2.5.
 
 ---
 
