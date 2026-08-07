@@ -156,6 +156,7 @@ class FakeSummaryRepo:
         if row is None or row.status != SummaryStatus.processing:
             return False
         row.content = kwargs["content"]
+        row.sections = kwargs.get("sections")
         row.model_used = kwargs["model_used"]
         row.prompt_tokens = kwargs["prompt_tokens"]
         row.completion_tokens = kwargs["completion_tokens"]
@@ -453,8 +454,20 @@ async def test_generate_summary_styles_and_model_tiering(
 
     async def _llm(**kwargs: Any) -> StructuredLlmResult:
         captured.update(kwargs)
+        data: dict[str, Any] = {"summary": f"Summary for {style.value}"}
+        if style == SummaryStyle.by_topic:
+            data = {
+                "summary": f"Summary for {style.value}",
+                "sections": [
+                    {
+                        "topic_id": str(summaries.topics[0].topic_id),
+                        "title": "Finance",
+                        "content": "Budget overview details.",
+                    }
+                ],
+            }
         return StructuredLlmResult(
-            data={"summary": f"Summary for {style.value}"},
+            data=data,
             model=kwargs["model"],
             input_tokens=12,
             output_tokens=8,
@@ -499,6 +512,8 @@ async def test_generate_summary_styles_and_model_tiering(
     if style == SummaryStyle.by_topic:
         assert "Topic hierarchy" in captured["user"]
         assert "Finance" in captured["user"]
+        assert row.sections is not None
+        assert row.sections[0]["title"] == "Finance"
 
 
 @pytest.mark.asyncio

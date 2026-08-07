@@ -155,6 +155,7 @@ class FakeSummaryRepo:
         if row is None or row.status != SummaryStatus.processing:
             return False
         row.content = kwargs["content"]
+        row.sections = kwargs.get("sections")
         row.model_used = kwargs["model_used"]
         row.prompt_tokens = kwargs["prompt_tokens"]
         row.completion_tokens = kwargs["completion_tokens"]

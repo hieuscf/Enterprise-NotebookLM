@@ -254,6 +254,7 @@ class SummaryService:
         updated = await self._summaries.update_generation_result(
             summary_id=row.id,
             content=result["content"],
+            sections=result.get("sections"),
             model_used=result["model_used"],
             prompt_tokens=result["prompt_tokens"],
             completion_tokens=result["completion_tokens"],
@@ -431,16 +432,37 @@ class SummaryService:
             ) from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
+        sections = (
+            self._extract_sections(llm, topics=topics)
+            if style == SummaryType.by_topic
+            else None
+        )
         content = self._extract_summary_text(llm)
-        if not content.strip():
+        if not content.strip() and sections:
+            content = "\n\n".join(
+                f"## {s['title']}\n{s['content']}".strip() for s in sections
+            )
+        if not content.strip() and not sections:
             raise SummaryServiceError(
                 "empty_summary",
                 "LLM returned an empty summary",
                 status_code=502,
             )
+        if style == SummaryType.by_topic and not sections:
+            raise SummaryServiceError(
+                "empty_summary",
+                "LLM returned no topic sections",
+                status_code=502,
+            )
 
         return {
-            "content": content.strip(),
+            "content": (content.strip() if content and content.strip() else "")
+            or (
+                "\n\n".join(f"## {s['title']}\n{s['content']}".strip() for s in sections)
+                if sections
+                else ""
+            ),
+            "sections": sections,
             "model_used": str(getattr(llm, "model", None) or model),
             "prompt_tokens": int(getattr(llm, "input_tokens", 0) or 0),
             "completion_tokens": int(getattr(llm, "output_tokens", 0) or 0),
@@ -528,3 +550,42 @@ class SummaryService:
                 if isinstance(value, str) and value.strip():
                     return value
         return ""
+
+    @staticmethod
+    def _extract_sections(
+        llm: StructuredLlmResult | Any,
+        *,
+        topics: list[TopicContextRow],
+    ) -> list[dict[str, Any]] | None:
+        """Normalize backend-produced topic sections (no FE heuristics)."""
+        data = getattr(llm, "data", None)
+        if not isinstance(data, dict):
+            return None
+        raw = data.get("sections")
+        if not isinstance(raw, list) or not raw:
+            return None
+        known_ids = {str(t.topic_id): t for t in topics}
+        out: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("name") or "").strip()
+            content = str(item.get("content") or item.get("summary") or "").strip()
+            if not title and not content:
+                continue
+            topic_id_raw = item.get("topic_id")
+            topic_id: str | None = None
+            if topic_id_raw is not None and str(topic_id_raw).strip():
+                key = str(topic_id_raw).strip()
+                if key in known_ids:
+                    topic_id = key
+                    if not title:
+                        title = known_ids[key].name
+            out.append(
+                {
+                    "topic_id": topic_id,
+                    "title": title or "Chủ đề",
+                    "content": content,
+                }
+            )
+        return out or None

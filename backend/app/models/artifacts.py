@@ -80,6 +80,7 @@ class Summary(Base):
         server_default=SummaryStatus.processing.value,
     )
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sections: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(

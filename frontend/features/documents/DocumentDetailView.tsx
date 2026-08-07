@@ -38,6 +38,7 @@ import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHist
 import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
+import { SummarySection } from "@/features/summaries/SummarySection";
 import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { useDocumentUploadQueue, type StagedFile } from "@/hooks/useDocumentUploadQueue";
@@ -177,6 +178,18 @@ export function DocumentDetailView({
             }
           />
         </section>
+
+        {!docError ? (
+          <SummarySection
+            workspaceId={workspaceId}
+            documentId={documentId}
+            currentVersionId={doc?.current_version_id ?? null}
+            canEdit={isEditor}
+            onCopied={() => pushSuccess("Đã sao chép tóm tắt.")}
+            onCopyFailed={() => pushError("Không sao chép được tóm tắt.")}
+            onCreateError={(message) => pushError(message)}
+          />
+        ) : null}
 
         <div className="flex flex-col gap-3">
           {isEditor ? (

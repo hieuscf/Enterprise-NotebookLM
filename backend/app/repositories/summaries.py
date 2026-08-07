@@ -66,6 +66,7 @@ class SummaryRepository:
             type=type_,
             status=SummaryStatus.processing,
             content=None,
+            sections=None,
             model_used=None,
             prompt_tokens=0,
             completion_tokens=0,
@@ -124,6 +125,7 @@ class SummaryRepository:
         completion_tokens: int,
         cost_usd: Decimal,
         latency_ms: int | None,
+        sections: list[dict] | None = None,
     ) -> bool:
         """processing → completed. Returns False if row missing or not processing."""
         stmt = (
@@ -134,6 +136,7 @@ class SummaryRepository:
             )
             .values(
                 content=content,
+                sections=sections,
                 model_used=model_used,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,

@@ -53,12 +53,36 @@ def get_summary_service(
 
 
 def _summary_response(row: Summary) -> SummaryResponse:
+    sections_raw = row.sections
+    sections = None
+    if isinstance(sections_raw, list) and sections_raw:
+        from app.schemas.summaries import SummaryTopicSection
+
+        parsed: list[SummaryTopicSection] = []
+        for item in sections_raw:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            content = str(item.get("content") or "").strip()
+            if not title and not content:
+                continue
+            topic_id = item.get("topic_id")
+            parsed.append(
+                SummaryTopicSection(
+                    topic_id=uuid.UUID(str(topic_id)) if topic_id else None,
+                    title=title or "Chủ đề",
+                    content=content,
+                )
+            )
+        sections = parsed or None
     return SummaryResponse(
         id=row.id,
         document_id=row.document_id,
+        source_version_id=row.source_version_id,
         style=row.type,  # ORM ``type`` → OpenAPI ``style``
         status=row.status,
         content=row.content,
+        sections=sections,
         created_at=row.created_at,
     )
 

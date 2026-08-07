@@ -36,7 +36,10 @@ STYLE_SYSTEM_PROMPTS: dict[SummaryType, str] = {
         "You are an enterprise document summarizer. Organize the summary by "
         "topics/themes. Prefer the provided topic hierarchy when present; "
         "otherwise infer coherent topic sections. "
-        "Respond with a JSON object: {\"summary\": \"...\"}."
+        "Respond with a JSON object: "
+        "{\"sections\": [{\"topic_id\": null, \"title\": \"...\", \"content\": \"...\"}], "
+        "\"summary\": \"optional flat markdown for copy\"}. "
+        "When a provided topic has an id, set topic_id to that UUID string."
     ),
     SummaryType.bullet_points: (
         "You are an enterprise document summarizer. Produce a bullet-point "
@@ -63,9 +66,9 @@ def build_summary_prompts(
             indent = "  " * max(0, int(topic.level))
             snippet = (topic.summary or "").strip()
             if snippet:
-                body_parts.append(f"{indent}- {topic.name}: {snippet}")
+                body_parts.append(f"{indent}- id={topic.topic_id} | {topic.name}: {snippet}")
             else:
-                body_parts.append(f"{indent}- {topic.name}")
+                body_parts.append(f"{indent}- id={topic.topic_id} | {topic.name}")
         body_parts.append("Supporting document excerpts:")
     else:
         body_parts.append("Document excerpts (current version only):")
