@@ -172,6 +172,17 @@ class ExtractionOutputFormat(enum.StrEnum):
     table = "table"
 
 
+# OpenAPI / task alias (same enum as ExtractionOutputFormat).
+OutputFormat = ExtractionOutputFormat
+
+
+class EntityExtractionMode(enum.StrEnum):
+    """FR7 entity path selector — reuse graph entities vs dedicated LLM fallback."""
+
+    REUSE_EXISTING_ENTITIES = "reuse"
+    LLM_ENTITY_EXTRACTION = "llm"
+
+
 class ReportFormat(enum.StrEnum):
     pdf = "pdf"
     docx = "docx"

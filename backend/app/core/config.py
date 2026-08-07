@@ -202,6 +202,11 @@ class Settings(BaseSettings):
     # Reserve this many tokens for system/style instructions + completion budget.
     summary_prompt_reserve_tokens: int = 4_096
 
+    # FR7 — Information Extraction (reuses chat LLM + model tiering; entities reuse graph).
+    extraction_max_output_tokens: int = 4096
+    extraction_timeout_seconds: float = 120.0
+    extraction_prompt_reserve_tokens: int = 4_096
+
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).

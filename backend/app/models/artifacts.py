@@ -16,6 +16,8 @@
 #   - Enum values prefer OpenAPI where ERD shorthand differs.
 #   - summaries.type maps to OpenAPI Summary.style (do not rename the DB column).
 #   - source_version_id pins the document_versions row used for generation.
+#   - extractions.result_json maps to OpenAPI Extraction.result.
+#   - extractions.source_version_id pins the version used for extraction.
 # =============================================================================
 
 import uuid
@@ -95,6 +97,10 @@ class Summary(Base):
 
 class Extraction(Base):
     __tablename__ = "extractions"
+    __table_args__ = (
+        Index("ix_extractions_document_id_extraction_type", "document_id", "extraction_type"),
+        Index("ix_extractions_source_version_id", "source_version_id"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     document_id: Mapped[uuid.UUID] = mapped_column(
@@ -106,6 +112,11 @@ class Extraction(Base):
     created_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
+    source_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     extraction_type: Mapped[ExtractionType] = mapped_column(extraction_type_enum, nullable=False)
     output_format: Mapped[ExtractionOutputFormat] = mapped_column(
         extraction_output_format_enum,
@@ -113,6 +124,15 @@ class Extraction(Base):
         server_default=ExtractionOutputFormat.json.value,
     )
     result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    completion_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    cost_usd: Mapped[Decimal] = mapped_column(
+        Numeric(10, 6), nullable=False, server_default="0"
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = created_at_col()
 
 

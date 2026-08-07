@@ -1416,12 +1416,24 @@ components:
 
     Extraction:
       type: object
+      required:
+        [id, document_id, source_version_id, extraction_type, output_format, result, created_at]
       properties:
         id: { type: string, format: uuid }
         document_id: { type: string, format: uuid }
+        source_version_id:
+          type: string
+          format: uuid
+          description: document_versions.id captured at extraction time (pinned)
         extraction_type: { type: string, enum: [table, figures, entities, timeline] }
         output_format: { type: string, enum: [json, table] }
-        result: { type: object }
+        result:
+          type: object
+          description: >
+            Canonical structured payload for output_format=json
+            (table→headers+rows; figures→figures[]; entities→entities[];
+            timeline→events[]). For output_format=table, always headers+rows
+            so the client does not infer columns.
         created_at: { type: string, format: date-time }
 
     Comparison:
