@@ -7,12 +7,13 @@
 #   - Call Anthropic structured JSON with rewrite-only system prompt
 #   - Return rewritten_query + AgentEventData (cost/latency/payloads)
 # Dependencies:
-#   - anthropic_client.extract_structured_json, Settings, AgentEventData
+#   - chat_llm.extract_structured_json, Settings, AgentEventData
 # Public Exports:
 #   - RewriteAgent, RewriteAgentResult
 # Database/Table: N/A (Part 4 persists AgentEventData → agent_events)
 # Related Modules: event_policy_engine, HybridRetrievalService (Second Retrieval)
 # Important Notes: Model from Settings (tiering). On LLM failure → original_query.
+#   Uses CHAT_LLM_PROVIDER (anthropic | openai) — same as answer generator.
 # =============================================================================
 
 from __future__ import annotations
@@ -22,10 +23,11 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
-from app.adapters.anthropic_client import extract_structured_json
+from app.adapters.chat_llm import extract_structured_json, resolve_chat_llm
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.enums import AgentTriggerReason, AgentType
+from app.services.chat.model_tiering import select_rewrite_model
 from app.services.event_policy.models import AgentEventData, ChatTurn
 from pydantic import BaseModel, ConfigDict
 
@@ -62,8 +64,8 @@ class RewriteAgent:
         llm_call: Any | None = None,
     ) -> None:
         self._settings = settings
-        # Injectable for unit tests — defaults to anthropic extract_structured_json.
-        self._llm_call = llm_call or extract_structured_json
+        # Injectable for unit tests — defaults to provider-aware chat_llm extract.
+        self._llm_call = llm_call
 
     def run(
         self,
@@ -92,9 +94,9 @@ class RewriteAgent:
             "history_turns": len(history),
         }
 
-        api_key = (self._settings.anthropic_api_key or "").strip()
-        model = (self._settings.rewrite_agent_model or "").strip()
-        if not api_key or not model or not original:
+        cfg = resolve_chat_llm(self._settings)
+        model = select_rewrite_model(self._settings).strip()
+        if (cfg is None and self._llm_call is None) or not model or not original:
             latency_ms = _elapsed_ms(started)
             event = _event(
                 trigger_reason=trigger_reason,
@@ -112,15 +114,25 @@ class RewriteAgent:
 
         user_prompt = _build_user_prompt(original, history)
         try:
-            result = self._llm_call(
-                system=_REWRITE_SYSTEM,
-                user=user_prompt,
-                model=model,
-                api_key=api_key,
-                api_base=self._settings.anthropic_api_base,
-                max_tokens=int(self._settings.rewrite_agent_max_tokens),
-                timeout_seconds=float(self._settings.rewrite_agent_timeout_seconds),
-            )
+            if self._llm_call is not None:
+                result = self._llm_call(
+                    system=_REWRITE_SYSTEM,
+                    user=user_prompt,
+                    model=model,
+                    api_key=(cfg.api_key if cfg else "test"),
+                    api_base=(cfg.api_base if cfg else ""),
+                    max_tokens=int(self._settings.rewrite_agent_max_tokens),
+                    timeout_seconds=float(self._settings.rewrite_agent_timeout_seconds),
+                )
+            else:
+                result = extract_structured_json(
+                    settings=self._settings,
+                    system=_REWRITE_SYSTEM,
+                    user=user_prompt,
+                    model=model,
+                    max_tokens=int(self._settings.rewrite_agent_max_tokens),
+                    timeout_seconds=float(self._settings.rewrite_agent_timeout_seconds),
+                )
             rewritten = str((result.data or {}).get("rewritten_query") or "").strip()
             if not rewritten:
                 rewritten = original

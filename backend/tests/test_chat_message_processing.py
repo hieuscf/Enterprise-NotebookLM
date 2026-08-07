@@ -101,6 +101,18 @@ def test_select_answer_model_agent_force_strong() -> None:
     )
 
 
+def test_select_answer_model_openai_provider() -> None:
+    settings = _settings(
+        chat_llm_provider="openai",
+        openai_api_key="sk-test",
+        openai_chat_model="gpt-5",
+        openai_chat_strong_model="gpt-5",
+        chat_agent_force_strong_model=True,
+    )
+    assert select_answer_model(settings, agent_triggered=False) == "gpt-5"
+    assert select_answer_model(settings, agent_triggered=True) == "gpt-5"
+
+
 @pytest.mark.asyncio
 async def test_answer_generator_maps_citation_ids_and_counts_one_llm() -> None:
     chunk_id = uuid.uuid4()

@@ -8,7 +8,7 @@
 # Dependencies:
 #   - app.core.config.Settings
 # Public Exports:
-#   - select_answer_model, estimate_answer_cost_usd
+#   - select_answer_model, select_rewrite_model, estimate_answer_cost_usd
 # Database/Table: N/A
 # Related Modules: answer_generator, ComplexQueryPipeline
 # Important Notes: All thresholds/flags come from Settings — never if "sonnet" in code.
@@ -28,16 +28,30 @@ def select_answer_model(
     """Pick the configured answer model for one complex-query LLM call.
 
     Rules (config-driven):
-      - Default: ``chat_answer_light_model``
-      - ``prefer_strong`` (complex reasoning hint): ``chat_answer_strong_model``
-      - When ``agent_triggered`` and ``chat_agent_force_strong_model``: strong model
+      - Provider ``openai``: ``openai_chat_model`` / ``openai_chat_strong_model``
+      - Provider ``anthropic`` (default): ``chat_answer_light_model`` /
+        ``chat_answer_strong_model``
+      - ``prefer_strong`` or agent-force-strong → strong model
     """
     use_strong = bool(prefer_strong)
     if agent_triggered and bool(settings.chat_agent_force_strong_model):
         use_strong = True
+    provider = (settings.chat_llm_provider or "anthropic").strip().lower()
+    if provider in {"openai", "gpt", "gpt-5", "chatgpt"}:
+        light = str(settings.openai_chat_model)
+        strong = str(settings.openai_chat_strong_model or settings.openai_chat_model)
+        return strong if use_strong else light
     if use_strong:
         return str(settings.chat_answer_strong_model)
     return str(settings.chat_answer_light_model)
+
+
+def select_rewrite_model(settings: Settings) -> str:
+    """Model id for Rewrite Agent (light tier; OpenAI uses openai_chat_model)."""
+    provider = (settings.chat_llm_provider or "anthropic").strip().lower()
+    if provider in {"openai", "gpt", "gpt-5", "chatgpt"}:
+        return str(settings.openai_chat_model)
+    return str(settings.rewrite_agent_model)
 
 
 def estimate_answer_cost_usd(
@@ -48,7 +62,11 @@ def estimate_answer_cost_usd(
     output_tokens: int,
 ) -> float:
     """Estimate USD cost from configured per-model rates."""
-    strong = str(settings.chat_answer_strong_model)
+    provider = (settings.chat_llm_provider or "anthropic").strip().lower()
+    if provider in {"openai", "gpt", "gpt-5", "chatgpt"}:
+        strong = str(settings.openai_chat_strong_model or settings.openai_chat_model)
+    else:
+        strong = str(settings.chat_answer_strong_model)
     if model == strong:
         in_rate = float(settings.chat_answer_strong_input_usd_per_mtok)
         out_rate = float(settings.chat_answer_strong_output_usd_per_mtok)

@@ -90,6 +90,18 @@ class Settings(BaseSettings):
     graph_llm_max_tokens: int = 4096
     graph_llm_max_input_chars: int = 100_000
 
+    # FR4 — Chat answer / rewrite LLM provider (embedding stays EMBEDDING_*).
+    # CHAT_LLM_PROVIDER: anthropic | openai | gemini (gemini reserved / not wired yet).
+    # Accepts aliases like "gpt" / "gpt-5" → openai (normalized in chat_llm).
+    chat_llm_provider: str = "anthropic"
+    openai_api_key: str | None = None
+    openai_api_base: str = "https://api.openai.com/v1"
+    openai_chat_model: str = "gpt-5"
+    openai_chat_strong_model: str | None = None  # defaults to openai_chat_model
+    # Reserved for later Gemini adapter (not used until provider=gemini is implemented).
+    google_api_key: str | None = None
+    gemini_chat_model: str = "gemini-2.5-pro"
+
     # FR2 Step 3 (v3) — Document Understanding parser selection.
     # NOT an LLM Provider call: LlamaParse is a standalone SaaS, billed separately
     # from Anthropic. Only celery-worker talks to it (see System_Architecture note 3).

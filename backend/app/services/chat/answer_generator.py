@@ -7,12 +7,13 @@
 #   - Model tiering from Settings; structured {answer, citation_ids}
 #   - Map citation_ids against latest-pass retrieval items only
 # Dependencies:
-#   - prompt_builder, model_tiering, anthropic_client, Settings
+#   - prompt_builder, model_tiering, chat_llm, Settings
 # Public Exports:
 #   - PromptAnswerGenerator
 # Database/Table: N/A (persistence owned by ComplexQueryPipeline / MessageService)
 # Related Modules: ComplexQueryPipeline.answer_generator
 # Important Notes: Exactly one answer LLM call; Rewrite Agent is separate.
+#   Provider selected via CHAT_LLM_PROVIDER (anthropic | openai).
 # =============================================================================
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from app.adapters.anthropic_client import extract_structured_json_async
+from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.chat.complex_query_pipeline import AnswerGenerationResult
@@ -41,7 +42,7 @@ logger = get_logger(__name__)
 
 
 class PromptAnswerGenerator:
-    """Production AnswerGeneratorPort backed by Anthropic structured JSON."""
+    """Production AnswerGeneratorPort backed by configured chat LLM provider."""
 
     def __init__(
         self,
@@ -50,8 +51,9 @@ class PromptAnswerGenerator:
         llm_call: Any | None = None,
     ) -> None:
         self._settings = settings
-        # Injectable for tests (async callable with same kwargs as extract_structured_json_async).
-        self._llm_call = llm_call or extract_structured_json_async
+        # Injectable for tests. Signature: async (**kwargs) -> StructuredLlmResult-like.
+        # When None, uses chat_llm.extract_structured_json_async (provider-aware).
+        self._llm_call = llm_call
 
     async def generate(
         self,
@@ -67,9 +69,12 @@ class PromptAnswerGenerator:
         """Run Prompt Construction + exactly one answer LLM call."""
         del message_id  # reserved for DB latest-pass verification in Part 2.5
         settings = self._settings
-        api_key = (settings.anthropic_api_key or "").strip()
-        if not api_key:
-            logger.warning("chat_answer_llm_missing_api_key", workspace_id=str(workspace_id))
+        if resolve_chat_llm(settings) is None and self._llm_call is None:
+            logger.warning(
+                "chat_answer_llm_missing_api_key",
+                workspace_id=str(workspace_id),
+                provider=str(settings.chat_llm_provider),
+            )
             return AnswerGenerationResult(
                 answer="I cannot generate an answer because the LLM provider is not configured.",
                 citation_refs=[],
@@ -91,29 +96,36 @@ class PromptAnswerGenerator:
             prefer_strong=False,
         )
         started = time.perf_counter()
-        try:
-            llm = await self._llm_call(
-                system=built.system,
-                user=built.user,
+        call_kwargs = {
+            "system": built.system,
+            "user": built.user,
+            "model": model,
+            "max_tokens": int(settings.chat_answer_max_tokens),
+            "temperature": float(settings.chat_answer_temperature),
+            "top_p": float(settings.chat_answer_top_p),
+            "timeout_seconds": float(settings.chat_answer_timeout_seconds),
+            "cost_estimator": lambda input_tokens, output_tokens: estimate_answer_cost_usd(
+                settings,
                 model=model,
-                api_key=api_key,
-                api_base=settings.anthropic_api_base,
-                max_tokens=int(settings.chat_answer_max_tokens),
-                temperature=float(settings.chat_answer_temperature),
-                top_p=float(settings.chat_answer_top_p),
-                timeout_seconds=float(settings.chat_answer_timeout_seconds),
-                cost_estimator=lambda input_tokens, output_tokens: estimate_answer_cost_usd(
-                    settings,
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                ),
-            )
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            ),
+        }
+        try:
+            if self._llm_call is not None:
+                llm = await self._llm_call(**call_kwargs)
+            else:
+                llm = await extract_structured_json_async(
+                    settings=settings,
+                    **call_kwargs,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "chat_answer_llm_failed",
                 workspace_id=str(workspace_id),
+                provider=str(settings.chat_llm_provider),
                 error=type(exc).__name__,
+                detail=str(exc),
             )
             raise
 
