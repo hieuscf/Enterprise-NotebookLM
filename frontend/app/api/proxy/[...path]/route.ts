@@ -7,13 +7,17 @@
  * Responsibilities:
  *   - Forward method/body/query to backend with Authorization from access cookie
  *   - On 401, attempt refresh once then retry
+ *   - Pipe text/event-stream responses through unbuffered (Chat SSE, FR4)
  * Dependencies:
  *   - lib/auth/backend, lib/auth/cookies
  * Public Exports:
  *   - GET, POST, PUT, PATCH, DELETE
  * Database/Table: N/A
- * Related Modules: lib/api-client.ts
- * Important Notes: Frontend must call /api/proxy/* — never LLM providers directly.
+ * Related Modules: lib/api-client.ts, lib/chat.api.ts (SSE streaming)
+ * Important Notes:
+ *   - Frontend must call /api/proxy/* — never LLM providers directly.
+ *   - SSE branch must not buffer the body (defeats streaming); everything
+ *     else keeps the original arrayBuffer() behavior unchanged.
  * =============================================================================
  */
 
@@ -106,6 +110,19 @@ async function proxy(request: NextRequest, context: RouteContext) {
   if (viewerKind) responseHeaders.set("X-Viewer-Kind", viewerKind);
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) responseHeaders.set("Retry-After", retryAfter);
+
+  // Chat streaming (SSE) — pipe the body through as-is; buffering it here
+  // would defeat the whole point of streaming (no tokens until the answer
+  // finished generating).
+  if (responseContentType?.toLowerCase().startsWith("text/event-stream")) {
+    responseHeaders.set("Cache-Control", "no-cache, no-transform");
+    responseHeaders.set("Connection", "keep-alive");
+    responseHeaders.set("X-Accel-Buffering", "no");
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
+  }
 
   const buffer = await upstream.arrayBuffer();
   return new NextResponse(buffer, {

@@ -16,6 +16,8 @@
 #   - Ops choice: ONE shared collection (settings.qdrant_collection) for all
 #     workspaces. Multi-tenant isolation uses payload.workspace_id filter at
 #     query time — simpler than per-workspace collections.
+#   - Vector search uses query_points (Client.search removed in qdrant-client
+#     1.16+); falls back to search when present for older clients.
 # =============================================================================
 
 from __future__ import annotations
@@ -35,7 +37,13 @@ class QdrantStoreAdapter:
         # Shared collection for all tenants; filter by payload.workspace_id.
         self._collection = settings.qdrant_collection
         self._dimension = settings.embedding_dimension
-        self._client = QdrantClient(url=settings.qdrant_url, prefer_grpc=False)
+        # check_compatibility=False: server image may lag pinned client minor;
+        # adapter uses query_points (search removed in qdrant-client >=1.16).
+        self._client = QdrantClient(
+            url=settings.qdrant_url,
+            prefer_grpc=False,
+            check_compatibility=False,
+        )
 
     def ensure_collection(self) -> None:
         names = {c.name for c in self._client.get_collections().collections}
@@ -145,13 +153,28 @@ class QdrantStoreAdapter:
                     match=qmodels.MatchValue(value=kind),
                 )
             )
-        hits = self._client.search(
-            collection_name=self._collection,
-            query_vector=query_vector,
-            query_filter=qmodels.Filter(must=must),
-            limit=max(1, top_k),
-            with_payload=True,
-        )
+        query_filter = qmodels.Filter(must=must)
+        limit = max(1, top_k)
+        # qdrant-client >=1.16 removed Client.search in favor of query_points.
+        if hasattr(self._client, "query_points"):
+            response = self._client.query_points(
+                collection_name=self._collection,
+                query=query_vector,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+            )
+            hits = list(response.points or [])
+        else:
+            hits = list(
+                self._client.search(  # type: ignore[attr-defined]
+                    collection_name=self._collection,
+                    query_vector=query_vector,
+                    query_filter=query_filter,
+                    limit=limit,
+                    with_payload=True,
+                )
+            )
         results: list[dict[str, Any]] = []
         for hit in hits:
             payload = dict(hit.payload or {})

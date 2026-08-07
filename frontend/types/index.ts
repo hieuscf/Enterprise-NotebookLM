@@ -30,6 +30,16 @@ export type {
 export type { Citation, ContentLocation } from "./citations";
 
 export type {
+  ChatMessage,
+  ChatSession,
+  ConfidenceLevel,
+  FinishReason,
+  MessageGeneration,
+  MessageRole,
+  RouteType,
+} from "./chat";
+
+export type {
   Document,
   DocumentListResponse,
   DocumentVersion,

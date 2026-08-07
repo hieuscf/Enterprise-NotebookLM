@@ -152,6 +152,7 @@ class MessageProcessingService:
                 "chat_handle_query_failed",
                 session_id=str(session_id),
                 error=type(exc).__name__,
+                detail=str(exc),
             )
             raise ChatServiceError(
                 "pipeline_error",

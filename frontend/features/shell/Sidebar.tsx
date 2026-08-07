@@ -17,8 +17,9 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   and "search" (when a workspaceId is in context) are real routes today.
- *   Everything else must stay visibly disabled — never link to a page that 404s.
+ *   "search", and "chat" (when a workspaceId is in context) are real routes
+ *   today. Everything else must stay visibly disabled — never link to a page
+ *   that 404s.
  * =============================================================================
  */
 
@@ -55,7 +56,8 @@ export type SidebarActiveKey =
   | "members"
   | "upload"
   | "documents"
-  | "search";
+  | "search"
+  | "chat";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -65,7 +67,7 @@ type NavItem = {
   /** Static badge for not-yet-built modules; ignored once `href` resolves. */
   badge?: string;
   /** Marks items whose href depends on the current workspaceId. */
-  contextual?: "members" | "upload" | "documents" | "search";
+  contextual?: "members" | "upload" | "documents" | "search" | "chat";
 };
 
 type NavGroup = {
@@ -108,7 +110,13 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "AI Tools",
     items: [
-      { label: "AI Chat", icon: MessageSquare, badge: "Sắp có" },
+      {
+        key: "chat",
+        label: "AI Chat",
+        icon: MessageSquare,
+        contextual: "chat",
+        badge: "Chọn workspace",
+      },
       { label: "Tóm tắt", icon: ScrollText, badge: "Sắp có" },
       { label: "Trích xuất", icon: Wand2, badge: "Sắp có" },
       { label: "So sánh", icon: GitCompare, badge: "Sắp có" },
@@ -222,7 +230,9 @@ export function Sidebar({
                           ? `/workspaces/${workspaceId}/documents`
                           : item.contextual === "search"
                             ? `/workspaces/${workspaceId}/search`
-                            : item.href
+                            : item.contextual === "chat"
+                              ? `/workspaces/${workspaceId}/chat`
+                              : item.href
                     : item.href;
 
                   if (href) {
