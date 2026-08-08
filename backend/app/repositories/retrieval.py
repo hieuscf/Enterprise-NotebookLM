@@ -6,12 +6,14 @@
 # Responsibilities:
 #   - Resolve chunk content + document_id scoped by workspace_id
 #   - Metadata queries (document list/count/stats) for Metadata Retrieval
+#   - Topic-ranked top chunks for multi-document comparison fallback (FR8)
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.documents, app.models.knowledge
 # Public Exports:
 #   - ChunkHydrationRow, MetadataDocumentRow, RetrievalRepository
-# Database/Table: document_chunks, document_versions, documents, entities, users
-# Related Modules: app.services.retrieval.*
+# Database/Table: document_chunks, document_versions, documents, entities,
+#   topics, topic_chunks, users
+# Related Modules: app.services.retrieval.*, app.services.comparison
 # Important Notes: Always filter by workspace_id — multi-tenant isolation.
 # =============================================================================
 
@@ -21,12 +23,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, case, desc, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import FileType
-from app.models.knowledge import DocumentChunk, Entity
+from app.models.knowledge import DocumentChunk, Entity, Topic, TopicChunk
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +214,84 @@ class RetrievalRepository:
                 heading_path=chunk.heading_path,
             )
             for chunk, document, version in rows
+        ]
+
+    async def list_top_chunks_by_topic(
+        self,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        version_id: uuid.UUID,
+        focus: str | None = None,
+        limit: int = 8,
+    ) -> list[ChunkHydrationRow]:
+        """Rank version chunks by topic linkage (and optional focus name match).
+
+        Chunks linked to more topics rank higher. When ``focus`` is set, chunks
+        whose topic names ILIKE the focus are preferred. Falls back to
+        ``chunk_index`` order when no topic links exist.
+        """
+        if limit <= 0:
+            return []
+
+        focus_term = (focus or "").strip()
+        if focus_term:
+            focus_score = func.coalesce(
+                func.max(
+                    case(
+                        (Topic.name.ilike(f"%{focus_term}%"), 1),
+                        else_=0,
+                    )
+                ),
+                0,
+            )
+        else:
+            focus_score = literal_column("0")
+
+        stmt = (
+            select(
+                DocumentChunk,
+                Document,
+                DocumentVersion,
+                func.count(TopicChunk.topic_id).label("link_count"),
+                focus_score.label("focus_score"),
+            )
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .outerjoin(TopicChunk, TopicChunk.chunk_id == DocumentChunk.id)
+            .outerjoin(Topic, Topic.id == TopicChunk.topic_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                Document.id == document_id,
+                DocumentChunk.document_version_id == version_id,
+            )
+            .group_by(DocumentChunk.id, Document.id, DocumentVersion.id)
+            .order_by(
+                desc("focus_score"),
+                desc("link_count"),
+                DocumentChunk.chunk_index.asc(),
+            )
+            .limit(limit)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            ChunkHydrationRow(
+                chunk_id=chunk.id,
+                document_id=document.id,
+                document_version_id=version.id,
+                workspace_id=document.workspace_id,
+                content=chunk.content or "",
+                title=document.title,
+                page_number=chunk.page_number,
+                section_index=chunk.section_index,
+                section=chunk.section,
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading_path,
+            )
+            for chunk, document, version, _link_count, _focus_score in rows
         ]
 
     async def document_id_for_version(

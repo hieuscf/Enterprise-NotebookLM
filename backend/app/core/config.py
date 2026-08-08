@@ -207,6 +207,13 @@ class Settings(BaseSettings):
     extraction_timeout_seconds: float = 120.0
     extraction_prompt_reserve_tokens: int = 4_096
 
+    # FR8 — Multi-document Comparison (strong model / complex query; 1 LLM call).
+    comparison_max_output_tokens: int = 4096
+    comparison_timeout_seconds: float = 120.0
+    comparison_prompt_reserve_tokens: int = 4_096
+    # Max chunks per document when no completed summary exists (topic-ranked).
+    comparison_top_chunks_per_document: int = 8
+
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92
     # FR11 — Query Cache lifecycle (write-back + Celery Beat cleanup).

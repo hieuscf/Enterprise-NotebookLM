@@ -12,10 +12,11 @@
 # Public Exports:
 #   - SummaryRepository, TopicContextRow
 # Database/Table: summaries, topics, topic_chunks, document_chunks, documents
-# Related Modules: app.services.summary.summary_service
+# Related Modules: app.services.summary.summary_service, comparison_service
 # Important Notes:
 #   - Always filter by workspace_id for HTTP multi-tenant isolation.
 #   - Status transitions: processing → completed|failed only (optimistic WHERE).
+#   - get_latest_completed_for_version supports FR8 comparison context reuse.
 # =============================================================================
 
 from __future__ import annotations
@@ -114,6 +115,28 @@ class SummaryRepository:
             .order_by(Summary.created_at.desc())
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def get_latest_completed_for_version(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        source_version_id: uuid.UUID,
+    ) -> Summary | None:
+        """Newest completed summary pinned to ``source_version_id``, if any."""
+        stmt = (
+            select(Summary)
+            .join(Document, Document.id == Summary.document_id)
+            .where(
+                Summary.document_id == document_id,
+                Document.workspace_id == workspace_id,
+                Summary.source_version_id == source_version_id,
+                Summary.status == SummaryStatus.completed,
+            )
+            .order_by(Summary.created_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def update_generation_result(
         self,
