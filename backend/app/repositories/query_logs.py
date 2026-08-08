@@ -2,16 +2,17 @@
 # File: query_logs.py
 # Module/Service: Query Router / Observability
 # Layer: Repository
-# Purpose: Persist query_logs (+ optional message_generations for Chat Service).
+# Purpose: Persist and list query_logs (+ optional message_generations for Chat).
 # Responsibilities:
 #   - QueryLogRepository.create_log — one query_logs row per routed request
+#   - QueryLogRepository.list_for_workspace — admin list with route_type filter
 #   - create_message_generation — Chat Service only (not Query Router logging)
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.query, app.models.chat
 # Public Exports:
 #   - QueryLogRepository, QueryObservabilityRepository
 # Database/Table: query_logs, message_generations
-# Related Modules: app.services.query_router.logging_service
+# Related Modules: app.services.query_router.logging_service, app.services.query_logs
 # Important Notes: Schema fixed — no add/drop columns. Router uses create_log only.
 # =============================================================================
 
@@ -20,6 +21,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import MessageGeneration
@@ -28,7 +30,7 @@ from app.models.query import QueryLog
 
 
 class QueryLogRepository:
-    """Postgres write access for ``query_logs`` (Task 4)."""
+    """Postgres access for ``query_logs`` (write + admin read)."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -87,6 +89,30 @@ class QueryLogRepository:
             model_used=model_used,
             latency_ms=latency_ms,
         )
+
+    async def list_for_workspace(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        route_type: RouteType | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> list[QueryLog]:
+        """List workspace query_logs, newest first; optional route_type filter."""
+        page = max(1, page)
+        page_size = min(100, max(1, page_size))
+        offset = (page - 1) * page_size
+
+        stmt = select(QueryLog).where(QueryLog.workspace_id == workspace_id)
+        if route_type is not None:
+            stmt = stmt.where(QueryLog.route_type == route_type)
+        stmt = (
+            stmt.order_by(QueryLog.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        result = await self._session.scalars(stmt)
+        return list(result.all())
 
 
 class QueryObservabilityRepository(QueryLogRepository):

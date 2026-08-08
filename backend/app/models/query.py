@@ -56,6 +56,14 @@ class QueryCache(Base):
 
 class QueryLog(Base):
     __tablename__ = "query_logs"
+    __table_args__ = (
+        Index(
+            "ix_query_logs_workspace_id_route_type_created_at",
+            "workspace_id",
+            "route_type",
+            "created_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     workspace_id: Mapped[uuid.UUID] = mapped_column(

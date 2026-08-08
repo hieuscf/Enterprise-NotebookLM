@@ -2,21 +2,44 @@
 # File: admin.py
 # Module/Service: Observability Module (FR13 + FR14)
 # Layer: Schema
-# Purpose: Pydantic models for admin cost-summary API.
+# Purpose: Pydantic models for admin observability APIs (query-logs, cost-summary).
 # Responsibilities:
+#   - QueryLogResponse matching OpenAPI QueryLog
 #   - CostSummaryResponse matching OpenAPI CostSummary (+ by_agent_type)
 # Dependencies:
 #   - Pydantic v2
 # Public Exports:
+#   - QueryLogResponse
 #   - CostSummaryResponse, CostByModelItem, CostByRouteTypeItem, AgentTypeCostSummary
 # Database/Table: N/A
-# Related Modules: docs/Enterprise_notebooklm_openapi.yaml CostSummary
+# Related Modules: docs/Enterprise_notebooklm_openapi.yaml QueryLog, CostSummary
 # Important Notes: by_agent_type is additive; existing fields unchanged.
 # =============================================================================
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class QueryLogResponse(BaseModel):
+    """OpenAPI QueryLog — admin audit row (no workspace_id in schema)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID
+    message_id: uuid.UUID | None = None
+    cache_id: uuid.UUID | None = None
+    query_text: str
+    route_type: Literal["cache_hit", "metadata", "factoid", "complex"]
+    llm_calls_count: int
+    model_used: str | None = None
+    latency_ms: int | None = None
+    created_at: datetime
 
 
 class CostByModelItem(BaseModel):
