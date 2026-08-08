@@ -17,9 +17,10 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", "chat", "comparisons", and "reports" (when a workspaceId is in
- *   context) are real routes today. Everything else must stay visibly
- *   disabled — never link to a page that 404s.
+ *   "search", "chat", "comparisons", "reports" (when a workspaceId is in
+ *   context) and "admin-dashboard" (global, not workspace-contextual) are
+ *   real routes today. Everything else must stay visibly disabled — never
+ *   link to a page that 404s.
  * =============================================================================
  */
 
@@ -31,6 +32,7 @@ import {
   GitCompare,
   Hash,
   Home,
+  LayoutDashboard,
   Layers,
   LogOut,
   type LucideIcon,
@@ -59,7 +61,8 @@ export type SidebarActiveKey =
   | "search"
   | "chat"
   | "comparisons"
-  | "reports";
+  | "reports"
+  | "admin-dashboard";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -159,6 +162,12 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Users,
         contextual: "members",
         badge: "Chọn workspace",
+      },
+      {
+        key: "admin-dashboard",
+        label: "Admin Dashboard",
+        icon: LayoutDashboard,
+        href: "/admin/dashboard",
       },
       { label: "Cài đặt", icon: Settings, badge: "Sắp có" },
     ],

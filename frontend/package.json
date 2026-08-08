@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs"
+    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs && node scripts/test-admin-dashboard.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

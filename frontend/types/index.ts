@@ -78,3 +78,11 @@ export type {
   ComparisonResult,
   ComparisonStatus,
 } from "./comparisons";
+
+export type {
+  AgentTypeCostSummary,
+  CostByModelItem,
+  CostByRouteTypeItem,
+  CostSummary,
+  QueryLogItem,
+} from "./admin";

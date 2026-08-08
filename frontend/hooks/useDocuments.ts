@@ -12,8 +12,11 @@
  * Public Exports:
  *   - useDocuments
  * Database/Table: documents
- * Related Modules: features/documents/DocumentList
- * Important Notes: Refetches whenever page/pageSize/fileType change.
+ * Related Modules: features/documents/DocumentList, features/admin/AdminDashboardView
+ * Important Notes: Refetches whenever page/pageSize/fileType change. Returns
+ *   [] (not throwing) while workspaceId is empty/not-yet-resolved — same
+ *   contract as useWorkspaceMembers, so callers picking a workspace async
+ *   (e.g. the Admin Dashboard selector) don't fire a request with a blank id.
  * =============================================================================
  */
 
@@ -36,6 +39,7 @@ export function useDocuments(
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
+    if (!workspaceId) return;
     setLoading(true);
     setError(null);
     try {
