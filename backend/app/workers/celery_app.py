@@ -13,11 +13,12 @@
 #   - celery_app
 # Database/Table: N/A
 # Related Modules: app.workers.pipeline, app.workers.summaries,
-#   app.workers.extractions, app.workers.comparisons, app.tasks.cleanup_expired_cache
+#   app.workers.extractions, app.workers.comparisons, app.workers.reports,
+#   app.tasks.cleanup_expired_cache
 # Important Notes:
 #   - Prefer LLM calls from backend-api; documented exceptions: graph_extraction
 #     (ingestion), generate_summary (FR6), generate_extraction (FR7),
-#     generate_comparison (FR8).
+#     generate_comparison (FR8). generate_report (FR9) does not call LLM.
 # =============================================================================
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ celery_app = Celery(
         "app.workers.summaries",
         "app.workers.extractions",
         "app.workers.comparisons",
+        "app.workers.reports",
         "app.tasks.cleanup_expired_cache",
     ],
 )

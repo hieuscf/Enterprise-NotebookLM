@@ -26,6 +26,7 @@ from app.api.chat import router as chat_router
 from app.api.comparisons import router as comparisons_router
 from app.api.documents import router as documents_router
 from app.api.extractions import router as extractions_router
+from app.api.reports import router as reports_router
 from app.api.search import router as search_router
 from app.api.summaries import router as summaries_router
 from app.api.workspaces import router as workspaces_router
@@ -72,6 +73,7 @@ app.include_router(chat_router)
 app.include_router(summaries_router)
 app.include_router(extractions_router)
 app.include_router(comparisons_router)
+app.include_router(reports_router)
 app.include_router(admin_router)
 
 
