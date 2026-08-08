@@ -5,6 +5,7 @@
 # Purpose: Read-only data access for chat_messages (+ nested generation/citations).
 # Responsibilities:
 #   - list() with created_at ASC pagination
+#   - list_for_session() all messages ASC (report aggregation / export)
 #   - count() / latest() for Part 2 summary helpers
 #   - Batch-load message_generations + citations (with document_id via joins)
 # Dependencies:
@@ -13,7 +14,7 @@
 #   - ChatMessageRepository, CitationWithDocument, MessageWithRelations
 # Database/Table: chat_messages, message_generations, citations, retrievals,
 #   document_chunks, document_versions, entities
-# Related Modules: app.services.chat.session_service
+# Related Modules: app.services.chat.session_service, report_aggregation
 # Important Notes:
 #   - Part 1: NO create(). Part 2 owns message insert + generation writes.
 #   - document_id is not on citations; resolve via retrieval → chunk|entity → version.
@@ -87,6 +88,19 @@ class ChatMessageRepository:
             )
             for m in messages
         ]
+
+    async def list_for_session(
+        self,
+        *,
+        session_id: uuid.UUID,
+    ) -> list[ChatMessage]:
+        """All messages in a session, oldest→newest (no nested relations)."""
+        result = await self._session.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.asc())
+        )
+        return list(result.scalars().all())
 
     async def create(
         self,
