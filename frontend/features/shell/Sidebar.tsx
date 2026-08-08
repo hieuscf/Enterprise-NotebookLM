@@ -17,9 +17,9 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", and "chat" (when a workspaceId is in context) are real routes
- *   today. Everything else must stay visibly disabled — never link to a page
- *   that 404s.
+ *   "search", "chat", and "comparisons" (when a workspaceId is in context) are
+ *   real routes today. Everything else must stay visibly disabled — never link
+ *   to a page that 404s.
  * =============================================================================
  */
 
@@ -57,7 +57,8 @@ export type SidebarActiveKey =
   | "upload"
   | "documents"
   | "search"
-  | "chat";
+  | "chat"
+  | "comparisons";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -67,7 +68,13 @@ type NavItem = {
   /** Static badge for not-yet-built modules; ignored once `href` resolves. */
   badge?: string;
   /** Marks items whose href depends on the current workspaceId. */
-  contextual?: "members" | "upload" | "documents" | "search" | "chat";
+  contextual?:
+    | "members"
+    | "upload"
+    | "documents"
+    | "search"
+    | "chat"
+    | "comparisons";
 };
 
 type NavGroup = {
@@ -119,7 +126,13 @@ const NAV_GROUPS: NavGroup[] = [
       },
       { label: "Tóm tắt", icon: ScrollText, badge: "Sắp có" },
       { label: "Trích xuất", icon: Wand2, badge: "Sắp có" },
-      { label: "So sánh", icon: GitCompare, badge: "Sắp có" },
+      {
+        key: "comparisons",
+        label: "So sánh",
+        icon: GitCompare,
+        contextual: "comparisons",
+        badge: "Chọn workspace",
+      },
       { label: "Báo cáo", icon: FileBarChart2, badge: "Sắp có" },
     ],
   },
@@ -232,7 +245,9 @@ export function Sidebar({
                             ? `/workspaces/${workspaceId}/search`
                             : item.contextual === "chat"
                               ? `/workspaces/${workspaceId}/chat`
-                              : item.href
+                              : item.contextual === "comparisons"
+                                ? `/workspaces/${workspaceId}/comparisons`
+                                : item.href
                     : item.href;
 
                   if (href) {

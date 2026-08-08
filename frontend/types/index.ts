@@ -71,3 +71,10 @@ export type {
   WorkspaceMember,
   WorkspaceUpdateInput,
 } from "./workspaces";
+
+export type {
+  Comparison,
+  ComparisonCreateRequest,
+  ComparisonResult,
+  ComparisonStatus,
+} from "./comparisons";
