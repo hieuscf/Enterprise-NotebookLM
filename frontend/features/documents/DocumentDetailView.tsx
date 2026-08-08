@@ -18,7 +18,8 @@
  * Public Exports:
  *   - DocumentDetailView
  * Database/Table: documents, document_versions
- * Related Modules: app/workspaces/[id]/documents/[documentId]/page.tsx
+ * Related Modules: app/workspaces/[id]/documents/[documentId]/page.tsx,
+ *   features/summaries/SummarySection, features/extractions/ExtractionSection
  * Important Notes: A replacement version is already current_version_id in the
  *   backend as soon as the 202 response arrives (see upload_new_version) —
  *   reloading the version list alone is enough to reflect the new
@@ -38,6 +39,7 @@ import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHist
 import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
+import { ExtractionSection } from "@/features/extractions/ExtractionSection";
 import { SummarySection } from "@/features/summaries/SummarySection";
 import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "@/hooks/useAuth";
@@ -187,6 +189,19 @@ export function DocumentDetailView({
             canEdit={isEditor}
             onCopied={() => pushSuccess("Đã sao chép tóm tắt.")}
             onCopyFailed={() => pushError("Không sao chép được tóm tắt.")}
+            onCreateError={(message) => pushError(message)}
+          />
+        ) : null}
+
+        {!docError ? (
+          <ExtractionSection
+            workspaceId={workspaceId}
+            documentId={documentId}
+            currentVersionId={doc?.current_version_id ?? null}
+            canEdit={isEditor}
+            onCopied={() => pushSuccess("Đã sao chép kết quả trích xuất.")}
+            onCopyFailed={() => pushError("Không sao chép được kết quả trích xuất.")}
+            onExportError={(message) => pushError(message)}
             onCreateError={(message) => pushError(message)}
           />
         ) : null}

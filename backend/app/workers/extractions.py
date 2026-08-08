@@ -17,11 +17,11 @@
 #   - FR7 exception: worker may call chat LLM (same as generate_summary).
 #   - entities REUSE path still makes ZERO LLM calls inside process_extraction.
 #   - Idempotent: deleted / completed / failed rows are not regenerated.
+#   - Uses run_celery_async so asyncpg is not bound to a closed event loop.
 # =============================================================================
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Any
 
@@ -33,6 +33,7 @@ from app.repositories.documents import DocumentRepository
 from app.repositories.extractions import ExtractionRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.services.extraction.extraction_service import ExtractionService
+from app.workers.async_runtime import run_celery_async
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -42,7 +43,7 @@ logger = get_logger(__name__)
 def generate_extraction(self, extraction_id: str) -> dict[str, Any]:
     """Celery entrypoint enqueued by ExtractionService.request_extraction."""
     del self
-    return asyncio.run(run_extraction_generation(uuid.UUID(extraction_id)))
+    return run_celery_async(run_extraction_generation(uuid.UUID(extraction_id)))
 
 
 async def run_extraction_generation(extraction_id: uuid.UUID) -> dict[str, Any]:

@@ -6,26 +6,30 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ---
 
-## Trạng thái triển khai (cập nhật 2026-08-08)
+## Trạng thái triển khai (cập nhật 2026-08-09)
 
-**Baseline code hiện tại:** schema **v3** + chat migrations (Alembic head `c1d2e3f4a5b6`: soft-delete + `last_message_*` trên `chat_sessions`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), Chat API + Prompt/SSE + **FE Chat UI**, `GET .../cost-summary` (+ `by_agent_type`) đã xong.
+**Baseline code hiện tại:** schema **v3** + chat migrations + **FR6 summaries** + **FR7 extractions** (Alembic head `b6c7d8e9f0a1`: summaries observability/async/sections + extractions observability/async); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), Chat API + Prompt/SSE + **FE Chat UI**, AI Summary (async Celery + FE), Information Extraction (async Celery + FE, entities reuse Graph 0 LLM), `GET .../cost-summary` (+ `by_agent_type`) đã xong.
 
-**Chat LLM provider (2026-08-08):** `CHAT_LLM_PROVIDER=anthropic|openai` — answer + rewrite dùng provider đã chọn; OpenAI Chat Completions wired (`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`); Gemini chỉ placeholder env. Embedding vẫn `EMBEDDING_*` (độc lập). Qdrant adapter dùng `query_points` (client 1.18+ bỏ `.search`).
+**Chat LLM provider (2026-08-08):** `CHAT_LLM_PROVIDER=anthropic|openai` — answer + rewrite dùng provider đã chọn; OpenAI Chat Completions wired (`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`); Gemini chỉ placeholder env. Embedding vẫn `EMBEDDING_*` (độc lập). Qdrant adapter dùng `query_points` (client 1.18+ bỏ `.search`). Summary/Extraction generation (Celery) reuse cùng chat LLM + model tiering; Celery async tasks dùng `run_celery_async` (dispose AsyncEngine mỗi task — tránh asyncpg event-loop lỗi prefork).
 
-**Chênh lệch so với tài liệu v3 (còn lại — lõi GĐ2):**
+**Chênh lệch so với tài liệu v3 (còn lại — lõi GĐ2 + GĐ3):**
 
 | Hạng mục | Đã có | Còn thiếu (mục tiêu) |
 |---|---|---|
-| Schema DB / Pipeline / LlamaParse | Khớp v3 + chat soft-delete / last-message | — |
+| Schema DB / Pipeline / LlamaParse | Khớp v3 + chat soft-delete / last-message + FR6/FR7 columns | — |
 | Search (FR3) | Hybrid Vector+BM25+Graph → Rerank; Search API + FE | Metadata DB là filter/post-query (`SearchService`), không phải nguồn fan-out thứ 4 |
 | Query Router (FR11) | Classifier + cache + metadata/factoid/complex + `query_logs` + Celery cleanup | — |
 | FR14 Confidence & Agents | Engine + Event Policy + Rewrite/Graph/SQL + Second Retrieval + `agent_events` + tests/metrics | — |
 | Chat / Prompt | Sessions/messages HTTP + Prompt Construction (1 LLM) + SSE/JSON + FE Chat (sessions, stream, citations UI, agent badge) + multi-provider Anthropic/OpenAI | — |
 | Citation (FR5) | Persist `retrievals`; map `citation_ids` → `citations` trên POST message; FE `CitationSection` | Citation Verification Layer cứng (verified vs DB) + fallback regenerate + `GET .../citations` + highlight đoạn gốc trên document viewer |
+| Summary (FR6) | Async POST 202 + Celery `generate_summary` + status lifecycle + FE Document Detail (4 styles, reuse version, poll, history, copy) | — |
+| Extraction (FR7) | Async POST 202 + Celery `generate_extraction` + structured schemas; entities **reuse Graph** (0 LLM); FE table/JSON + CSV/JSON export | Visual timeline (backlog); sidebar “Sắp có” chưa gỡ |
 
 **Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline xong.
 
 **Tiến độ GĐ2 (P1):** ~90% — Search + Query Router + FR14 + Chat Memory + POST messages/Prompt/SSE + **FE Chat** xong; còn **Citation Verification cứng (2.5)** (+ GET citations / highlight viewer).
+
+**Tiến độ GĐ3 (P2):** Summary (3.1) + Extraction (3.2) **DONE**; còn Comparison / Report / Observability FE / hardening / E2E tests.
 
 ---
 
@@ -184,14 +188,31 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 ## GIAI ĐOẠN 3 (P2 + P3) — Modules mở rộng, bảo mật, quan sát, hoàn thiện
 
 ### 3.1 AI Summary (FR6, UC5, Module 6)
-- [ ] [AI] Sinh tóm tắt 4 dạng: short/detailed/by_topic/bullet_points.
-- [ ] [BE] `GET/POST /workspaces/{id}/documents/{id}/summaries`, `GET/DELETE /workspaces/{id}/summaries/{id}`.
-- [ ] [FE] UI chọn dạng tóm tắt, hiển thị kết quả, lưu lịch sử.
+
+> **DONE (2026-08-08):** Parts 1–3 — migration observability + async status/sections;
+> `SummaryService.request_summary` / `process_summary`; Celery `generate_summary`;
+> API GET/POST/DELETE (POST **202**, RBAC member read / editor+ write);
+> FE Document Detail section (4 styles, current-version reuse, poll ~2.5s, history,
+> old-version badge, copy). OpenAPI Summary synced. Tests: `test_summary_service.py`,
+> `test_summaries_api.py`, `scripts/test-summary-ui.mjs`.
+
+- [x] [AI] Sinh tóm tắt 4 dạng: short/detailed/by_topic/bullet_points — structured LLM + `by_topic.sections`; version-bound `source_version_id`.
+- [x] [BE] `GET/POST /workspaces/{id}/documents/{id}/summaries`, `GET/DELETE /workspaces/{id}/summaries/{id}` — async 202 + status `processing|completed|failed`.
+- [x] [FE] UI chọn dạng tóm tắt, hiển thị kết quả, lưu lịch sử — `features/summaries/*` trên Document Detail.
 
 ### 3.2 Information Extraction (FR7, UC6, Module 7)
-- [ ] [AI] Trích xuất table/figures/entities/timeline → JSON có cấu trúc.
-- [ ] [BE] `GET/POST .../documents/{id}/extractions`, `GET/DELETE /workspaces/{id}/extractions/{id}`.
-- [ ] [FE] UI hiển thị kết quả dạng bảng/JSON, export.
+
+> **DONE (2026-08-08/09):** Parts 4–6 — migration observability + async status;
+> `ExtractionService` (table/figures/timeline LLM structured; **entities REUSE Graph**
+> `Entity.source_version_id` → 0 LLM); Celery `generate_extraction` + `run_celery_async`;
+> API GET/POST/DELETE (POST **202**, cùng RBAC Summary); FE Document Detail
+> (type+format, reuse, poll, history, table/JSON, CSV/JSON export). Visual timeline
+> deferred (table/list đủ P2). Tests: `test_extraction_service.py`,
+> `test_extractions_api.py`, `scripts/test-extraction-ui.mjs`.
+
+- [x] [AI] Trích xuất table/figures/entities/timeline → JSON có cấu trúc (Pydantic per-type; entities reuse LightRAG/Graph khi standard path).
+- [x] [BE] `GET/POST .../documents/{id}/extractions`, `GET/DELETE /workspaces/{id}/extractions/{id}` — async 202 + status lifecycle.
+- [x] [FE] UI hiển thị kết quả dạng bảng/JSON, export CSV/JSON — `features/extractions/*` trên Document Detail.
 
 ### 3.3 Multi-document Comparison (FR8, UC7, Module 8)
 - [ ] [AI] So sánh ≥2 tài liệu (similarities/differences), tuỳ chọn `focus`.
@@ -243,8 +264,8 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 | 4. Chat | FR4, FR10 | chat_sessions, chat_messages, message_generations | `/workspaces/{id}/chat/*` |
 | 5. Citation | FR5 | retrievals (retrieval_pass), citations | `/chat/messages/{id}/citations` |
 | Confidence Engine & Agents | FR14 (mới v3) | message_generations (confidence_level, confidence_score, agent_triggered), agent_events | `/chat/messages/{id}/agent-events` |
-| 6. Summary | FR6 | summaries | `/documents/{id}/summaries` |
-| 7. Extraction | FR7 | extractions | `/documents/{id}/extractions` |
+| 6. Summary | FR6 | summaries (source_version_id, status, sections, tokens/cost) | `/documents/{id}/summaries` (POST 202) |
+| 7. Extraction | FR7 | extractions (source_version_id, status, result_json, tokens/cost) | `/documents/{id}/extractions` (POST 202) |
 | 8. Comparison | FR8 | comparisons, comparison_documents | `/workspaces/{id}/comparisons` |
 | 9. Report | FR9 | reports, report_items | `/workspaces/{id}/reports` |
 | 10. Query Router | FR11 | query_cache, query_logs | (internal, xuyên suốt Chat) |
