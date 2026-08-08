@@ -1,13 +1,14 @@
 # =============================================================================
 # File: test_report_renderers.py
-# Module/Service: Report Service (FR9) — Markdown & DOCX Renderers
+# Module/Service: Report Service (FR9) — Markdown / DOCX / PDF Renderers
 # Layer: Service
-# Purpose: Unit tests for report Markdown/DOCX renderers (Prompt 2/5).
+# Purpose: Unit tests for report Markdown/DOCX/PDF renderers (Prompt 2–3/5).
 # Responsibilities:
 #   - Output non-empty; section_count == input block count
 #   - Filename / object_key conventions; tabular extraction shapes
+#   - PDF from Markdown preserves title / headings / table / code text
 # Dependencies:
-#   - pytest, python-docx, AggregatedReportBlock fakes
+#   - pytest, python-docx, pymupdf, AggregatedReportBlock fakes
 # Public Exports:
 #   - N/A
 # Database/Table: N/A (temp filesystem only; no MinIO/Postgres)
@@ -21,6 +22,7 @@ import re
 import uuid
 from pathlib import Path
 
+import fitz
 import pytest
 from docx import Document
 
@@ -28,6 +30,7 @@ from app.models.enums import ReportSourceType
 from app.services.report_aggregation import AggregatedReportBlock
 from app.services.renderers.docx_renderer import render_docx
 from app.services.renderers.markdown_renderer import render_markdown
+from app.services.renderers.pdf_renderer import markdown_to_html, render_pdf
 
 
 def _blocks() -> list[AggregatedReportBlock]:
@@ -200,3 +203,76 @@ def test_docx_and_markdown_share_section_count(staging_root: Path) -> None:
     md = render_markdown(blocks, **kwargs)
     docx = render_docx(blocks, **kwargs)
     assert md.section_count == docx.section_count == len(blocks)
+
+
+# ---------------------------------------------------------------------------
+# PDF (from Markdown)
+# ---------------------------------------------------------------------------
+
+
+def test_pdf_from_markdown_non_empty_preserves_structure(staging_root: Path) -> None:
+    blocks = _blocks()
+    report_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    md = render_markdown(
+        blocks,
+        report_title="Quarterly Report",
+        report_id=report_id,
+        workspace_id=workspace_id,
+        output_dir=staging_root,
+    )
+
+    result = render_pdf(
+        md.markdown,
+        report_title="Quarterly Report",
+        report_id=report_id,
+        workspace_id=workspace_id,
+        output_dir=staging_root,
+    )
+
+    assert result.local_path.is_file()
+    assert result.local_path.suffix == ".pdf"
+    assert result.local_path.stat().st_size > 0
+    assert result.filename == f"Quarterly_Report_{report_id}.pdf"
+    assert result.object_key.endswith(result.filename)
+
+    with fitz.open(str(result.local_path)) as doc:
+        assert len(doc) >= 1
+        text = "\n".join(page.get_text() for page in doc)
+
+    assert "Quarterly Report" in text
+    assert "Summary (short)" in text
+    assert "Policy overview" in text
+    assert "Name" in text and "Alpha" in text
+    assert "User:" in text and "What is policy?" in text
+    # JSON code-fence content from non-table extraction
+    assert "entities" in text or "Acme" in text
+
+
+def test_markdown_to_html_keeps_headings_table_and_code() -> None:
+    md = "\n".join(
+        [
+            "# Title",
+            "",
+            "## Section",
+            "",
+            "- bullet",
+            "",
+            "| A | B |",
+            "| --- | --- |",
+            "| 1 | 2 |",
+            "",
+            "```json",
+            '{"k": true}',
+            "```",
+            "",
+            "**User:** hi",
+        ]
+    )
+    html_out = markdown_to_html(md)
+    assert "<h1>Title</h1>" in html_out
+    assert "<h2>Section</h2>" in html_out
+    assert "<li>bullet</li>" in html_out
+    assert "<table>" in html_out and "<th>A</th>" in html_out
+    assert "<pre><code" in html_out
+    assert "<b>User:</b> hi" in html_out
