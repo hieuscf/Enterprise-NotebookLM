@@ -17,9 +17,9 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", "chat", and "comparisons" (when a workspaceId is in context) are
- *   real routes today. Everything else must stay visibly disabled — never link
- *   to a page that 404s.
+ *   "search", "chat", "comparisons", and "reports" (when a workspaceId is in
+ *   context) are real routes today. Everything else must stay visibly
+ *   disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -58,7 +58,8 @@ export type SidebarActiveKey =
   | "documents"
   | "search"
   | "chat"
-  | "comparisons";
+  | "comparisons"
+  | "reports";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -74,7 +75,8 @@ type NavItem = {
     | "documents"
     | "search"
     | "chat"
-    | "comparisons";
+    | "comparisons"
+    | "reports";
 };
 
 type NavGroup = {
@@ -133,7 +135,13 @@ const NAV_GROUPS: NavGroup[] = [
         contextual: "comparisons",
         badge: "Chọn workspace",
       },
-      { label: "Báo cáo", icon: FileBarChart2, badge: "Sắp có" },
+      {
+        key: "reports",
+        label: "Báo cáo",
+        icon: FileBarChart2,
+        contextual: "reports",
+        badge: "Chọn workspace",
+      },
     ],
   },
   {
@@ -247,7 +255,9 @@ export function Sidebar({
                               ? `/workspaces/${workspaceId}/chat`
                               : item.contextual === "comparisons"
                                 ? `/workspaces/${workspaceId}/comparisons`
-                                : item.href
+                                : item.contextual === "reports"
+                                  ? `/workspaces/${workspaceId}/reports`
+                                  : item.href
                     : item.href;
 
                   if (href) {
