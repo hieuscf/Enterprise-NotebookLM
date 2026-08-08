@@ -12,9 +12,9 @@
  * Public Exports:
  *   - default page
  * Database/Table: N/A
- * Related Modules: middleware.ts, features/shell/Sidebar.tsx
- * Important Notes: Runs in the same Next.js app on port 3000 — no separate
- *   admin frontend/project/port.
+ * Related Modules: middleware.ts, features/admin/AdminShell.tsx
+ * Important Notes: Runs in the same Next.js app on port 3000 — dedicated
+ *   AdminShell (not product AppShell).
  * =============================================================================
  */
 

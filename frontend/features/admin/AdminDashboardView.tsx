@@ -6,7 +6,7 @@
  * Purpose: Admin Control Center — `/admin/dashboard` (Admin Dashboard task).
  *          Composes KPI, System Health, Query Routing, Pipeline Health,
  *          Usage & Cost, Recent Query Activity and Recent Pipeline Activity
- *          using the existing AppShell/Sidebar, design tokens and the real
+ *          using the dedicated AdminShell, design tokens and the real
  *          Admin/Observability contract (query-logs, pipeline-runs,
  *          cost-summary) — no new backend endpoints, no fake data.
  * Responsibilities:
@@ -16,14 +16,14 @@
  *   - Own workspace selector + date-range state; fan out independent,
  *     parallel fetches per section so one failing section never blanks others
  * Dependencies:
- *   - features/shell/AppShell, hooks/useAuth, hooks/useAdminEligibleWorkspaces,
+ *   - features/admin/AdminShell, hooks/useAuth, hooks/useAdminEligibleWorkspaces,
  *     hooks/useAdminCostSummary, hooks/useAdminQueryLogs,
  *     hooks/useAdminPipelineRuns, hooks/useWorkspaceMembers, hooks/useDocuments
  * Public Exports:
  *   - AdminDashboardView
  * Database/Table: workspaces, workspace_members, documents, query_logs,
  *   pipeline_runs, message_generations, agent_events
- * Related Modules: app/admin/dashboard/page.tsx, features/shell/Sidebar.tsx
+ * Related Modules: app/admin/dashboard/page.tsx, features/admin/AdminShell.tsx
  * Important Notes: Never bypass RBAC client-side — the backend still 403s any
  *   workspace the caller is not "admin" in on every /admin/workspaces/{id}/*
  *   call; this view only decides what to *show*, not what the API allows.
@@ -37,6 +37,7 @@ import { useEffect, useState } from "react";
 
 import { AdminHeaderControls } from "@/features/admin/AdminHeaderControls";
 import { AdminKpiCards } from "@/features/admin/AdminKpiCards";
+import { AdminShell } from "@/features/admin/AdminShell";
 import { PipelineHealthCard } from "@/features/admin/PipelineHealthCard";
 import { QueryRoutingCard } from "@/features/admin/QueryRoutingCard";
 import { RecentPipelineTable } from "@/features/admin/RecentPipelineTable";
@@ -44,7 +45,6 @@ import { RecentQueriesTable } from "@/features/admin/RecentQueriesTable";
 import type { HealthStatus } from "@/features/admin/SystemHealthCard";
 import { SystemHealthCard } from "@/features/admin/SystemHealthCard";
 import { UsageCostCard } from "@/features/admin/UsageCostCard";
-import { AppShell } from "@/features/shell/AppShell";
 import { useAdminCostSummary, type CostRangeDays } from "@/hooks/useAdminCostSummary";
 import { useAdminEligibleWorkspaces } from "@/hooks/useAdminEligibleWorkspaces";
 import { useAdminPipelineRuns } from "@/hooks/useAdminPipelineRuns";
@@ -128,7 +128,7 @@ export function AdminDashboardView() {
   const showUnauthorized = !authLoading && !workspacesLoading && !isSystemAdmin;
 
   return (
-    <AppShell active="admin-dashboard" user={user} workspaceId={selectedWorkspaceId || null}>
+    <AdminShell active="dashboard" user={user}>
       <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -221,6 +221,6 @@ export function AdminDashboardView() {
           </>
         )}
       </div>
-    </AppShell>
+    </AdminShell>
   );
 }

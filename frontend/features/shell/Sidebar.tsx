@@ -18,8 +18,8 @@
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
  *   "search", "chat", "comparisons", "reports" (when a workspaceId is in
- *   context) and "admin-dashboard" (global, not workspace-contextual) are
- *   real routes today. Everything else must stay visibly disabled — never
+ *   context) and "admin" (entry into the dedicated Admin Console at /admin)
+ *   are real routes today. Everything else must stay visibly disabled — never
  *   link to a page that 404s.
  * =============================================================================
  */
@@ -32,7 +32,6 @@ import {
   GitCompare,
   Hash,
   Home,
-  LayoutDashboard,
   Layers,
   LogOut,
   type LucideIcon,
@@ -41,6 +40,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  Shield,
   Sparkles,
   UploadCloud,
   Users,
@@ -62,7 +62,7 @@ export type SidebarActiveKey =
   | "chat"
   | "comparisons"
   | "reports"
-  | "admin-dashboard";
+  | "admin";
 
 type NavItem = {
   key?: SidebarActiveKey;
@@ -164,10 +164,10 @@ const NAV_GROUPS: NavGroup[] = [
         badge: "Chọn workspace",
       },
       {
-        key: "admin-dashboard",
-        label: "Admin Dashboard",
-        icon: LayoutDashboard,
-        href: "/admin/dashboard",
+        key: "admin",
+        label: "Admin Console",
+        icon: Shield,
+        href: "/admin",
       },
       { label: "Cài đặt", icon: Settings, badge: "Sắp có" },
     ],
