@@ -2,12 +2,11 @@
 # File: comparison_service.py
 # Module/Service: Comparison Service (FR8)
 # Layer: Service
-# Purpose: Multi-document comparison (≥2 docs) with one structured LLM call (UC7).
+# Purpose: Async multi-document comparison (≥2 docs) with one structured LLM call.
 # Responsibilities:
-#   - Validate document_ids; use each document's current_version
-#   - Prefer completed summaries; else top topic-ranked chunks
-#   - Call strong-tier LLM once; persist comparisons + comparison_documents
-#   - list / get / delete for HTTP API (presentation maps OpenAPI)
+#   - request_comparison: create processing row, commit, enqueue Celery (no LLM)
+#   - process_comparison: generate into existing row using linked document_ids
+#   - list / get / delete for HTTP API
 # Dependencies:
 #   - DocumentRepository, RetrievalRepository, SummaryRepository, ComparisonRepository
 #   - chat_llm adapter, model_tiering, count_tokens
@@ -15,8 +14,9 @@
 #   - ComparisonService, ComparisonServiceError
 # Database/Table: comparisons, comparison_documents, summaries, document_chunks,
 #   topics, topic_chunks, documents, document_versions
-# Related Modules: prompts, result_schemas, OpenAPI Comparison
+# Related Modules: prompts, result_schemas, app.workers.comparisons, OpenAPI
 # Important Notes:
+#   - HTTP path must not call the LLM; generation runs in process_comparison.
 #   - Complex query → prefer_strong=True (Claude Sonnet via Settings).
 #   - Exactly one LLM call per comparison; never invent beyond provided context.
 # =============================================================================
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import ValidationError
@@ -36,7 +37,7 @@ from app.ai.tokens import count_tokens
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, SummaryStatus
+from app.models.enums import ComparisonStatus, DocumentVersionStatus, SummaryStatus
 from app.repositories.comparisons import ComparisonRepository, ComparisonWithDocuments
 from app.repositories.documents import DocumentRepository
 from app.repositories.retrieval import ChunkHydrationRow, RetrievalRepository
@@ -56,6 +57,8 @@ from app.services.comparison.result_schemas import (
 )
 
 logger = get_logger(__name__)
+
+EnqueueFn = Callable[[uuid.UUID], None]
 
 
 class ComparisonServiceError(Exception):
@@ -81,6 +84,8 @@ class ComparisonService:
         summaries: SummaryRepository,
         comparisons: ComparisonRepository,
         llm_call: Any | None = None,
+        enqueue: bool = True,
+        enqueue_fn: EnqueueFn | None = None,
     ) -> None:
         self._settings = settings
         self._session = session
@@ -89,12 +94,14 @@ class ComparisonService:
         self._summaries = summaries
         self._comparisons = comparisons
         self._llm_call = llm_call
+        self._enqueue = enqueue
+        self._enqueue_fn = enqueue_fn
 
     # ------------------------------------------------------------------
     # HTTP API operations
     # ------------------------------------------------------------------
 
-    async def create_comparison(
+    async def request_comparison(
         self,
         *,
         workspace_id: uuid.UUID,
@@ -103,7 +110,7 @@ class ComparisonService:
         focus: str | None = None,
         title: str | None = None,
     ) -> ComparisonWithDocuments:
-        """Compare ≥2 documents (current versions) and persist the result."""
+        """Create processing Comparison, commit, enqueue Celery — no LLM in-request."""
         ordered_ids = self._normalize_document_ids(document_ids)
         focus_term = (focus or "").strip() or None
 
@@ -113,10 +120,7 @@ class ComparisonService:
                 workspace_id=workspace_id,
                 document_id=document_id,
             )
-            resolved.append((document, version))
-
-        contexts: list[DocumentCompareContext] = []
-        for document, version in resolved:
+            # Fail fast when neither summary nor chunks exist (worker would fail anyway).
             ctx = await self._build_document_context(
                 workspace_id=workspace_id,
                 document=document,
@@ -129,12 +133,7 @@ class ComparisonService:
                     f"Document {document.id} has no summary or chunks to compare",
                     status_code=409,
                 )
-            contexts.append(ctx)
-
-        result_payload = await self._run_comparison_llm(
-            contexts=contexts,
-            focus=focus_term,
-        )
+            resolved.append((document, version))
 
         derived_title = title
         if derived_title is None:
@@ -145,30 +144,168 @@ class ComparisonService:
             if focus_term:
                 derived_title = f"{derived_title} — {focus_term}"
 
-        outcome = await self._comparisons.create(
+        outcome = await self._comparisons.create_processing(
             workspace_id=workspace_id,
             created_by=created_by,
             document_ids=ordered_ids,
-            result=result_payload,
+            focus=focus_term,
             title=derived_title[:512] if derived_title else None,
         )
         await self._session.commit()
 
+        try:
+            self._enqueue_comparison(outcome.comparison.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "comparison_enqueue_failed",
+                comparison_id=str(outcome.comparison.id),
+            )
+            await self._comparisons.mark_failed(comparison_id=outcome.comparison.id)
+            await self._session.commit()
+            raise ComparisonServiceError(
+                "enqueue_failed",
+                "Failed to schedule comparison generation",
+                status_code=503,
+            ) from exc
+
+        refreshed = await self._comparisons.get(
+            workspace_id=workspace_id,
+            comparison_id=outcome.comparison.id,
+        )
+        return refreshed or outcome
+
+    async def process_comparison(
+        self, comparison_id: uuid.UUID
+    ) -> ComparisonWithDocuments | None:
+        """Generate into an existing processing Comparison.
+
+        Idempotent:
+          - missing → None
+          - not processing → return row unchanged
+        """
+        row = await self._comparisons.get_by_id(comparison_id)
+        if row is None:
+            logger.info("comparison_process_missing", comparison_id=str(comparison_id))
+            return None
+        if row.status != ComparisonStatus.processing:
+            logger.info(
+                "comparison_process_skip_status",
+                comparison_id=str(comparison_id),
+                status=row.status.value,
+            )
+            return await self._comparisons.get(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+            )
+
+        document_ids = await self._comparisons.list_document_ids(row.id)
+        if len(document_ids) < 2:
+            await self._comparisons.mark_failed(comparison_id=row.id)
+            return await self._comparisons.get(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+            )
+
+        focus_term = (row.focus or "").strip() or None
+        try:
+            contexts = await self._gather_contexts(
+                workspace_id=row.workspace_id,
+                document_ids=document_ids,
+                focus=focus_term,
+            )
+            result_payload = await self._run_comparison_llm(
+                contexts=contexts,
+                focus=focus_term,
+            )
+        except ComparisonServiceError as exc:
+            logger.warning(
+                "comparison_generation_failed",
+                comparison_id=str(row.id),
+                code=exc.code,
+            )
+            await self._comparisons.mark_failed(comparison_id=row.id)
+            return await self._comparisons.get(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("comparison_generation_unexpected", comparison_id=str(row.id))
+            await self._comparisons.mark_failed(comparison_id=row.id)
+            return await self._comparisons.get(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+            )
+
+        updated = await self._comparisons.update_generation_result(
+            comparison_id=row.id,
+            result=result_payload,
+        )
+        if not updated:
+            logger.info("comparison_process_race_skip", comparison_id=str(row.id))
+            return await self._comparisons.get(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+            )
+
+        final = await self._comparisons.get(
+            workspace_id=row.workspace_id,
+            comparison_id=row.id,
+        )
         logger.info(
-            "comparison_created",
-            comparison_id=str(outcome.comparison.id),
-            workspace_id=str(workspace_id),
-            document_count=len(ordered_ids),
+            "comparison_generated",
+            comparison_id=str(row.id),
+            document_count=len(document_ids),
             focus=focus_term,
         )
-        return outcome
+        return final
+
+    async def create_comparison(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+        created_by: uuid.UUID,
+        focus: str | None = None,
+        title: str | None = None,
+    ) -> ComparisonWithDocuments:
+        """In-process request+process (tests / sync callers). Still one Comparison row."""
+        prev_enqueue = self._enqueue
+        self._enqueue = False
+        try:
+            outcome = await self.request_comparison(
+                workspace_id=workspace_id,
+                document_ids=document_ids,
+                created_by=created_by,
+                focus=focus,
+                title=title,
+            )
+        finally:
+            self._enqueue = prev_enqueue
+
+        final = await self.process_comparison(outcome.comparison.id)
+        if final is None or final.comparison.status != ComparisonStatus.completed:
+            raise ComparisonServiceError(
+                "llm_failed",
+                "Comparison generation failed",
+                status_code=502,
+            )
+        return final
 
     async def list_comparisons(
         self,
         *,
         workspace_id: uuid.UUID,
+        page: int = 1,
+        page_size: int = 20,
     ) -> list[ComparisonWithDocuments]:
-        return await self._comparisons.list_for_workspace(workspace_id=workspace_id)
+        page = max(1, page)
+        page_size = min(100, max(1, page_size))
+        offset = (page - 1) * page_size
+        return await self._comparisons.list_for_workspace(
+            workspace_id=workspace_id,
+            offset=offset,
+            limit=page_size,
+        )
 
     async def get_comparison(
         self,
@@ -210,6 +347,16 @@ class ComparisonService:
     # Internals
     # ------------------------------------------------------------------
 
+    def _enqueue_comparison(self, comparison_id: uuid.UUID) -> None:
+        if not self._enqueue:
+            return
+        if self._enqueue_fn is not None:
+            self._enqueue_fn(comparison_id)
+            return
+        from app.workers.comparisons import generate_comparison as generate_comparison_task
+
+        generate_comparison_task.delay(str(comparison_id))
+
     def _normalize_document_ids(self, document_ids: list[uuid.UUID]) -> list[uuid.UUID]:
         if len(document_ids) < 2:
             raise ComparisonServiceError(
@@ -240,6 +387,7 @@ class ComparisonService:
     ) -> tuple[Document, DocumentVersion]:
         document = await self._documents.get_document(workspace_id, document_id)
         if document is None:
+            # 404 (not 403): do not reveal whether the id exists in another workspace.
             raise ComparisonServiceError(
                 "not_found",
                 f"Document {document_id} not found",
@@ -268,6 +416,34 @@ class ComparisonService:
                 status_code=409,
             )
         return document, version
+
+    async def _gather_contexts(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+        focus: str | None,
+    ) -> list[DocumentCompareContext]:
+        contexts: list[DocumentCompareContext] = []
+        for document_id in document_ids:
+            document, version = await self._require_ready_current_version(
+                workspace_id=workspace_id,
+                document_id=document_id,
+            )
+            ctx = await self._build_document_context(
+                workspace_id=workspace_id,
+                document=document,
+                version=version,
+                focus=focus,
+            )
+            if not self._context_has_content(ctx):
+                raise ComparisonServiceError(
+                    "insufficient_context",
+                    f"Document {document.id} has no summary or chunks to compare",
+                    status_code=409,
+                )
+            contexts.append(ctx)
+        return contexts
 
     async def _build_document_context(
         self,
@@ -348,7 +524,6 @@ class ComparisonService:
                 status_code=503,
             )
 
-        # Complex multi-document analysis → strong tier (Claude Sonnet via Settings).
         model = select_answer_model(
             self._settings,
             agent_triggered=False,
@@ -422,13 +597,11 @@ class ComparisonService:
         model: str,
         focus: str | None,
     ) -> list[DocumentCompareContext]:
-        """Trim chunk-based contexts so the prompt fits the model window."""
         window = model_context_window(self._settings, model)
         reserve = int(self._settings.comparison_prompt_reserve_tokens)
         max_tokens = int(self._settings.comparison_max_output_tokens)
         budget = max(1_024, window - reserve - max_tokens)
 
-        # Probe full prompt size; if within budget keep as-is.
         system, user = build_comparison_prompts(documents=contexts, focus=focus)
         if count_tokens(f"{system}\n{user}") <= budget:
             return contexts
@@ -437,9 +610,7 @@ class ComparisonService:
         for ctx in contexts:
             if ctx.source == "summary":
                 text = (ctx.summary_text or "").strip()
-                # Soft-trim overly long summaries by character budget per doc.
                 per_doc_budget = max(512, budget // max(1, len(contexts)))
-                # Approximate: ~4 chars/token.
                 max_chars = per_doc_budget * 4
                 if len(text) > max_chars:
                     text = text[:max_chars].rsplit(" ", 1)[0].strip()

@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.enums import (
+    ComparisonStatus,
     ExtractionOutputFormat,
     ExtractionStatus,
     ExtractionType,
@@ -41,6 +42,7 @@ from app.models.enums import (
     SummaryType,
 )
 from app.models.types import (
+    comparison_status_enum,
     created_at_col,
     extraction_output_format_enum,
     extraction_status_enum,
@@ -146,6 +148,7 @@ class Extraction(Base):
 
 class Comparison(Base):
     __tablename__ = "comparisons"
+    __table_args__ = (Index("ix_comparisons_status", "status"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     workspace_id: Mapped[uuid.UUID] = mapped_column(
@@ -158,6 +161,12 @@ class Comparison(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    focus: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ComparisonStatus] = mapped_column(
+        comparison_status_enum,
+        nullable=False,
+        server_default=ComparisonStatus.processing.value,
+    )
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = created_at_col()
 

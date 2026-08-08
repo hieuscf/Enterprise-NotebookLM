@@ -166,6 +166,14 @@ class ExtractionStatus(enum.StrEnum):
     failed = "failed"
 
 
+class ComparisonStatus(enum.StrEnum):
+    """Async generation lifecycle for comparisons (FR8) — same as Summary/Extraction."""
+
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
 class ExtractionType(enum.StrEnum):
     """Aligned with OpenAPI Extraction.extraction_type."""
 

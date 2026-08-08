@@ -29,6 +29,7 @@ from app.models.enums import (
     AgentTriggerReason,
     AgentType,
     ChunkLayoutType,
+    ComparisonStatus,
     ConfidenceLevel,
     DocumentVersionStatus,
     ExtractionOutputFormat,
@@ -106,6 +107,7 @@ summary_status_enum = pg_enum(SummaryStatus, "summary_status")
 extraction_type_enum = pg_enum(ExtractionType, "extraction_type")
 extraction_status_enum = pg_enum(ExtractionStatus, "extraction_status")
 extraction_output_format_enum = pg_enum(ExtractionOutputFormat, "extraction_output_format")
+comparison_status_enum = pg_enum(ComparisonStatus, "comparison_status")
 report_format_enum = pg_enum(ReportFormat, "report_format")
 report_status_enum = pg_enum(ReportStatus, "report_status")
 report_source_type_enum = pg_enum(ReportSourceType, "report_source_type")

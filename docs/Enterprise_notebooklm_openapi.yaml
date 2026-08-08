@@ -848,6 +848,9 @@ paths:
     get:
       tags: [Comparisons]
       summary: Danh sách comparison đã thực hiện trong Workspace
+      parameters:
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/PageSize" }
       responses:
         "200":
           description: OK
@@ -856,9 +859,17 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Comparison" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Comparisons]
-      summary: So sánh ≥2 tài liệu, làm nổi bật điểm giống/khác
+      summary: So sánh ≥2 tài liệu (async — Celery)
+      description: >
+        Tạo Comparison với status=processing, enqueue Celery generation, trả 202 ngay.
+        FE poll GET detail/list đến khi status=completed|failed. result=null khi processing.
+        document_ids phải thuộc cùng workspaceId (document ngoài workspace → 404).
       requestBody:
         required: true
         content:
@@ -873,11 +884,19 @@ paths:
                   items: { type: string, format: uuid }
                 focus: { type: string, description: Chủ đề trọng tâm khi so sánh (tuỳ chọn) }
       responses:
-        "201":
-          description: Đã tạo
+        "202":
+          description: Accepted — generation job đang xử lý
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Comparison" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationError"
 
   /workspaces/{workspaceId}/comparisons/{comparisonId}:
     parameters:
@@ -895,11 +914,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Comparison" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
     delete:
       tags: [Comparisons]
       summary: Xoá comparison
       responses:
         "204": { description: Đã xoá }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   # ---------------------------------------------------------------------
   # REPORTS (FR9)
@@ -1458,14 +1489,19 @@ components:
 
     Comparison:
       type: object
+      required: [id, workspace_id, document_ids, status, created_at]
       properties:
         id: { type: string, format: uuid }
         workspace_id: { type: string, format: uuid }
         document_ids:
           type: array
           items: { type: string, format: uuid }
+        status: { type: string, enum: [processing, completed, failed] }
         result:
           type: object
+          nullable: true
+          description: >
+            null khi processing/failed; object khi completed.
           properties:
             similarities: { type: array, items: { type: string } }
             differences: { type: array, items: { type: string } }

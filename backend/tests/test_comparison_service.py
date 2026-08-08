@@ -31,6 +31,7 @@ from app.core.config import Settings
 from app.models.artifacts import Comparison, Summary
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import (
+    ComparisonStatus,
     DocumentVersionStatus,
     FileType,
     SummaryStatus,
@@ -274,6 +275,24 @@ class FakeSummaryRepo:
 class FakeComparisonRepo:
     def __init__(self) -> None:
         self.created: list[ComparisonWithDocuments] = []
+        self._links: dict[uuid.UUID, list[uuid.UUID]] = {}
+
+    async def create_processing(self, **kwargs: Any) -> ComparisonWithDocuments:
+        row = Comparison(
+            id=uuid.uuid4(),
+            workspace_id=kwargs["workspace_id"],
+            created_by=kwargs["created_by"],
+            title=kwargs.get("title"),
+            focus=kwargs.get("focus"),
+            status=ComparisonStatus.processing,
+            result=None,
+            created_at=datetime.now(UTC),
+        )
+        doc_ids = list(kwargs["document_ids"])
+        outcome = ComparisonWithDocuments(comparison=row, document_ids=doc_ids)
+        self.created.append(outcome)
+        self._links[row.id] = doc_ids
+        return outcome
 
     async def create(self, **kwargs: Any) -> ComparisonWithDocuments:
         row = Comparison(
@@ -281,18 +300,38 @@ class FakeComparisonRepo:
             workspace_id=kwargs["workspace_id"],
             created_by=kwargs["created_by"],
             title=kwargs.get("title"),
+            focus=kwargs.get("focus"),
+            status=ComparisonStatus.completed,
             result=kwargs["result"],
             created_at=datetime.now(UTC),
         )
-        outcome = ComparisonWithDocuments(
-            comparison=row,
-            document_ids=list(kwargs["document_ids"]),
-        )
+        doc_ids = list(kwargs["document_ids"])
+        outcome = ComparisonWithDocuments(comparison=row, document_ids=doc_ids)
         self.created.append(outcome)
+        self._links[row.id] = doc_ids
         return outcome
 
-    async def list_for_workspace(self, *, workspace_id: uuid.UUID) -> list[ComparisonWithDocuments]:
-        return [c for c in self.created if c.comparison.workspace_id == workspace_id]
+    async def get_by_id(self, comparison_id: uuid.UUID) -> Comparison | None:
+        for item in self.created:
+            if item.comparison.id == comparison_id:
+                return item.comparison
+        return None
+
+    async def list_document_ids(self, comparison_id: uuid.UUID) -> list[uuid.UUID]:
+        return list(self._links.get(comparison_id, []))
+
+    async def list_for_workspace(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[ComparisonWithDocuments]:
+        items = [c for c in self.created if c.comparison.workspace_id == workspace_id]
+        sliced = items[offset:]
+        if limit is not None:
+            sliced = sliced[:limit]
+        return sliced
 
     async def get(
         self, *, workspace_id: uuid.UUID, comparison_id: uuid.UUID
@@ -305,8 +344,35 @@ class FakeComparisonRepo:
                 return item
         return None
 
+    async def update_generation_result(
+        self, *, comparison_id: uuid.UUID, result: dict[str, Any], title: str | None = None
+    ) -> bool:
+        for item in self.created:
+            if item.comparison.id != comparison_id:
+                continue
+            if item.comparison.status != ComparisonStatus.processing:
+                return False
+            item.comparison.result = result
+            item.comparison.status = ComparisonStatus.completed
+            if title is not None:
+                item.comparison.title = title
+            return True
+        return False
+
+    async def mark_failed(self, *, comparison_id: uuid.UUID) -> bool:
+        for item in self.created:
+            if item.comparison.id != comparison_id:
+                continue
+            if item.comparison.status != ComparisonStatus.processing:
+                return False
+            item.comparison.status = ComparisonStatus.failed
+            item.comparison.result = None
+            return True
+        return False
+
     async def delete(self, comparison: Comparison) -> None:
         self.created = [c for c in self.created if c.comparison.id != comparison.id]
+        self._links.pop(comparison.id, None)
 
 
 def _ready_doc(
