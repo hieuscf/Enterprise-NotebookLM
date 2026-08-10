@@ -40,7 +40,8 @@ from app.core.tracing import (
     setup_tracing,
     shutdown_tracing,
 )
-from app.db.session import engine
+from app.db.session import async_session_factory, engine
+from app.services.bootstrap_manage import bootstrap_platform_manage
 
 settings = get_settings()
 configure_logging(settings)
@@ -52,6 +53,9 @@ logger = get_logger(__name__)
 async def lifespan(_app: FastAPI):
     instrument_sqlalchemy_engine(engine)
     logger.info("application_startup", app_env=settings.app_env)
+    if settings.bootstrap_manage_email:
+        async with async_session_factory() as session:
+            await bootstrap_platform_manage(session, settings)
     yield
     shutdown_tracing()
     logger.info("application_shutdown")

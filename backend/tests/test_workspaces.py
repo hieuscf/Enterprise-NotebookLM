@@ -29,7 +29,7 @@ from app.core.rate_limit import InMemoryWorkspaceRateLimiter, get_workspace_rate
 from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.main import app
-from app.models.enums import RoleName
+from app.models.enums import PlatformRole, RoleName
 from app.models.identity import Role, Workspace
 from app.repositories.roles import RoleRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
@@ -59,6 +59,16 @@ def workspace_id() -> uuid.UUID:
 @pytest.fixture
 def current_user(user_id: uuid.UUID) -> CurrentUser:
     return CurrentUser(id=user_id, email="owner@example.com", full_name="Owner")
+
+
+@pytest.fixture
+def manage_user(user_id: uuid.UUID) -> CurrentUser:
+    return CurrentUser(
+        id=user_id,
+        email="manage@example.com",
+        full_name="Manage",
+        platform_role=PlatformRole.manage,
+    )
 
 
 @pytest.fixture
@@ -133,6 +143,15 @@ class FakeWorkspaceRepo:
     ) -> tuple[list[Workspace], int]:
         ids = self.memberships.get(user_id, set())
         items = [self.by_id[i] for i in ids if i in self.by_id and self.by_id[i].deleted_at is None]
+        items.sort(key=lambda w: w.created_at, reverse=True)
+        total = len(items)
+        start = (page - 1) * page_size
+        return items[start : start + page_size], total
+
+    async def list_all_active(
+        self, *, page: int, page_size: int
+    ) -> tuple[list[Workspace], int]:
+        items = [w for w in self.by_id.values() if w.deleted_at is None]
         items.sort(key=lambda w: w.created_at, reverse=True)
         total = len(items)
         start = (page - 1) * page_size
@@ -251,10 +270,10 @@ async def test_get_soft_deleted_raises_not_found(user_id: uuid.UUID) -> None:
 @pytest.mark.asyncio
 async def test_post_workspace_201(
     client: AsyncClient,
-    current_user: CurrentUser,
+    manage_user: CurrentUser,
     user_id: uuid.UUID,
 ) -> None:
-    app.dependency_overrides[get_current_user] = _override_user(current_user)
+    app.dependency_overrides[get_current_user] = _override_user(manage_user)
     created = _make_workspace(owner_id=user_id, name="New WS")
 
     from unittest.mock import patch

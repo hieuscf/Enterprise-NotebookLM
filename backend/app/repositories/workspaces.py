@@ -77,6 +77,28 @@ class WorkspaceRepository:
         rows = (await self._session.execute(list_stmt)).scalars().all()
         return list(rows), total
 
+    async def list_all_active(
+        self,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[Workspace], int]:
+        """Return all active workspaces (Platform Manage enterprise directory)."""
+        active = Workspace.deleted_at.is_(None)
+        count_stmt = select(func.count()).select_from(Workspace).where(active)
+        total = int((await self._session.execute(count_stmt)).scalar_one())
+
+        offset = (page - 1) * page_size
+        list_stmt = (
+            select(Workspace)
+            .where(active)
+            .order_by(Workspace.created_at.desc())
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = (await self._session.execute(list_stmt)).scalars().all()
+        return list(rows), total
+
     async def count_owned_by_user(self, user_id: uuid.UUID) -> int:
         """Count workspaces owned by user (includes soft-deleted — owner_id RESTRICT)."""
         stmt = select(func.count()).select_from(Workspace).where(Workspace.owner_id == user_id)

@@ -2,11 +2,11 @@
 # File: admin_users.py
 # Module/Service: Auth Service / Admin User Management (FR12)
 # Layer: Service
-# Purpose: Business logic for platform admin user create / list / permanent
+# Purpose: Business logic for Platform Manage user create / list / permanent
 #          delete (hard-delete users row — not soft-disable).
 # Responsibilities:
 #   - Create user with argon2 password hash; enforce unique normalized email
-#   - List users visible to a workspace-admin actor (admin workspaces + orphans)
+#   - List all enterprise users + memberships (Platform Manage directory)
 #   - Permanently delete user with self-delete, last-admin, ownership, and
 #     RESTRICT-FK guards; CASCADE relations handled by the database
 # Dependencies:
@@ -18,7 +18,7 @@
 #   summaries, extractions, comparisons, reports
 # Related Modules: app.api.admin_users, docs/Enterprise_notebooklm_openapi.yaml
 # Important Notes:
-#   - No global system-admin role — gate is "admin of ≥1 workspace".
+#   - Authorization gate is require_platform_manage at the router (not here).
 #   - Permanent delete is hard DELETE; status=disabled is NOT used.
 #   - Audit events USER_CREATED / USER_DELETED: TODO when audit infra exists.
 # =============================================================================
@@ -76,15 +76,6 @@ class AdminUserService:
         self._members = WorkspaceMemberRepository(session)
         self._workspaces = WorkspaceRepository(session)
 
-    async def require_actor_is_workspace_admin(self, actor_id: uuid.UUID) -> None:
-        admin_ids = await self._members.list_admin_workspace_ids(actor_id)
-        if not admin_ids:
-            raise AdminUserError(
-                "forbidden",
-                "Workspace admin role required",
-                status_code=403,
-            )
-
     async def create_user(
         self,
         *,
@@ -93,7 +84,7 @@ class AdminUserService:
         password: str,
         full_name: str,
     ) -> User:
-        await self.require_actor_is_workspace_admin(actor_id)
+        del actor_id  # Authorization enforced by require_platform_manage.
 
         normalized = normalize_email(email)
         if not normalized:
@@ -129,11 +120,10 @@ class AdminUserService:
         return user
 
     async def list_users(self, *, actor_id: uuid.UUID) -> list[AdminUserView]:
-        await self.require_actor_is_workspace_admin(actor_id)
+        del actor_id  # Authorization enforced by require_platform_manage.
 
-        admin_workspace_ids = await self._members.list_admin_workspace_ids(actor_id)
-        rows = await self._members.list_members_for_workspaces(admin_workspace_ids)
-        orphans = await self._users.list_users_without_active_membership()
+        rows = await self._members.list_all_active_memberships()
+        all_users = await self._users.list_all_active()
 
         by_user: dict[uuid.UUID, AdminUserView] = {}
         for row in rows:
@@ -154,12 +144,12 @@ class AdminUserService:
             else:
                 existing.memberships.append(membership)
 
-        for orphan in orphans:
-            if orphan.id not in by_user:
-                by_user[orphan.id] = AdminUserView(
-                    user_id=orphan.id,
-                    email=orphan.email,
-                    full_name=orphan.full_name,
+        for user in all_users:
+            if user.id not in by_user:
+                by_user[user.id] = AdminUserView(
+                    user_id=user.id,
+                    email=user.email,
+                    full_name=user.full_name,
                     memberships=[],
                 )
 
@@ -171,8 +161,6 @@ class AdminUserService:
         actor_id: uuid.UUID,
         user_id: uuid.UUID,
     ) -> None:
-        await self.require_actor_is_workspace_admin(actor_id)
-
         if actor_id == user_id:
             raise AdminUserError(
                 "self_delete",
@@ -185,14 +173,6 @@ class AdminUserService:
             raise AdminUserError("not_found", "User not found", status_code=404)
 
         target_workspace_ids = await self._members.list_active_workspace_ids(user_id)
-        if target_workspace_ids:
-            actor_admin = set(await self._members.list_admin_workspace_ids(actor_id))
-            if not set(target_workspace_ids).issubset(actor_admin):
-                raise AdminUserError(
-                    "forbidden",
-                    "You don't have permission to delete this user account.",
-                    status_code=403,
-                )
 
         # Reuse workspace last-admin rule: hard-delete cascades memberships.
         for workspace_id in target_workspace_ids:
@@ -228,6 +208,3 @@ class AdminUserService:
 
         await self._users.delete(user)
         # TODO(audit): emit USER_DELETED when audit infrastructure exists.
-        # CASCADE (DB): workspace_members, chat_sessions, search_history, query_logs.
-        # RESTRICT already gated above: workspaces.owner_id, document_versions,
-        # summaries, extractions, comparisons, reports.

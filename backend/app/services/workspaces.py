@@ -14,9 +14,8 @@
 # Database/Table: workspaces, workspace_members, roles
 # Related Modules: app.api.workspaces, docs/Enterprise_notebooklm_openapi.yaml
 # Important Notes:
-#   - OpenAPI says POST "Tạo Workspace mới (Admin)" but does not define a
-#     global admin gate. Decision: any authenticated user may create; creator
-#     becomes workspace admin via workspace_members in the same transaction.
+#   - POST /workspaces is Platform Manage only (enterprise provisioning).
+#     Creator is still auto-added as workspace admin (ownership + membership).
 #   - Soft-delete (deleted_at) extends schema v2 — hard delete would cascade
 #     wipe FK children (documents, chat_sessions, …).
 # =============================================================================
@@ -72,6 +71,18 @@ class WorkspaceService:
         )
         return WorkspacePage(items=items, page=page, page_size=page_size, total=total)
 
+    async def list_all(
+        self,
+        *,
+        page: int,
+        page_size: int,
+    ) -> WorkspacePage:
+        """Enterprise directory — Platform Manage sees every active workspace."""
+        items, total = await self._workspaces.list_all_active(
+            page=page, page_size=page_size
+        )
+        return WorkspacePage(items=items, page=page, page_size=page_size, total=total)
+
     async def create(
         self,
         *,
@@ -79,11 +90,10 @@ class WorkspaceService:
         name: str,
         description: str | None,
     ) -> Workspace:
-        """Create workspace and add creator as admin in one transaction.
+        """Create workspace and add creator as workspace admin in one transaction.
 
-        Decision (not explicit in OpenAPI): any logged-in user may create; the
-        creator is inserted into workspace_members with role=admin. Both inserts
-        share the request session — commit/rollback is handled by get_db_session.
+        Gate: Platform Manage at the router. Creator becomes owner_id +
+        workspace_members.role=admin (Manage does not replace workspace admin).
         """
         admin_role = await self._roles.get_by_name(RoleName.admin)
         if admin_role is None:

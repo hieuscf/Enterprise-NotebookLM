@@ -10,10 +10,10 @@ Phạm vi: zoom vào bên trong container **Backend API System** (FastAPI) — c
 C4Component
     title Component diagram — Backend API System (Enterprise NotebookLM)
 
-    Person(user, "Nhân viên nội bộ", "Chat, tìm kiếm, tóm tắt, trích xuất, so sánh tài liệu")
-    Person(admin, "Admin doanh nghiệp", "Quản lý Workspace, RBAC")
+    Person(user, "Workspace User", "Chat, tìm kiếm, tóm tắt — RBAC admin/editor/viewer theo Workspace")
+    Person(manager, "Enterprise Manager (Manage)", "Platform Admin Console /admin — quản trị user & observability")
 
-    Container(webapp, "Web App", "Next.js/React", "UI Chat, Search, Upload, Report")
+    Container(webapp, "Web App", "Next.js/React", "UI Chat, Search, Upload, Report, Admin Console")
     Container(lightrag, "LightRAG Core Engine", "Dual-level Graph + Vector Index", "Sinh entity/topic/chunk")
     ContainerDb(pg, "PostgreSQL", "RDBMS", "Metadata, users, workspace, chat, log (đóng vai trò Metadata DB)")
     ContainerDb(vecdb, "Vector DB", "Qdrant/pgvector", "Lưu embedding thật")
@@ -24,8 +24,8 @@ C4Component
     System_Ext(llamaparse, "LlamaParse", "Document Understanding API — Markdown + Layout + Metadata")
 
     Container_Boundary(api, "Backend API System (FastAPI)") {
-        Component(gateway, "API Gateway / Auth Middleware", "FastAPI", "Xác thực OAuth2/JWT, RBAC theo Workspace, rate limiting (FR12)")
-        Component(workspaceSvc, "Workspace Service", "FastAPI router", "CRUD Workspace, thành viên, quyền (FR1)")
+        Component(gateway, "API Gateway / Auth Middleware", "FastAPI", "JWT + Platform Manage + Workspace RBAC, rate limiting (FR12)")
+        Component(workspaceSvc, "Workspace Service", "FastAPI router", "CRUD Workspace, thành viên, quyền Workspace (FR1)")
         Component(ingestSvc, "Document Ingestion Service", "FastAPI + Celery producer", "Upload, versioning, checksum, tạo pipeline_run (FR2)")
         Component(pipelineWorker, "Pipeline Worker", "Celery task", "Document Understanding (LlamaParse) → Cleaning & Normalize → Hierarchical Chunking → Embedding → Graph Extraction → Indexing (FR2, FR13)")
         Component(searchSvc, "Search Service", "FastAPI router", "Hybrid Retrieval Vector+BM25+KG+Metadata, ghi search_history (FR3)")
@@ -46,8 +46,8 @@ C4Component
         Component(observability, "Observability Module", "Logging/Tracing", "Ghi pipeline_stage_logs, query_logs, agent_events, cost tracking (FR13)")
     }
 
-    Rel(user, webapp, "Sử dụng", "HTTPS")
-    Rel(admin, webapp, "Quản trị", "HTTPS")
+    Rel(user, webapp, "Sử dụng /workspaces/*", "HTTPS")
+    Rel(manager, webapp, "Quản trị /admin/*", "HTTPS")
     Rel(webapp, gateway, "Gọi API", "REST/HTTPS + JWT")
 
     Rel(gateway, workspaceSvc, "Route")

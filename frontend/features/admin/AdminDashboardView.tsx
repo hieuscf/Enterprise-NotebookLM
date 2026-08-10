@@ -62,8 +62,8 @@ function UnauthorizedState() {
         </span>
         <h1 className="text-h2 text-primary">Không có quyền truy cập</h1>
         <p className="max-w-md text-body-sm text-secondary">
-          Admin Dashboard chỉ dành cho thành viên có vai trò <strong>admin</strong> trong ít
-          nhất một workspace. Liên hệ quản trị viên workspace của bạn nếu bạn cần quyền này.
+          Admin Dashboard chỉ dành cho tài khoản Platform <strong>Manage</strong>. Workspace
+          Admin không được truy cập <code className="text-caption">/admin</code>.
         </p>
       </div>
     </div>

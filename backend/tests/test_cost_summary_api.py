@@ -87,13 +87,17 @@ async def test_cost_summary_includes_by_agent_type(
             )
 
     async def _user() -> CurrentUser:
-        return CurrentUser(id=user_id, email="admin@ex.com", full_name="Admin")
+        from app.models.enums import PlatformRole
+
+        return CurrentUser(
+            id=user_id,
+            email="manage@ex.com",
+            full_name="Manage",
+            platform_role=PlatformRole.manage,
+        )
 
     async def _db():
         yield FakeSession()
-
-    async def _role(self: Any, *, user_id: uuid.UUID, workspace_id: uuid.UUID) -> RoleName | None:
-        return RoleName.admin
 
     app.dependency_overrides[get_current_user] = _user
     app.dependency_overrides[get_db_session] = _db
@@ -101,7 +105,6 @@ async def test_cost_summary_includes_by_agent_type(
     app.dependency_overrides[get_workspace_rate_limiter] = (
         lambda: InMemoryWorkspaceRateLimiter()
     )
-    monkeypatch.setattr(WorkspaceMemberRepository, "get_role_for_user", _role)
 
     transport = ASGITransport(app=app)
     try:

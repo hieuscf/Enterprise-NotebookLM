@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifacts import Comparison, Extraction, Report, Summary
 from app.models.documents import DocumentVersion
-from app.models.enums import UserStatus
+from app.models.enums import PlatformRole, UserStatus
 from app.models.identity import User, WorkspaceMember
 
 
@@ -56,20 +56,41 @@ class UserRepository:
         password_hash: str,
         full_name: str,
         status: UserStatus = UserStatus.active,
+        platform_role: PlatformRole | None = None,
     ) -> User:
         user = User(
             email=email,
             password_hash=password_hash,
             full_name=full_name,
             status=status,
+            platform_role=platform_role,
         )
         self._session.add(user)
+        await self._session.flush()
+        return user
+
+    async def set_platform_role(
+        self,
+        user: User,
+        platform_role: PlatformRole | None,
+    ) -> User:
+        user.platform_role = platform_role
         await self._session.flush()
         return user
 
     async def delete(self, user: User) -> None:
         await self._session.delete(user)
         await self._session.flush()
+
+    async def list_all_active(self) -> list[User]:
+        """All active users (Platform Manage global directory)."""
+        stmt = (
+            select(User)
+            .where(User.status == UserStatus.active)
+            .order_by(User.email.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
 
     async def list_users_without_active_membership(self) -> list[User]:
         """Active users with no active (non-soft-deleted) workspace membership."""

@@ -315,7 +315,24 @@ Ví dụ phân cấp: `level 0`: "Tài chính" → `level 1`: "Báo cáo quý" /
 
 ## Các bảng không đổi so với v1
 
-`users`, `workspaces`, `roles`, `workspace_members`, `entity_relations`, `topic_chunks`, `chat_sessions`, `summaries`, `extractions`, `comparisons`, `comparison_documents`, `reports`, `report_items` — mô tả chi tiết giữ nguyên như tài liệu v1 (`database-design-enterprise-notebooklm.md`).
+`workspaces`, `roles`, `workspace_members`, `entity_relations`, `topic_chunks`, `chat_sessions`, `summaries`, `extractions`, `comparisons`, `comparison_documents`, `reports`, `report_items` — mô tả chi tiết giữ nguyên như tài liệu v1 (`database-design-enterprise-notebooklm.md`).
+
+### RBAC — Platform vs Workspace (bổ sung)
+
+**`users.platform_role`** (nullable ENUM `platform_role`: `manage` only):
+
+| Giá trị | Ý nghĩa |
+|---|---|
+| `manage` | Platform Administrator — truy cập `/admin/*`, quản trị user toàn hệ thống |
+| `NULL` | User thường — không có quyền Platform |
+
+**`roles.name`** (Workspace only): `admin | editor | viewer` — **không** chứa `manage`.
+
+**`workspace_members`**: gắn user ↔ workspace với `role_id` → `roles` (RBAC theo Workspace).
+
+**`workspaces.owner_id`**: ownership — độc lập với `platform_role` và không phải role thứ năm.
+
+Migration: thêm cột nullable; **không** promote các Workspace Admin hiện tại thành Manage. Bootstrap optional qua `BOOTSTRAP_MANAGE_EMAIL`.
 
 ## Ghi chú cập nhật
 

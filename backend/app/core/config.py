@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # FR12 — Bootstrap Platform Manage (optional). On startup, if this email
+    # matches an existing user, set users.platform_role = manage. Never creates
+    # accounts or passwords; never promotes workspace admins automatically.
+    bootstrap_manage_email: str | None = Field(
+        default=None,
+        description="Optional email to promote to platform_role=manage at startup",
+    )
+
     # FR12 — API-layer rate limit per workspace (not LLM call quota; see phase 2).
     rate_limit_requests_per_minute: int = 60
     rate_limit_window_seconds: int = 60

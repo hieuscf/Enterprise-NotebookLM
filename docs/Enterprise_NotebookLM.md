@@ -91,7 +91,7 @@ Dựa trên lựa chọn của nhóm: Backend Python (FastAPI) + Frontend Next.j
 | :--------------------- | :---------------------------------------------- | :------------------------------------------------- |
 | Frontend               | Next.js (React) + TailwindCSS + shadcn/ui       | SSR cho tốc độ tải, streaming response cho AI Chat |
 | Backend API            | Python 3.11+ / FastAPI                          | Async, tích hợp tốt với thư viện AI/ML Python      |
-| Xác thực & phân quyền  | OAuth2 / JWT, RBAC theo Workspace               | Multi-tenant, phân quyền theo vai trò              |
+| Xác thực & phân quyền  | OAuth2 / JWT; Platform Manage + Workspace RBAC  | `manage` → `/admin`; `admin/editor/viewer` theo Workspace |
 | RAG Orchestration      | LightRAG / LlamaIndex hoặc LangChain            | Xây Knowledge Graph + Vector Index song song       |
 | Vector Database        | Qdrant hoặc pgvector (PostgreSQL)               | Lưu embedding phục vụ Vector Retrieval             |
 | Knowledge Graph        | Neo4j hoặc NetworkX + lưu trữ tuỳ biến          | Phục vụ Low/High-Level Retrieval                   |

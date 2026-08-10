@@ -25,9 +25,9 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.security import hash_password, verify_password
 from app.dependencies.auth import CurrentUser, get_current_user
-from app.dependencies.rbac import require_any_workspace_admin
+from app.dependencies.rbac import require_platform_manage
 from app.main import app
-from app.models.enums import RoleName, UserStatus
+from app.models.enums import PlatformRole, RoleName, UserStatus
 from app.api.admin_users import get_admin_user_service
 from app.services.admin_users import AdminUserError, AdminUserService, normalize_email
 
@@ -102,6 +102,9 @@ class FakeUserRepository:
     async def list_users_without_active_membership(self) -> list[FakeUser]:
         return []
 
+    async def list_all_active(self) -> list[FakeUser]:
+        return list(self._users)
+
     async def list_restricting_dependency_tables(self, user_id: uuid.UUID) -> list[str]:
         return []
 
@@ -135,6 +138,9 @@ class FakeMemberRepository:
         return self._admin_counts.get(workspace_id, 0)
 
     async def list_members_for_workspaces(self, workspace_ids: list[uuid.UUID]) -> list[Any]:
+        return []
+
+    async def list_all_active_memberships(self) -> list[Any]:
         return []
 
 
@@ -210,23 +216,6 @@ async def test_create_user_duplicate_email() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_user_forbidden_without_admin() -> None:
-    actor = uuid.uuid4()
-    users = FakeUserRepository()
-    members = FakeMemberRepository(admin_workspaces={})
-    svc = _service(users=users, members=members)
-
-    with pytest.raises(AdminUserError) as exc:
-        await svc.create_user(
-            actor_id=actor,
-            email="a@example.com",
-            password="x",
-            full_name="A",
-        )
-    assert exc.value.status_code == 403
-
-
-@pytest.mark.asyncio
 async def test_delete_self_blocked() -> None:
     actor = uuid.uuid4()
     ws = uuid.uuid4()
@@ -285,21 +274,25 @@ async def test_delete_success() -> None:
 
 @pytest.fixture
 def actor() -> CurrentUser:
-    return CurrentUser(id=uuid.uuid4(), email="admin@example.com", full_name="Admin")
+    return CurrentUser(
+        id=uuid.uuid4(),
+        email="manage@example.com",
+        full_name="Manage",
+        platform_role=PlatformRole.manage,
+    )
 
 
 @pytest.mark.asyncio
 async def test_api_create_and_delete(actor: CurrentUser) -> None:
-    ws = uuid.uuid4()
     users = FakeUserRepository()
-    members = FakeMemberRepository(admin_workspaces={actor.id: [ws]})
+    members = FakeMemberRepository()
     svc = _service(users=users, members=members)
 
-    async def _admin() -> CurrentUser:
+    async def _manage() -> CurrentUser:
         return actor
 
-    app.dependency_overrides[get_current_user] = _admin
-    app.dependency_overrides[require_any_workspace_admin] = _admin
+    app.dependency_overrides[get_current_user] = _manage
+    app.dependency_overrides[require_platform_manage] = _manage
     app.dependency_overrides[get_admin_user_service] = lambda: svc
 
     transport = ASGITransport(app=app)
@@ -320,7 +313,6 @@ async def test_api_create_and_delete(actor: CurrentUser) -> None:
         assert "password_hash" not in body
         user_id = body["id"]
 
-        # Wire target membership for delete authorization
         target_uuid = uuid.UUID(user_id)
         members._active_workspaces[target_uuid] = []
 
@@ -331,16 +323,37 @@ async def test_api_create_and_delete(actor: CurrentUser) -> None:
 
 
 @pytest.mark.asyncio
-async def test_api_duplicate_email_409(actor: CurrentUser) -> None:
-    ws = uuid.uuid4()
-    users = FakeUserRepository([FakeUser(email="dup@example.com")])
-    members = FakeMemberRepository(admin_workspaces={actor.id: [ws]})
-    svc = _service(users=users, members=members)
+async def test_api_forbidden_without_manage() -> None:
+    actor = CurrentUser(
+        id=uuid.uuid4(),
+        email="ws-admin@example.com",
+        full_name="WS Admin",
+        platform_role=None,
+    )
 
-    async def _admin() -> CurrentUser:
+    async def _user() -> CurrentUser:
         return actor
 
-    app.dependency_overrides[require_any_workspace_admin] = _admin
+    app.dependency_overrides[get_current_user] = _user
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        res = await client.get("/admin/users")
+        assert res.status_code == 403
+
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_api_duplicate_email_409(actor: CurrentUser) -> None:
+    users = FakeUserRepository([FakeUser(email="dup@example.com")])
+    members = FakeMemberRepository()
+    svc = _service(users=users, members=members)
+
+    async def _manage() -> CurrentUser:
+        return actor
+
+    app.dependency_overrides[require_platform_manage] = _manage
     app.dependency_overrides[get_admin_user_service] = lambda: svc
 
     transport = ASGITransport(app=app)

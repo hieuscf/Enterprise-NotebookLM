@@ -33,7 +33,7 @@ class CreateAdminUserRequest(BaseModel):
 
 class AdminUserResponse(BaseModel):
     id: UUID
-    email: EmailStr
+    email: str
     full_name: str
 
 
@@ -46,7 +46,8 @@ class AdminUserMembership(BaseModel):
 
 class AdminUserListItem(BaseModel):
     user_id: UUID
-    email: EmailStr
+    # str (not EmailStr): list must not 500 on legacy/invalid stored emails.
+    email: str
     full_name: str
     memberships: list[AdminUserMembership]
 

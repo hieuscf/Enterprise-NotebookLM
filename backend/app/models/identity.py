@@ -23,9 +23,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import RoleName, UserStatus
+from app.models.enums import PlatformRole, RoleName, UserStatus
 from app.models.types import (
     created_at_col,
+    platform_role_enum,
     role_name_enum,
     updated_at_col,
     user_status_enum,
@@ -45,6 +46,11 @@ class User(Base):
         user_status_enum,
         nullable=False,
         server_default=UserStatus.active.value,
+    )
+    # Platform RBAC: manage | NULL. Independent of workspace_members roles.
+    platform_role: Mapped[PlatformRole | None] = mapped_column(
+        platform_role_enum,
+        nullable=True,
     )
     created_at: Mapped[datetime] = created_at_col()
     updated_at: Mapped[datetime] = updated_at_col()

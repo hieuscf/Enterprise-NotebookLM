@@ -9,14 +9,18 @@
  * Dependencies:
  *   - docs/Enterprise_notebooklm_openapi.yaml
  * Public Exports:
- *   - AuthToken, WorkspaceMembership, User, WorkspaceRole
+ *   - AuthToken, WorkspaceMembership, User, WorkspaceRole, PlatformRole
  * Database/Table: N/A
- * Related Modules: frontend/lib/api-client, hooks/useWorkspaceRole
- * Important Notes: role enum must stay admin | editor | viewer.
+ * Related Modules: frontend/lib/api-client, hooks/useWorkspaceRole, lib/rbac
+ * Important Notes:
+ *   - platform_role is Platform Manage (or null); workspaces[].role is Workspace RBAC.
+ *   - Workspace role enum must stay admin | editor | viewer (never manage).
  * =============================================================================
  */
 
 export type WorkspaceRole = "admin" | "editor" | "viewer";
+
+export type PlatformRole = "manage";
 
 export type AuthToken = {
   access_token: string;
@@ -34,5 +38,7 @@ export type User = {
   id: string;
   email: string;
   full_name: string;
+  /** Platform Manage for /admin/*; null for ordinary users. */
+  platform_role: PlatformRole | null;
   workspaces: WorkspaceMembership[];
 };

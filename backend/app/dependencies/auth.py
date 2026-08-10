@@ -28,7 +28,7 @@ from app.core.config import Settings, get_settings
 from app.core.refresh_token_store import RefreshTokenStore, get_refresh_token_store
 from app.core.security import TokenType, decode_token
 from app.db.session import get_db_session
-from app.models.enums import UserStatus
+from app.models.enums import PlatformRole, UserStatus
 from app.repositories.users import UserRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.auth import AuthService
@@ -41,6 +41,7 @@ class CurrentUser:
     id: uuid.UUID
     email: str
     full_name: str
+    platform_role: PlatformRole | None = None
 
 
 def get_auth_service(
@@ -102,4 +103,9 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return CurrentUser(id=user.id, email=user.email, full_name=user.full_name)
+    return CurrentUser(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        platform_role=user.platform_role,
+    )

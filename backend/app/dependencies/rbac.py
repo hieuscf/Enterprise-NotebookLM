@@ -2,25 +2,23 @@
 # File: rbac.py
 # Module/Service: API Gateway / Auth Middleware
 # Layer: Presentation
-# Purpose: FastAPI dependency factory for workspace-scoped RBAC (FR12).
+# Purpose: FastAPI dependencies for Platform Manage + Workspace RBAC (FR12).
 # Responsibilities:
-#   - require_workspace_role(*allowed_roles) — gate routes with {workspaceId}
-#   - Resolve role from workspace_members (DB), never trust JWT claims alone
-#   - Attach current_role / workspace_id onto request.state for downstream use
+#   - require_platform_manage — gate /admin/* (platform_role == manage)
+#   - require_workspace_role(*allowed_roles) — gate /workspaces/{workspaceId}/*
+#   - require_workspace_admin_or_manage — workspace admin OR platform manage
 # Dependencies:
 #   - FastAPI Request/Path, app.dependencies.auth.get_current_user
-#   - app.repositories.workspace_members
+#   - app.domain.permissions, app.repositories.workspace_members
 # Public Exports:
-#   - WorkspaceAccess, require_workspace_role
+#   - WorkspaceAccess, require_workspace_role, require_platform_manage
 #   - require_workspace_member, require_workspace_editor, require_workspace_admin
-#   - require_any_workspace_admin
-# Database/Table: workspace_members, roles
-# Related Modules: System_Architecture (API Gateway / Auth Middleware), app.api.workspaces
+#   - require_workspace_admin_or_manage
+# Database/Table: users.platform_role, workspace_members, roles
+# Related Modules: System_Architecture (API Gateway / Auth Middleware)
 # Important Notes:
-#   - Not a member → 403 Forbidden; role not in allow-list → 403.
-#   - Callers pass explicit allow-lists; use module-level helpers for hierarchy:
-#     admin > editor > viewer (admin implies editor/write; all three for read).
-#   - require_any_workspace_admin: no {workspaceId} path — used by /admin/users.
+#   - manage ≠ workspace admin; scopes are independent.
+#   - Workspace role never grants /admin access.
 # =============================================================================
 
 from __future__ import annotations
@@ -35,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
+from app.domain.permissions import is_manage
 from app.models.enums import RoleName
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.schemas.common import ErrorResponse
@@ -42,7 +41,7 @@ from app.schemas.common import ErrorResponse
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceAccess:
-    """Resolved membership after RBAC gate passes."""
+    """Resolved membership after workspace RBAC gate passes."""
 
     workspace_id: uuid.UUID
     user_id: uuid.UUID
@@ -58,16 +57,25 @@ def _forbidden(message: str) -> HTTPException:
     )
 
 
+async def require_platform_manage(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Gate for /admin/* — Platform Manage only (not workspace admin / owner)."""
+    if not is_manage(current_user):
+        raise _forbidden("Platform manage role required")
+    return current_user
+
+
 def require_workspace_role(
     *allowed_roles: str,
 ) -> Callable[..., Coroutine[Any, Any, WorkspaceAccess]]:
-    """Factory: allow only listed roles for the path workspaceId.
+    """Factory: allow only listed workspace roles for the path workspaceId.
 
     Example (read — all members)::
 
         Depends(require_workspace_role("admin", "editor", "viewer"))
 
-    Example (admin-only delete / member role change)::
+    Example (workspace-admin-only member role change)::
 
         Depends(require_workspace_role("admin"))
 
@@ -99,7 +107,6 @@ def require_workspace_role(
         if role.value not in allowed:
             raise _forbidden("Insufficient role for this workspace action")
 
-        # Expose for handlers / later middleware (e.g. rate limit by workspace).
         request.state.workspace_id = workspaceId
         request.state.current_role = role.value
 
@@ -112,24 +119,55 @@ def require_workspace_role(
     return _checker
 
 
-async def require_any_workspace_admin(
-    current_user: CurrentUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db_session),
-) -> CurrentUser:
-    """Gate for /admin/users: caller must be admin of at least one workspace.
+def require_workspace_admin_or_manage() -> Callable[
+    ..., Coroutine[Any, Any, WorkspaceAccess]
+]:
+    """Workspace Admin of this workspace, OR Platform Manage (enterprise override).
 
-    There is no global system-admin role in this product — workspace admin is
-    the strongest platform gate available (matches Admin Console UX).
+    Used for workspace update/delete from Admin Console without implying that
+    manage becomes a workspace membership role.
     """
-    admin_ids = await WorkspaceMemberRepository(session).list_admin_workspace_ids(
-        current_user.id
-    )
-    if not admin_ids:
-        raise _forbidden("Workspace admin role required")
-    return current_user
+
+    async def _checker(
+        request: Request,
+        workspaceId: uuid.UUID = Path(..., description="Workspace UUID"),
+        current_user: CurrentUser = Depends(get_current_user),
+        session: AsyncSession = Depends(get_db_session),
+    ) -> WorkspaceAccess:
+        if is_manage(current_user):
+            request.state.workspace_id = workspaceId
+            request.state.current_role = "manage"
+            # Synthetic access: Manage is not a workspace RoleName.
+            return WorkspaceAccess(
+                workspace_id=workspaceId,
+                user_id=current_user.id,
+                role=RoleName.admin,
+            )
+
+        role = await WorkspaceMemberRepository(session).get_role_for_user(
+            user_id=current_user.id,
+            workspace_id=workspaceId,
+        )
+        if role is None:
+            raise _forbidden("Not a member of this workspace")
+        if role != RoleName.admin:
+            raise _forbidden("Insufficient role for this workspace action")
+
+        request.state.workspace_id = workspaceId
+        request.state.current_role = role.value
+        return WorkspaceAccess(
+            workspace_id=workspaceId,
+            user_id=current_user.id,
+            role=role,
+        )
+
+    return _checker
 
 
-# Standard allow-lists for upcoming routers (1.3+). Prefer these over ad-hoc lists.
+# Standard allow-lists. Prefer these over ad-hoc lists.
+# Hierarchy is workspace-scoped only: admin > editor > viewer.
 require_workspace_member = require_workspace_role("admin", "editor", "viewer")
 require_workspace_editor = require_workspace_role("admin", "editor")
 require_workspace_admin = require_workspace_role("admin")
+# Bound once for Depends(...) identity stability in tests/overrides.
+require_workspace_admin_or_manage_dep = require_workspace_admin_or_manage()

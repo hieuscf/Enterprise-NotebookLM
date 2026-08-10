@@ -303,3 +303,38 @@ class WorkspaceMemberRepository:
             )
             for row in result.all()
         ]
+
+    async def list_all_active_memberships(self) -> list[AdminScopedMemberRow]:
+        """All active memberships across all workspaces (Platform Manage directory)."""
+        stmt = (
+            select(
+                WorkspaceMember.user_id.label("user_id"),
+                User.email.label("email"),
+                User.full_name.label("full_name"),
+                WorkspaceMember.workspace_id.label("workspace_id"),
+                Workspace.name.label("workspace_name"),
+                Role.name.label("role"),
+                WorkspaceMember.joined_at.label("joined_at"),
+            )
+            .join(User, User.id == WorkspaceMember.user_id)
+            .join(Role, Role.id == WorkspaceMember.role_id)
+            .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+            .where(
+                WorkspaceMember.deleted_at.is_(None),
+                Workspace.deleted_at.is_(None),
+            )
+            .order_by(User.email.asc(), WorkspaceMember.joined_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [
+            AdminScopedMemberRow(
+                user_id=row.user_id,
+                email=row.email,
+                full_name=row.full_name,
+                workspace_id=row.workspace_id,
+                workspace_name=row.workspace_name,
+                role=row.role,
+                joined_at=row.joined_at,
+            )
+            for row in result.all()
+        ]

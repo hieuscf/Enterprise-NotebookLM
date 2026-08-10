@@ -54,12 +54,14 @@ class FakeUser:
         full_name: str = "Test User",
         status: UserStatus = UserStatus.active,
         user_id: uuid.UUID | None = None,
+        platform_role: object | None = None,
     ) -> None:
         self.id = user_id or uuid.uuid4()
         self.email = email
         self.password_hash = hash_password(password)
         self.full_name = full_name
         self.status = status
+        self.platform_role = platform_role
 
 
 class FakeUserRepository:
@@ -234,6 +236,7 @@ async def test_get_me_loads_workspaces_from_memberships() -> None:
         id=user.id,
         email="ok@example.com",
         full_name="Ada",
+        platform_role=None,
         workspaces=[WorkspaceMembership(workspace_id=ws, role="admin")],
     )
 
@@ -345,6 +348,7 @@ async def test_api_me_with_token(api_client) -> None:
     body = response.json()
     assert body["email"] == user.email
     assert body["full_name"] == user.full_name
+    assert body["platform_role"] is None
     assert body["workspaces"] == [{"workspace_id": str(ws), "role": "viewer"}]
 
 

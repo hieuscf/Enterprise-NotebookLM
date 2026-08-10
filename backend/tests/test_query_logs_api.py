@@ -28,7 +28,7 @@ from app.core.rate_limit import InMemoryWorkspaceRateLimiter, get_workspace_rate
 from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.main import app
-from app.models.enums import RoleName, RouteType
+from app.models.enums import PlatformRole, RoleName, RouteType
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.schemas.admin import QueryLogResponse
 
@@ -70,13 +70,15 @@ async def test_query_logs_filters_by_route_type(
             return [expected]
 
     async def _user() -> CurrentUser:
-        return CurrentUser(id=user_id, email="admin@ex.com", full_name="Admin")
+        return CurrentUser(
+            id=user_id,
+            email="manage@ex.com",
+            full_name="Manage",
+            platform_role=PlatformRole.manage,
+        )
 
     async def _db():
         yield FakeSession()
-
-    async def _role(self: Any, *, user_id: uuid.UUID, workspace_id: uuid.UUID) -> RoleName | None:
-        return RoleName.admin
 
     app.dependency_overrides[get_current_user] = _user
     app.dependency_overrides[get_db_session] = _db
@@ -84,7 +86,6 @@ async def test_query_logs_filters_by_route_type(
     app.dependency_overrides[get_workspace_rate_limiter] = (
         lambda: InMemoryWorkspaceRateLimiter()
     )
-    monkeypatch.setattr(WorkspaceMemberRepository, "get_role_for_user", _role)
 
     transport = ASGITransport(app=app)
     try:

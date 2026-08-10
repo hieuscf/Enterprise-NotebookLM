@@ -82,7 +82,10 @@ paths:
   /auth/me:
     get:
       tags: [Auth]
-      summary: Lấy thông tin user hiện tại + danh sách workspace/role
+      summary: Lấy thông tin user hiện tại (platform_role + workspace memberships)
+      description: >
+        Returns Platform role (`platform_role`: manage | null) and Workspace-scoped
+        memberships (`workspaces[].role`: admin | editor | viewer). These scopes are independent.
       responses:
         "200":
           description: OK
@@ -108,7 +111,11 @@ paths:
               schema: { $ref: "#/components/schemas/WorkspaceListResponse" }
     post:
       tags: [Workspaces]
-      summary: Tạo Workspace mới (Admin)
+      summary: Tạo Workspace mới (Manage)
+      description: >
+        Platform Manage only (`platform_role=manage`). Creator becomes workspace owner
+        and is added as Workspace Admin in `workspace_members`. Workspace Admin of an
+        existing workspace cannot create a new workspace via this endpoint.
       requestBody:
         required: true
         content:
@@ -125,6 +132,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /workspaces/{workspaceId}:
     parameters:
@@ -140,7 +149,10 @@ paths:
               schema: { $ref: "#/components/schemas/Workspace" }
     patch:
       tags: [Workspaces]
-      summary: Cập nhật Workspace (Admin)
+      summary: Cập nhật Workspace (Workspace Admin or Manage)
+      description: >
+        Allowed for Workspace Admin of this workspace, or Platform Manage
+        (enterprise override). Manage does not become a workspace membership role.
       requestBody:
         content:
           application/json:
@@ -155,11 +167,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       tags: [Workspaces]
-      summary: Xoá Workspace (Admin)
+      summary: Xoá Workspace (Workspace Admin or Manage)
+      description: >
+        Soft-delete. Allowed for Workspace Admin of this workspace, or Platform Manage.
       responses:
         "204": { description: Đã xoá }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /workspaces/{workspaceId}/members:
     parameters:
@@ -177,7 +195,10 @@ paths:
                 items: { $ref: "#/components/schemas/WorkspaceMember" }
     post:
       tags: [Workspaces]
-      summary: Thêm thành viên vào Workspace (Admin)
+      summary: Thêm thành viên vào Workspace (Workspace Admin)
+      description: >
+        Workspace Admin of this workspace only. Platform Manage is not a workspace role
+        and does not automatically grant member management.
       requestBody:
         required: true
         content:
@@ -194,6 +215,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceMember" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /workspaces/{workspaceId}/members/{userId}:
     parameters:
@@ -204,7 +227,8 @@ paths:
         schema: { type: string, format: uuid }
     patch:
       tags: [Workspaces]
-      summary: Đổi vai trò thành viên (Admin)
+      summary: Đổi vai trò thành viên (Workspace Admin)
+      description: Workspace Admin of this workspace only. Role enum is workspace-scoped (admin|editor|viewer).
       requestBody:
         content:
           application/json:
@@ -218,11 +242,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceMember" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       tags: [Workspaces]
-      summary: Xoá thành viên khỏi Workspace (Admin)
+      summary: Xoá thành viên khỏi Workspace (Workspace Admin)
       responses:
         "204": { description: Đã xoá }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # ---------------------------------------------------------------------
   # DOCUMENTS & VERSIONING (FR2)
@@ -1016,13 +1044,15 @@ paths:
 
   # ---------------------------------------------------------------------
   # ADMIN / OBSERVABILITY (FR12, FR13)
+  # Gate: platform_role == manage only. Workspace Admin cannot access /admin/*.
   # ---------------------------------------------------------------------
   /admin/workspaces/{workspaceId}/query-logs:
     parameters:
       - { $ref: "#/components/parameters/WorkspaceId" }
     get:
       tags: [Admin/Observability]
-      summary: Log định tuyến truy vấn (route_type, llm_calls_count, latency) — audit chi phí
+      summary: Log định tuyến truy vấn (Manage) — audit chi phí
+      description: Platform Manage only. Workspace Admin of this workspace cannot call /admin/*.
       parameters:
         - { $ref: "#/components/parameters/PageParam" }
         - { $ref: "#/components/parameters/PageSizeParam" }
@@ -1037,13 +1067,16 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/QueryLog" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/workspaces/{workspaceId}/pipeline-runs:
     parameters:
       - { $ref: "#/components/parameters/WorkspaceId" }
     get:
       tags: [Admin/Observability]
-      summary: Danh sách pipeline_run (debug Document Understanding/Cleaning/Hierarchical Chunking/Embedding/Graph/Indexing)
+      summary: Danh sách pipeline_run (Manage)
+      description: Platform Manage only.
       parameters:
         - name: status
           in: query
@@ -1056,13 +1089,16 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/PipelineRun" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /admin/workspaces/{workspaceId}/cost-summary:
     parameters:
       - { $ref: "#/components/parameters/WorkspaceId" }
     get:
       tags: [Admin/Observability]
-      summary: Tổng hợp chi phí LLM theo model/route_type (+ by_agent_type từ agent_events)
+      summary: Tổng hợp chi phí LLM theo model/route_type (Manage)
+      description: Platform Manage only.
       parameters:
         - name: from
           in: query
@@ -1076,15 +1112,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CostSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   # ---------------------------------------------------------------------
-  # ADMIN / USERS (FR12 — Access Control)
-  # Gate: caller must be workspace admin of ≥1 workspace (no global admin).
+  # ADMIN / USERS (FR12 — Platform Manage)
+  # Gate: platform_role == manage. Workspace Admin ≠ Manage.
   # ---------------------------------------------------------------------
   /admin/users:
     get:
       tags: [Admin/Users]
-      summary: Danh sách user visible với workspace admin (memberships + tài khoản chưa gán)
+      summary: Danh sách toàn bộ user enterprise (Manage)
+      description: >
+        Platform Manage only. Returns all active users and their workspace memberships.
+        Workspace Admin cannot access this endpoint.
       operationId: listAdminUsers
       responses:
         "200":
@@ -1096,7 +1137,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [Admin/Users]
-      summary: Tạo tài khoản user enterprise mới (hash password phía server)
+      summary: Tạo tài khoản user enterprise mới (Manage)
+      description: Platform Manage only. Password hashed server-side (never returned).
       operationId: createAdminUser
       requestBody:
         required: true
@@ -1132,7 +1174,11 @@ paths:
         schema: { type: string, format: uuid }
     delete:
       tags: [Admin/Users]
-      summary: Xoá vĩnh viễn tài khoản user (hard delete — không soft-disable)
+      summary: Xoá vĩnh viễn tài khoản user (Manage — hard delete)
+      description: >
+        Platform Manage only. Global user entity — Workspace Admin cannot permanently
+        delete accounts. Still blocked when target is last workspace admin, owns a
+        workspace, or has RESTRICT FK dependents.
       operationId: deleteAdminUser
       responses:
         "204":
@@ -1207,7 +1253,9 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: Không đủ quyền (RBAC theo Workspace)
+      description: >
+        Không đủ quyền — Platform Manage (`platform_role=manage`) và/hoặc
+        Workspace RBAC (`admin` | `editor` | `viewer`) tùy endpoint.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1239,17 +1287,31 @@ components:
 
     User:
       type: object
+      required: [id, email, full_name, workspaces]
       properties:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         full_name: { type: string }
+        platform_role:
+          type: string
+          nullable: true
+          enum: [manage]
+          description: >
+            Platform-level role. `manage` grants access to /admin/*.
+            null means ordinary user (no Enterprise Admin Console access).
+            Independent of workspaces[].role.
         workspaces:
           type: array
           items:
             type: object
             properties:
               workspace_id: { type: string, format: uuid }
-              role: { type: string, enum: [admin, editor, viewer] }
+              role:
+                type: string
+                enum: [admin, editor, viewer]
+                description: >
+                  Workspace-scoped role for this membership only.
+                  admin | editor | viewer — never manage.
 
     CreateAdminUserRequest:
       type: object

@@ -130,10 +130,12 @@ class AuthService:
 
         # Always join workspace_members at call time so role changes apply immediately.
         rows = await self._members.list_for_user(user_id)
+        platform = user.platform_role.value if user.platform_role is not None else None
         return UserResponse(
             id=user.id,
             email=user.email,
             full_name=user.full_name,
+            platform_role=platform,  # type: ignore[arg-type]
             workspaces=[
                 WorkspaceMembership(workspace_id=row.workspace_id, role=row.role.value)
                 for row in rows

@@ -24,9 +24,20 @@ class UserStatus(enum.StrEnum):
 
 
 class RoleName(enum.StrEnum):
+    """Workspace-scoped roles only (workspace_members → roles). Never include manage."""
+
     admin = "admin"
     editor = "editor"
     viewer = "viewer"
+
+
+class PlatformRole(enum.StrEnum):
+    """Platform-scoped role on users.platform_role (Enterprise Admin Console).
+
+    Ordinary users store NULL — this enum only lists the granted platform value.
+    """
+
+    manage = "manage"
 
 
 class FileType(enum.StrEnum):

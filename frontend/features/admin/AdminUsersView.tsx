@@ -69,8 +69,8 @@ function UnauthorizedState() {
       </span>
       <h2 className="text-h2 text-primary">You don&apos;t have permission to view user management.</h2>
       <p className="max-w-md text-body-sm text-secondary">
-        User management is available to members with the <strong>admin</strong> role in at least
-        one workspace. Contact your workspace administrator if you need access.
+        User management requires Platform <strong>Manage</strong>. Workspace Admin cannot access
+        enterprise user accounts.
       </p>
     </div>
   );

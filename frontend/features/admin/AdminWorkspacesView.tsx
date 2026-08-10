@@ -87,8 +87,8 @@ function UnauthorizedState() {
       </span>
       <h2 className="text-h2 text-primary">Không có quyền truy cập</h2>
       <p className="max-w-md text-body-sm text-secondary">
-        Workspace Management chỉ dành cho thành viên có vai trò <strong>admin</strong> trong ít
-        nhất một workspace. Liên hệ quản trị viên workspace của bạn nếu bạn cần quyền này.
+        Workspace Management Console chỉ dành cho Platform <strong>Manage</strong>. Workspace
+        Admin quản lý workspace của mình tại <code className="text-caption">/workspaces</code>.
       </p>
     </div>
   );
@@ -104,14 +104,19 @@ export function AdminWorkspacesView() {
   const [searchQuery, setSearchQuery] = useState("");
   const { items, total, loading, error, reload } = useWorkspaces(page, PAGE_SIZE);
 
+  // Platform Manage may edit/delete any workspace from Admin Console.
   const adminIdSet = useMemo(() => {
     const ids = new Set<string>();
     if (!user) return ids;
+    if (user.platform_role === "manage") {
+      for (const w of items) ids.add(w.id);
+      return ids;
+    }
     for (const m of user.workspaces) {
       if (m.role === "admin") ids.add(m.workspace_id);
     }
     return ids;
-  }, [user]);
+  }, [user, items]);
 
   // Client-side filter on the current page only — see AdminWorkspacesTable TODO.
   const visibleItems = useMemo(() => {

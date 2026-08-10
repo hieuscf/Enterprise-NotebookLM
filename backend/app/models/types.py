@@ -40,6 +40,7 @@ from app.models.enums import (
     MessageRole,
     PipelineStage,
     PipelineStatus,
+    PlatformRole,
     PreviewStatus,
     PreviewType,
     ReportFormat,
@@ -87,6 +88,7 @@ def pg_enum(enum_cls: type[E], name: str, *, create_type: bool = True) -> SAEnum
 # Shared PostgreSQL enum type instances (one DB type → many columns)
 user_status_enum = pg_enum(UserStatus, "user_status")
 role_name_enum = pg_enum(RoleName, "role_name")
+platform_role_enum = pg_enum(PlatformRole, "platform_role")
 file_type_enum = pg_enum(FileType, "file_type")
 document_version_status_enum = pg_enum(DocumentVersionStatus, "document_version_status")
 preview_status_enum = pg_enum(PreviewStatus, "preview_status")

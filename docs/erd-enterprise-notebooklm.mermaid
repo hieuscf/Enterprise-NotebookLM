@@ -8,6 +8,7 @@ erDiagram
         string full_name
         string avatar_url
         string status "active | disabled"
+        string platform_role "manage | null — Platform RBAC; not a workspace role"
         timestamp created_at
         timestamp updated_at
     }
@@ -23,7 +24,7 @@ erDiagram
 
     ROLES {
         uuid id PK
-        string name "admin | editor | viewer"
+        string name "admin | editor | viewer — Workspace only; never manage"
         jsonb permissions
     }
 

@@ -4,11 +4,11 @@
 # Layer: Presentation
 # Purpose: FastAPI routes for Workspace + member management (FR1 / UC10).
 # Responsibilities:
-#   - GET/POST /workspaces — list (member filter) + create (any authenticated user)
-#   - GET/PATCH/DELETE /workspaces/{workspaceId} — RBAC + soft-delete
+#   - GET/POST /workspaces — list (member or Manage-all) + create (Manage)
+#   - GET/PATCH/DELETE /workspaces/{workspaceId} — Workspace RBAC + soft-delete
 #   - GET/POST /workspaces/{id}/members; PATCH/DELETE .../members/{userId}
 # Dependencies:
-#   - get_current_user, require_workspace_*_rl (reuse FR12 — do not reimplement)
+#   - get_current_user, require_platform_manage, require_workspace_*_rl
 #   - app.services.workspaces, app.services.members
 # Public Exports:
 #   - router
@@ -16,7 +16,8 @@
 # Related Modules: docs/Enterprise_notebooklm_openapi.yaml (/workspaces*)
 # Important Notes:
 #   - Soft-delete extends schema v2; GET list filters deleted_at IS NULL.
-#   - POST create: any logged-in user; creator auto-admin (see WorkspaceService).
+#   - POST create: Platform Manage only; creator auto workspace-admin.
+#   - Member mutate: Workspace Admin of that workspace only (not Manage-as-role).
 #   - 409 member_exists + last-admin 400 are documented extensions beyond OpenAPI.
 # =============================================================================
 
@@ -30,10 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.dependencies.rate_limit import (
+    require_workspace_admin_or_manage_rl,
     require_workspace_admin_rl,
     require_workspace_member_rl,
 )
-from app.dependencies.rbac import WorkspaceAccess
+from app.dependencies.rbac import WorkspaceAccess, require_platform_manage
+from app.domain.permissions import is_manage
 from app.models.enums import RoleName
 from app.models.identity import Workspace
 from app.repositories.workspace_members import MemberDetailRow
@@ -115,8 +118,13 @@ async def list_workspaces(
     current_user: CurrentUser = Depends(get_current_user),
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> WorkspaceListResponse:
-    """Danh sách Workspace mà user hiện tại là member (không dùng require_workspace_role)."""
-    result = await service.list_for_user(current_user.id, page=page, page_size=page_size)
+    """List workspaces: membership for ordinary users; all active for Manage."""
+    if is_manage(current_user):
+        result = await service.list_all(page=page, page_size=page_size)
+    else:
+        result = await service.list_for_user(
+            current_user.id, page=page, page_size=page_size
+        )
     return WorkspaceListResponse(
         items=[_to_response(w) for w in result.items],
         page=result.page,
@@ -131,19 +139,15 @@ async def list_workspaces(
     status_code=status.HTTP_201_CREATED,
     responses={
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
     },
 )
 async def create_workspace(
     body: WorkspaceCreateRequest,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_platform_manage),
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> WorkspaceResponse:
-    """Tạo Workspace mới.
-
-    Decision: OpenAPI summary says "(Admin)" but there is no global-admin gate
-    and the workspace does not exist yet — so require_workspace_role cannot apply.
-    Any authenticated user may create; creator is auto-added as workspace admin.
-    """
+    """Tạo Workspace mới (Platform Manage). Creator becomes workspace admin."""
     try:
         workspace = await service.create(
             owner_id=current_user.id,
@@ -192,10 +196,10 @@ async def get_workspace(
 async def update_workspace(
     workspaceId: uuid.UUID,
     body: WorkspaceUpdateRequest,
-    access: WorkspaceAccess = Depends(require_workspace_admin_rl),
+    access: WorkspaceAccess = Depends(require_workspace_admin_or_manage_rl),
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> WorkspaceResponse:
-    """Cập nhật Workspace — admin only."""
+    """Cập nhật Workspace — Workspace Admin of this workspace, or Platform Manage."""
     del workspaceId
     try:
         workspace = await service.update(
@@ -220,10 +224,10 @@ async def update_workspace(
 )
 async def delete_workspace(
     workspaceId: uuid.UUID,
-    access: WorkspaceAccess = Depends(require_workspace_admin_rl),
+    access: WorkspaceAccess = Depends(require_workspace_admin_or_manage_rl),
     service: WorkspaceService = Depends(get_workspace_service),
 ) -> None:
-    """Xoá Workspace (Admin) — soft-delete workspace + members via deleted_at."""
+    """Xoá Workspace (Workspace Admin or Manage) — soft-delete via deleted_at."""
     del workspaceId
     try:
         await service.soft_delete(access.workspace_id)

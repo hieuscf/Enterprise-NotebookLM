@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { canAccessAdmin } from "@/lib/rbac";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
@@ -200,6 +201,8 @@ export function Sidebar({
   mobileOpen,
   onClose,
 }: Props) {
+  const showAdminConsole = canAccessAdmin(user);
+
   return (
     <>
       {mobileOpen ? (
@@ -249,6 +252,9 @@ export function Sidebar({
               ) : null}
               <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => {
+                  if (item.key === "admin" && !showAdminConsole) {
+                    return null;
+                  }
                   const isActive = item.key === active;
                   const Icon = item.icon;
                   const href = workspaceId

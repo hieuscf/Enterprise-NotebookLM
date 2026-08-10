@@ -10,7 +10,8 @@
 #   - app.core.rate_limit, app.core.config, app.dependencies.rbac
 # Public Exports:
 #   - rate_limited
-#   - require_workspace_member_rl, require_workspace_editor_rl, require_workspace_admin_rl
+#   - require_workspace_member_rl, require_workspace_editor_rl,
+#     require_workspace_admin_rl, require_workspace_admin_or_manage_rl
 # Database/Table: N/A
 # Related Modules: app.api.workspaces
 # Important Notes:
@@ -30,6 +31,7 @@ from app.core.rate_limit import WorkspaceRateLimiter, get_workspace_rate_limiter
 from app.dependencies.rbac import (
     WorkspaceAccess,
     require_workspace_admin,
+    require_workspace_admin_or_manage_dep,
     require_workspace_editor,
     require_workspace_member,
 )
@@ -69,3 +71,4 @@ def rate_limited(
 require_workspace_member_rl = rate_limited(require_workspace_member)
 require_workspace_editor_rl = rate_limited(require_workspace_editor)
 require_workspace_admin_rl = rate_limited(require_workspace_admin)
+require_workspace_admin_or_manage_rl = rate_limited(require_workspace_admin_or_manage_dep)
