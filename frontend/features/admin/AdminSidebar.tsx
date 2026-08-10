@@ -16,7 +16,7 @@
  *   - AdminSidebar, type AdminSidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/admin/AdminShell.tsx
- * Important Notes: Dashboard, Workspaces, Documents, Users.
+ * Important Notes: Dashboard, Workspaces, Documents, Pipeline, Users.
  * =============================================================================
  */
 
@@ -26,6 +26,7 @@ import {
   ArrowLeft,
   Building2,
   FileText,
+  GitBranch,
   type LucideIcon,
   LayoutDashboard,
   LogOut,
@@ -38,7 +39,12 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
-export type AdminSidebarActiveKey = "dashboard" | "workspaces" | "documents" | "users";
+export type AdminSidebarActiveKey =
+  | "dashboard"
+  | "workspaces"
+  | "documents"
+  | "pipeline"
+  | "users";
 
 type NavItem = {
   key: AdminSidebarActiveKey;
@@ -65,6 +71,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Documents",
     icon: FileText,
     href: "/admin/documents",
+  },
+  {
+    key: "pipeline",
+    label: "Pipeline",
+    icon: GitBranch,
+    href: "/admin/pipeline",
   },
   {
     key: "users",

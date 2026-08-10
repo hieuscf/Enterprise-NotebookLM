@@ -1077,11 +1077,21 @@ paths:
     get:
       tags: [Admin/Observability]
       summary: Danh sách pipeline_run (Manage)
-      description: Platform Manage only.
+      description: >
+        Platform Manage only. Debug Document Understanding → Cleaning →
+        Hierarchical Chunking → Embedding → Graph → Indexing. Each run may
+        include optional document context (title, version, file_type) resolved
+        via document_versions → documents JOIN.
       parameters:
         - name: status
           in: query
           schema: { type: string, enum: [pending, running, completed, failed] }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       responses:
         "200":
           description: OK
@@ -1595,6 +1605,21 @@ components:
           items: { $ref: "#/components/schemas/PipelineStageLog" }
         started_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time, nullable: true }
+        document_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Present on admin pipeline-runs list (JOIN); may be null elsewhere.
+        document_title:
+          type: string
+          nullable: true
+        file_type:
+          type: string
+          enum: [pdf, docx, xlsx, pptx, txt]
+          nullable: true
+        version_number:
+          type: integer
+          nullable: true
 
     PipelineStageLog:
       type: object
@@ -1602,7 +1627,18 @@ components:
         id: { type: string, format: uuid }
         stage:
           type: string
-          enum: [document_understanding, cleaning_normalize, hierarchical_chunking, embedding, graph_extraction, indexing]
+          enum:
+            [
+              ocr_cleaning,
+              chunking,
+              preview_generation,
+              document_understanding,
+              cleaning_normalize,
+              hierarchical_chunking,
+              embedding,
+              graph_extraction,
+              indexing,
+            ]
         status: { type: string, enum: [pending, running, completed, failed] }
         duration_ms: { type: integer }
         metadata: { type: object }

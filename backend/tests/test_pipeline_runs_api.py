@@ -47,11 +47,20 @@ class _EmptyScalarsResult:
         return []
 
 
+class _EmptyExecuteResult:
+    def all(self) -> list[Any]:
+        return []
+
+
 class CapturingSession:
-    """Captures SQLAlchemy statements executed via ``scalars``."""
+    """Captures SQLAlchemy statements executed via ``execute`` / ``scalars``."""
 
     def __init__(self) -> None:
         self.statements: list[Any] = []
+
+    async def execute(self, stmt: Any) -> _EmptyExecuteResult:
+        self.statements.append(stmt)
+        return _EmptyExecuteResult()
 
     async def scalars(self, stmt: Any) -> _EmptyScalarsResult:
         self.statements.append(stmt)

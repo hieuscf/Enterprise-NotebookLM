@@ -89,7 +89,7 @@ class PipelineRepository:
         offset = (page - 1) * page_size
 
         stmt = (
-            select(PipelineRun)
+            select(PipelineRun, Document, DocumentVersion)
             .join(
                 DocumentVersion,
                 DocumentVersion.id == PipelineRun.document_version_id,
@@ -107,9 +107,17 @@ class PipelineRepository:
             .offset(offset)
             .limit(page_size)
         )
-        runs = list((await self._session.scalars(stmt)).all())
-        if not runs:
+        rows = list((await self._session.execute(stmt)).all())
+        if not rows:
             return []
+
+        runs: list[PipelineRun] = []
+        for run, document, version in rows:
+            run.document_id = document.id  # type: ignore[attr-defined]
+            run.document_title = document.title  # type: ignore[attr-defined]
+            run.document_file_type = document.file_type  # type: ignore[attr-defined]
+            run.version_number = version.version_number  # type: ignore[attr-defined]
+            runs.append(run)
 
         run_ids = [run.id for run in runs]
         stages_stmt = (

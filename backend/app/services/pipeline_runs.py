@@ -61,6 +61,7 @@ def _stage_response(log: PipelineStageLog) -> PipelineStageLogResponse:
 
 def _run_response(run: PipelineRun) -> PipelineRunResponse:
     stages = getattr(run, "stages", []) or []
+    file_type = getattr(run, "document_file_type", None)
     return PipelineRunResponse(
         id=run.id,
         document_version_id=run.document_version_id,
@@ -70,4 +71,8 @@ def _run_response(run: PipelineRun) -> PipelineRunResponse:
         stages=[_stage_response(s) for s in stages],
         started_at=run.started_at,
         completed_at=run.completed_at,
+        document_id=getattr(run, "document_id", None),
+        document_title=getattr(run, "document_title", None),
+        file_type=file_type.value if file_type is not None else None,
+        version_number=getattr(run, "version_number", None),
     )

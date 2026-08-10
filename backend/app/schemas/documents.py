@@ -93,6 +93,12 @@ class PipelineRunResponse(BaseModel):
     stages: list[PipelineStageLogResponse] = Field(default_factory=list)
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # Optional document context — populated on admin list (JOIN already required
+    # for workspace scope). Null on endpoints that only load the run row.
+    document_id: UUID | None = None
+    document_title: str | None = None
+    file_type: Literal["pdf", "docx", "xlsx", "pptx", "txt"] | None = None
+    version_number: int | None = None
 
 
 class DocumentChunkResponse(BaseModel):

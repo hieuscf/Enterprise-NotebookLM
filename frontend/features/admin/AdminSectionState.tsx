@@ -44,9 +44,11 @@ export function SectionSkeleton({ rows = 3 }: { rows?: number }) {
 export function SectionError({
   message,
   onRetry,
+  retryLabel = "Thử lại",
 }: {
   message: string;
   onRetry: () => void;
+  retryLabel?: string;
 }) {
   return (
     <div
@@ -66,7 +68,7 @@ export function SectionError({
         )}
       >
         <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-        Thử lại
+        {retryLabel}
       </button>
     </div>
   );

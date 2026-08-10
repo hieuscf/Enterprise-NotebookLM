@@ -123,4 +123,9 @@ export type PipelineRun = {
   stages: PipelineStageLog[];
   started_at: string | null;
   completed_at: string | null;
+  /** Present on admin pipeline-runs list; may be null elsewhere. */
+  document_id?: string | null;
+  document_title?: string | null;
+  file_type?: FileType | null;
+  version_number?: number | null;
 };
