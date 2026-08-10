@@ -75,6 +75,37 @@ export type CostSummary = {
   by_agent_type: Record<string, AgentTypeCostSummary>;
 };
 
+/** OpenAPI HealthStatus. */
+export type SystemHealthStatus =
+  | "healthy"
+  | "degraded"
+  | "unhealthy"
+  | "unknown";
+
+/** OpenAPI HealthServiceCategory. */
+export type HealthServiceCategory = "core" | "ai_retrieval";
+
+/** OpenAPI HealthService. */
+export type HealthService = {
+  id: string;
+  name: string;
+  category: HealthServiceCategory;
+  status: SystemHealthStatus;
+  provider: string | null;
+  message: string | null;
+  checked_at: string;
+  response_time_ms: number | null;
+  critical: boolean;
+};
+
+/** OpenAPI SystemHealth. */
+export type SystemHealth = {
+  status: SystemHealthStatus;
+  checked_at: string;
+  message: string | null;
+  services: HealthService[];
+};
+
 /** OpenAPI CreateAdminUserRequest — plain password; never password_hash. */
 export type CreateAdminUserInput = {
   email: string;

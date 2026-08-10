@@ -10,23 +10,21 @@
  *          Admin/Observability contract (query-logs, pipeline-runs,
  *          cost-summary) — no new backend endpoints, no fake data.
  * Responsibilities:
- *   - RBAC gate: only render admin data for workspaces where the signed-in
- *     user's role is "admin" (per /auth/me memberships); block real page
- *     content (not just hide a menu item) when the user has none
+ *   - RBAC gate: Platform Manage only (canAccessAdmin / isSystemAdmin)
  *   - Own workspace selector + date-range state; fan out independent,
  *     parallel fetches per section so one failing section never blanks others
  * Dependencies:
  *   - features/admin/AdminShell, hooks/useAuth, hooks/useAdminEligibleWorkspaces,
  *     hooks/useAdminCostSummary, hooks/useAdminQueryLogs,
- *     hooks/useAdminPipelineRuns, hooks/useWorkspaceMembers, hooks/useDocuments
+ *     hooks/useAdminPipelineRuns, hooks/useAdminUsers, hooks/useAdminDocuments
  * Public Exports:
  *   - AdminDashboardView
  * Database/Table: workspaces, workspace_members, documents, query_logs,
  *   pipeline_runs, message_generations, agent_events
  * Related Modules: app/admin/dashboard/page.tsx, features/admin/AdminShell.tsx
- * Important Notes: Never bypass RBAC client-side — the backend still 403s any
- *   workspace the caller is not "admin" in on every /admin/workspaces/{id}/*
- *   call; this view only decides what to *show*, not what the API allows.
+ * Important Notes: Users/Documents KPIs must use Manage-scoped APIs
+ *   (GET /admin/users, GET /admin/documents) — workspace /members and
+ *   /documents require membership and 403 for Manage-without-membership.
  * =============================================================================
  */
 
@@ -34,7 +32,7 @@
 
 import { ShieldAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AdminHeaderControls } from "@/features/admin/AdminHeaderControls";
 import { AdminKpiCards } from "@/features/admin/AdminKpiCards";
@@ -47,12 +45,13 @@ import type { HealthStatus } from "@/features/admin/SystemHealthCard";
 import { SystemHealthCard } from "@/features/admin/SystemHealthCard";
 import { UsageCostCard } from "@/features/admin/UsageCostCard";
 import { useAdminCostSummary, type CostRangeDays } from "@/hooks/useAdminCostSummary";
+import { useAdminDocuments } from "@/hooks/useAdminDocuments";
 import { useAdminEligibleWorkspaces } from "@/hooks/useAdminEligibleWorkspaces";
 import { useAdminPipelineRuns } from "@/hooks/useAdminPipelineRuns";
 import { useAdminQueryLogs } from "@/hooks/useAdminQueryLogs";
+import { useAdminSystemHealth } from "@/hooks/useAdminSystemHealth";
+import { useAdminUsers } from "@/hooks/useAdminUsers";
 import { useAuth } from "@/hooks/useAuth";
-import { useDocuments } from "@/hooks/useDocuments";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaceMembers";
 
 function UnauthorizedState() {
   return (
@@ -96,10 +95,22 @@ export function AdminDashboardView() {
   const workspaceId = selectedWorkspaceId || null;
 
   const cost = useAdminCostSummary(workspaceId, rangeDays);
-  const members = useWorkspaceMembers(workspaceId);
-  const documents = useDocuments(workspaceId ?? "", { page: 1, pageSize: 1, fileType: null });
+  const adminUsers = useAdminUsers();
+  const documents = useAdminDocuments({
+    page: 1,
+    pageSize: 1,
+    workspaceId,
+  });
   const queryLogs = useAdminQueryLogs(workspaceId, 8);
   const pipelineRuns = useAdminPipelineRuns(workspaceId);
+  const systemHealth = useAdminSystemHealth();
+
+  const usersInWorkspace = useMemo(() => {
+    if (!workspaceId) return adminUsers.users.length;
+    return adminUsers.users.filter((u) =>
+      u.memberships.some((m) => m.workspace_id === workspaceId),
+    ).length;
+  }, [adminUsers.users, workspaceId]);
 
   const totalQueriesCurrent = cost.current
     ? cost.current.by_route_type.reduce((sum, r) => sum + r.count, 0)
@@ -109,18 +120,28 @@ export function AdminDashboardView() {
     : null;
 
   const anyLoading =
-    cost.loading || members.loading || documents.loading || queryLogs.loading || pipelineRuns.loading;
+    cost.loading ||
+    adminUsers.loading ||
+    documents.loading ||
+    queryLogs.loading ||
+    pipelineRuns.loading;
   const anyError = Boolean(
-    cost.error || members.error || documents.error || queryLogs.error || pipelineRuns.error,
+    cost.error ||
+      adminUsers.error ||
+      documents.error ||
+      queryLogs.error ||
+      pipelineRuns.error,
   );
-  const apiStatus: HealthStatus = anyLoading && !workspaceId ? "unknown" : anyError ? "degraded" : "healthy";
+  const apiStatus: HealthStatus =
+    anyLoading && !workspaceId ? "unknown" : anyError ? "degraded" : "healthy";
 
   function refreshAll() {
     void cost.reload();
-    void members.reload();
+    void adminUsers.reloadMembers();
     void documents.reload();
     void queryLogs.reload();
     void pipelineRuns.reload();
+    void systemHealth.reload();
   }
 
   const showUnauthorized = !authLoading && !workspacesLoading && !isSystemAdmin;
@@ -157,8 +178,16 @@ export function AdminDashboardView() {
           <>
             <AdminKpiCards
               workspaces={{ value: workspaceOptions.length, loading: false, error: null }}
-              users={{ value: members.members.length, loading: members.loading, error: members.error }}
-              documents={{ value: documents.total, loading: documents.loading, error: documents.error }}
+              users={{
+                value: usersInWorkspace,
+                loading: adminUsers.loading,
+                error: adminUsers.error,
+              }}
+              documents={{
+                value: documents.total,
+                loading: documents.loading,
+                error: documents.error,
+              }}
               queries={{ value: totalQueriesCurrent, loading: cost.loading, error: cost.error }}
               queriesDeltaPrev={totalQueriesPrevious}
               llmCalls={{
@@ -176,7 +205,11 @@ export function AdminDashboardView() {
             />
 
             <div className="grid gap-4 lg:grid-cols-2">
-              <SystemHealthCard apiStatus={apiStatus} />
+              <SystemHealthCard
+                apiStatus={apiStatus}
+                health={systemHealth.health}
+                healthLoading={systemHealth.loading}
+              />
               <QueryRoutingCard
                 cost={cost.current}
                 loading={cost.loading}

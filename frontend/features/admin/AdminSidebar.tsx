@@ -17,7 +17,7 @@
  * Database/Table: N/A
  * Related Modules: features/admin/AdminShell.tsx
  * Important Notes: Dashboard, Workspaces, Documents, Pipeline, Query Logs,
- *   Usage, Users.
+ *   Usage, Health, Users.
  * =============================================================================
  */
 
@@ -29,6 +29,7 @@ import {
   CircleDollarSign,
   FileText,
   GitBranch,
+  HeartPulse,
   type LucideIcon,
   LayoutDashboard,
   LogOut,
@@ -49,6 +50,7 @@ export type AdminSidebarActiveKey =
   | "pipeline"
   | "query-logs"
   | "usage"
+  | "health"
   | "users";
 
 type NavItem = {
@@ -94,6 +96,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Usage",
     icon: CircleDollarSign,
     href: "/admin/usage",
+  },
+  {
+    key: "health",
+    label: "Health",
+    icon: HeartPulse,
+    href: "/admin/health",
   },
   {
     key: "users",

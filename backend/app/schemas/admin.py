@@ -2,19 +2,23 @@
 # File: admin.py
 # Module/Service: Observability Module (FR13 + FR14)
 # Layer: Schema
-# Purpose: Pydantic models for admin observability APIs (query-logs, cost-summary).
+# Purpose: Pydantic models for admin observability APIs (query-logs, cost-summary,
+#          system health).
 # Responsibilities:
 #   - QueryLogResponse matching OpenAPI QueryLog
-#   - CostSummaryResponse matching OpenAPI CostSummary (+ by_agent_type)
+#   - CostSummaryResponse matching OpenAPI CostSummary (+ by_agent_type + tokens)
+#   - SystemHealthResponse / HealthServiceItem matching OpenAPI SystemHealth
 # Dependencies:
 #   - Pydantic v2
 # Public Exports:
 #   - QueryLogResponse
 #   - CostSummaryResponse, CostByModelItem, CostByRouteTypeItem, AgentTypeCostSummary
+#   - SystemHealthResponse, HealthServiceItem, HealthStatusLiteral
 # Database/Table: N/A
-# Related Modules: docs/Enterprise_notebooklm_openapi.yaml QueryLog, CostSummary
-# Important Notes: by_agent_type + token totals are additive; existing fields
-#   unchanged for backward-compatible clients.
+# Related Modules: docs/Enterprise_notebooklm_openapi.yaml QueryLog, CostSummary,
+#   SystemHealth
+# Important Notes: by_agent_type + token totals are additive; health messages must
+#   never include secrets or connection strings.
 # =============================================================================
 
 from __future__ import annotations
@@ -85,3 +89,34 @@ class CostSummaryResponse(BaseModel):
     by_model: list[CostByModelItem] = Field(default_factory=list)
     by_route_type: list[CostByRouteTypeItem] = Field(default_factory=list)
     by_agent_type: dict[str, AgentTypeCostSummary] = Field(default_factory=dict)
+
+
+HealthStatusLiteral = Literal["healthy", "degraded", "unhealthy", "unknown"]
+HealthCategoryLiteral = Literal["core", "ai_retrieval"]
+
+
+class HealthServiceItem(BaseModel):
+    """OpenAPI HealthService — one dependency probe result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    category: HealthCategoryLiteral
+    status: HealthStatusLiteral
+    provider: str | None = None
+    message: str | None = None
+    checked_at: datetime
+    response_time_ms: int | None = None
+    critical: bool = False
+
+
+class SystemHealthResponse(BaseModel):
+    """OpenAPI SystemHealth — overall + per-service availability."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: HealthStatusLiteral
+    checked_at: datetime
+    message: str | None = None
+    services: list[HealthServiceItem] = Field(default_factory=list)

@@ -6,11 +6,13 @@
  * Purpose: Typed calls to Admin contract — observability + global documents.
  * Responsibilities:
  *   - listWorkspaceQueryLogs / listWorkspacePipelineRuns / getWorkspaceCostSummary
+ *   - getAdminSystemHealth
  *   - listAdminDocuments / getAdminDocument / listAdminDocumentVersions
  * Dependencies:
  *   - lib/api-client (apiFetch, parseApiError, apiJson)
  * Public Exports:
  *   - listWorkspaceQueryLogs, listWorkspacePipelineRuns, getWorkspaceCostSummary
+ *   - getAdminSystemHealth
  *   - listAdminDocuments, getAdminDocument, listAdminDocumentVersions
  * Database/Table: query_logs, pipeline_runs, documents, document_versions
  * Related Modules: hooks/useAdmin*, features/admin/*
@@ -26,6 +28,7 @@ import type {
   AdminDocumentListResponse,
   CostSummary,
   QueryLogItem,
+  SystemHealth,
 } from "@/types/admin";
 import type { RouteType } from "@/types/chat";
 import type { DocumentVersion, PipelineRun, PipelineStatus } from "@/types/documents";
@@ -75,6 +78,12 @@ export async function getWorkspaceCostSummary(
   );
   if (!response.ok) throw await parseApiError(response);
   return (await response.json()) as CostSummary;
+}
+
+export async function getAdminSystemHealth(): Promise<SystemHealth> {
+  const response = await apiFetch("/admin/health");
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as SystemHealth;
 }
 
 // ---------------------------------------------------------------------------

@@ -1047,6 +1047,25 @@ paths:
   # ADMIN / OBSERVABILITY (FR12, FR13)
   # Gate: platform_role == manage only. Workspace Admin cannot access /admin/*.
   # ---------------------------------------------------------------------
+  /admin/health:
+    get:
+      tags: [Admin/Observability]
+      summary: System & dependency health (Manage)
+      description: >
+        Platform Manage only. Lightweight availability checks for core
+        infrastructure and AI/retrieval dependencies. Does not run RAG,
+        OCR, embeddings batch, or LLM generation. Secrets and connection
+        strings are never returned.
+      operationId: getAdminSystemHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemHealth" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /admin/workspaces/{workspaceId}/query-logs:
     parameters:
       - { $ref: "#/components/parameters/WorkspaceId" }
@@ -1926,6 +1945,57 @@ components:
         model_used: { type: string, nullable: true }
         latency_ms: { type: integer }
         created_at: { type: string, format: date-time }
+
+    HealthStatus:
+      type: string
+      enum: [healthy, degraded, unhealthy, unknown]
+
+    HealthServiceCategory:
+      type: string
+      enum: [core, ai_retrieval]
+
+    HealthService:
+      type: object
+      required: [id, name, category, status, checked_at, critical]
+      properties:
+        id:
+          type: string
+          description: Stable machine id (postgresql, redis, celery_worker, …)
+        name:
+          type: string
+          description: Human-readable service label
+        category: { $ref: "#/components/schemas/HealthServiceCategory" }
+        status: { $ref: "#/components/schemas/HealthStatus" }
+        provider:
+          type: string
+          nullable: true
+          description: Concrete provider when known (e.g. qdrant, minio)
+        message:
+          type: string
+          nullable: true
+          description: Sanitized status message (no secrets / URLs with credentials)
+        checked_at: { type: string, format: date-time }
+        response_time_ms:
+          type: integer
+          nullable: true
+          description: Health-check probe latency only (not a performance SLA)
+        critical:
+          type: boolean
+          description: When true, unhealthy status fails overall system health
+
+    SystemHealth:
+      type: object
+      required: [status, checked_at, services]
+      properties:
+        status: { $ref: "#/components/schemas/HealthStatus" }
+        checked_at: { type: string, format: date-time }
+        message:
+          type: string
+          nullable: true
+          description: Overall human-readable summary
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/HealthService" }
 
     CostSummary:
       type: object

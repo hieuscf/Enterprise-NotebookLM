@@ -84,5 +84,9 @@ export type {
   CostByModelItem,
   CostByRouteTypeItem,
   CostSummary,
+  HealthService,
+  HealthServiceCategory,
   QueryLogItem,
+  SystemHealth,
+  SystemHealthStatus,
 } from "./admin";
