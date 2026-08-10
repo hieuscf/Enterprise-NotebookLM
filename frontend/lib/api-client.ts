@@ -16,6 +16,7 @@
  *   - apiFetch, authLogin, authLogout, authMe, authRefresh
  *   - listWorkspaces, getWorkspace, createWorkspace, updateWorkspace, deleteWorkspace
  *   - listWorkspaceMembers, addWorkspaceMember, updateWorkspaceMemberRole, removeWorkspaceMember
+ *   - listAdminUsers, createAdminUser, deleteAdminUser
  *   - uploadDocumentXhr, uploadDocumentVersionXhr, getPipelineStatus
  *   - listDocuments, getDocument, listDocumentVersions, getDocumentVersion, setCurrentVersion
  *   - ApiClientError, parseApiError
@@ -28,6 +29,11 @@
  */
 
 import type { User } from "@/types/auth";
+import type {
+  AdminUserCreated,
+  AdminUserListResponse,
+  CreateAdminUserInput,
+} from "@/types/admin";
 import type {
   Document,
   DocumentChunkListResponse,
@@ -284,6 +290,29 @@ export async function removeWorkspaceMember(
   userId: string,
 ): Promise<void> {
   await apiJson<void>(`/workspaces/${workspaceId}/members/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin Users (FR12 — POST/GET/DELETE /admin/users)
+// ---------------------------------------------------------------------------
+
+export async function listAdminUsers(): Promise<AdminUserListResponse> {
+  return apiJson<AdminUserListResponse>("/admin/users");
+}
+
+export async function createAdminUser(
+  input: CreateAdminUserInput,
+): Promise<AdminUserCreated> {
+  return apiJson<AdminUserCreated>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteAdminUser(userId: string): Promise<void> {
+  await apiJson<void>(`/admin/users/${userId}`, {
     method: "DELETE",
   });
 }

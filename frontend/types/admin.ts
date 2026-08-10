@@ -61,3 +61,38 @@ export type CostSummary = {
   by_route_type: CostByRouteTypeItem[];
   by_agent_type: Record<string, AgentTypeCostSummary>;
 };
+
+/** OpenAPI CreateAdminUserRequest — plain password; never password_hash. */
+export type CreateAdminUserInput = {
+  email: string;
+  password: string;
+  full_name: string;
+};
+
+/** OpenAPI AdminUserResponse — create success payload. */
+export type AdminUserCreated = {
+  id: string;
+  email: string;
+  full_name: string;
+};
+
+/** OpenAPI AdminUserMembership — scoped to caller's admin workspaces. */
+export type AdminUserMembershipDto = {
+  workspace_id: string;
+  workspace_name: string;
+  role: "admin" | "editor" | "viewer";
+  joined_at: string;
+};
+
+/** OpenAPI AdminUserListItem. */
+export type AdminUserListItem = {
+  user_id: string;
+  email: string;
+  full_name: string;
+  memberships: AdminUserMembershipDto[];
+};
+
+/** OpenAPI AdminUserListResponse. */
+export type AdminUserListResponse = {
+  items: AdminUserListItem[];
+};

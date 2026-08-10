@@ -25,6 +25,7 @@ tags:
   - name: Extractions
   - name: Comparisons
   - name: Reports
+  - name: Admin/Users
   - name: Admin/Observability
 
 security:
@@ -1076,6 +1077,87 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/CostSummary" }
 
+  # ---------------------------------------------------------------------
+  # ADMIN / USERS (FR12 — Access Control)
+  # Gate: caller must be workspace admin of ≥1 workspace (no global admin).
+  # ---------------------------------------------------------------------
+  /admin/users:
+    get:
+      tags: [Admin/Users]
+      summary: Danh sách user visible với workspace admin (memberships + tài khoản chưa gán)
+      operationId: listAdminUsers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUserListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [Admin/Users]
+      summary: Tạo tài khoản user enterprise mới (hash password phía server)
+      operationId: createAdminUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAdminUserRequest" }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUserResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/users/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Admin/Users]
+      summary: Xoá vĩnh viễn tài khoản user (hard delete — không soft-disable)
+      operationId: deleteAdminUser
+      responses:
+        "204":
+          description: Account permanently deleted
+        "400":
+          description: Self-delete or other business validation failure
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: >
+            Conflict — last workspace admin, owns workspace (owner_id RESTRICT),
+            or has dependent content with ON DELETE RESTRICT FKs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1168,6 +1250,50 @@ components:
             properties:
               workspace_id: { type: string, format: uuid }
               role: { type: string, enum: [admin, editor, viewer] }
+
+    CreateAdminUserRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password, minLength: 1 }
+        full_name: { type: string, minLength: 1, maxLength: 255 }
+
+    AdminUserResponse:
+      type: object
+      required: [id, email, full_name]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+
+    AdminUserMembership:
+      type: object
+      required: [workspace_id, workspace_name, role, joined_at]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        workspace_name: { type: string }
+        role: { type: string, enum: [admin, editor, viewer] }
+        joined_at: { type: string, format: date-time }
+
+    AdminUserListItem:
+      type: object
+      required: [user_id, email, full_name, memberships]
+      properties:
+        user_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
+        memberships:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUserMembership" }
+
+    AdminUserListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminUserListItem" }
 
     Workspace:
       type: object

@@ -16,7 +16,7 @@
  *   - AdminSidebar, type AdminSidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/admin/AdminShell.tsx
- * Important Notes: Only links that exist today — Dashboard and Workspaces.
+ * Important Notes: Only links that exist today — Dashboard, Workspaces, Users.
  * =============================================================================
  */
 
@@ -29,6 +29,7 @@ import {
   LayoutDashboard,
   LogOut,
   Shield,
+  Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -36,7 +37,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/auth";
 
-export type AdminSidebarActiveKey = "dashboard" | "workspaces";
+export type AdminSidebarActiveKey = "dashboard" | "workspaces" | "users";
 
 type NavItem = {
   key: AdminSidebarActiveKey;
@@ -57,6 +58,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Workspaces",
     icon: Building2,
     href: "/admin/workspaces",
+  },
+  {
+    key: "users",
+    label: "Users",
+    icon: Users,
+    href: "/admin/users",
   },
 ];
 

@@ -123,7 +123,7 @@ export function ConfirmDialog({
             <h2 id={titleId} className="text-h3 text-primary">
               {title}
             </h2>
-            <p id={descId} className="mt-2 text-body-sm text-secondary">
+            <p id={descId} className="mt-2 whitespace-pre-line text-body-sm text-secondary">
               {description}
             </p>
           </div>

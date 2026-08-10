@@ -33,6 +33,8 @@ export type AdminRowMenuItem = {
   onSelect: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  /** Native tooltip when disabled (e.g. self-delete protection). */
+  title?: string;
 };
 
 type Props = {
@@ -93,7 +95,9 @@ export function AdminRowMenu({ label, items }: Props) {
                 type="button"
                 role="menuitem"
                 disabled={item.disabled}
+                title={item.title}
                 onClick={() => {
+                  if (item.disabled) return;
                   setOpen(false);
                   item.onSelect();
                 }}

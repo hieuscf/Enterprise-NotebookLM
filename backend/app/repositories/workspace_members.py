@@ -27,7 +27,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import RoleName
-from app.models.identity import Role, User, WorkspaceMember
+from app.models.identity import Role, User, Workspace, WorkspaceMember
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +40,17 @@ class MembershipRow:
 class MemberDetailRow:
     user_id: uuid.UUID
     email: str
+    role: RoleName
+    joined_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AdminScopedMemberRow:
+    user_id: uuid.UUID
+    email: str
+    full_name: str
+    workspace_id: uuid.UUID
+    workspace_name: str
     role: RoleName
     joined_at: datetime
 
@@ -221,3 +232,74 @@ class WorkspaceMemberRepository:
             )
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def list_admin_workspace_ids(self, user_id: uuid.UUID) -> list[uuid.UUID]:
+        """Active workspaces where the user has role=admin (non-deleted WS)."""
+        stmt = (
+            select(WorkspaceMember.workspace_id)
+            .join(Role, Role.id == WorkspaceMember.role_id)
+            .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+            .where(
+                WorkspaceMember.user_id == user_id,
+                WorkspaceMember.deleted_at.is_(None),
+                Workspace.deleted_at.is_(None),
+                Role.name == RoleName.admin,
+            )
+            .order_by(WorkspaceMember.joined_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_active_workspace_ids(self, user_id: uuid.UUID) -> list[uuid.UUID]:
+        """Active (non-soft-deleted) workspace ids for a user."""
+        stmt = (
+            select(WorkspaceMember.workspace_id)
+            .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+            .where(
+                WorkspaceMember.user_id == user_id,
+                WorkspaceMember.deleted_at.is_(None),
+                Workspace.deleted_at.is_(None),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_members_for_workspaces(
+        self, workspace_ids: list[uuid.UUID]
+    ) -> list[AdminScopedMemberRow]:
+        """Active members across the given workspaces (admin-scoped directory)."""
+        if not workspace_ids:
+            return []
+        stmt = (
+            select(
+                WorkspaceMember.user_id.label("user_id"),
+                User.email.label("email"),
+                User.full_name.label("full_name"),
+                WorkspaceMember.workspace_id.label("workspace_id"),
+                Workspace.name.label("workspace_name"),
+                Role.name.label("role"),
+                WorkspaceMember.joined_at.label("joined_at"),
+            )
+            .join(User, User.id == WorkspaceMember.user_id)
+            .join(Role, Role.id == WorkspaceMember.role_id)
+            .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+            .where(
+                WorkspaceMember.workspace_id.in_(workspace_ids),
+                WorkspaceMember.deleted_at.is_(None),
+                Workspace.deleted_at.is_(None),
+            )
+            .order_by(User.email.asc(), WorkspaceMember.joined_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        return [
+            AdminScopedMemberRow(
+                user_id=row.user_id,
+                email=row.email,
+                full_name=row.full_name,
+                workspace_id=row.workspace_id,
+                workspace_name=row.workspace_name,
+                role=row.role,
+                joined_at=row.joined_at,
+            )
+            for row in result.all()
+        ]

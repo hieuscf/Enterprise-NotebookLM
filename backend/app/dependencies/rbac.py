@@ -13,12 +13,14 @@
 # Public Exports:
 #   - WorkspaceAccess, require_workspace_role
 #   - require_workspace_member, require_workspace_editor, require_workspace_admin
+#   - require_any_workspace_admin
 # Database/Table: workspace_members, roles
 # Related Modules: System_Architecture (API Gateway / Auth Middleware), app.api.workspaces
 # Important Notes:
 #   - Not a member → 403 Forbidden; role not in allow-list → 403.
 #   - Callers pass explicit allow-lists; use module-level helpers for hierarchy:
 #     admin > editor > viewer (admin implies editor/write; all three for read).
+#   - require_any_workspace_admin: no {workspaceId} path — used by /admin/users.
 # =============================================================================
 
 from __future__ import annotations
@@ -108,6 +110,23 @@ def require_workspace_role(
         )
 
     return _checker
+
+
+async def require_any_workspace_admin(
+    current_user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> CurrentUser:
+    """Gate for /admin/users: caller must be admin of at least one workspace.
+
+    There is no global system-admin role in this product — workspace admin is
+    the strongest platform gate available (matches Admin Console UX).
+    """
+    admin_ids = await WorkspaceMemberRepository(session).list_admin_workspace_ids(
+        current_user.id
+    )
+    if not admin_ids:
+        raise _forbidden("Workspace admin role required")
+    return current_user
 
 
 # Standard allow-lists for upcoming routers (1.3+). Prefer these over ad-hoc lists.

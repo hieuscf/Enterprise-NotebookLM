@@ -77,6 +77,11 @@ class WorkspaceRepository:
         rows = (await self._session.execute(list_stmt)).scalars().all()
         return list(rows), total
 
+    async def count_owned_by_user(self, user_id: uuid.UUID) -> int:
+        """Count workspaces owned by user (includes soft-deleted — owner_id RESTRICT)."""
+        stmt = select(func.count()).select_from(Workspace).where(Workspace.owner_id == user_id)
+        return int((await self._session.execute(stmt)).scalar_one())
+
     async def create(
         self,
         *,
