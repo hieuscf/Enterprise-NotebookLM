@@ -89,7 +89,9 @@ function mapMemberError(err: unknown, fallback: string): string {
       case "member_exists":
         return "User này đã là thành viên của workspace.";
       case "user_not_found":
-        return "Không tìm thấy user với ID này.";
+        return "Không tìm thấy người dùng với email/ID này. Họ cần có tài khoản trước.";
+      case "user_mismatch":
+        return "Email và user ID không khớp cùng một người.";
       case "not_found":
         return "Không tìm thấy thành viên hoặc workspace.";
       case "last_admin":
@@ -155,6 +157,7 @@ export function WorkspaceMembersView({ workspaceId }: Props) {
     try {
       await addWorkspaceMember(workspaceId, {
         user_id: values.userId,
+        email: values.email,
         role: values.role,
       });
       await reload();
@@ -392,6 +395,7 @@ export function WorkspaceMembersView({ workspaceId }: Props) {
 
       <AddMemberModal
         open={addOpen}
+        workspaceId={workspaceId}
         submitting={addSubmitting}
         error={addError}
         onClose={() => {

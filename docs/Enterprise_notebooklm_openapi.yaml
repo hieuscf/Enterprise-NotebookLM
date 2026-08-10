@@ -198,17 +198,19 @@ paths:
       tags: [Workspaces]
       summary: Thêm thành viên vào Workspace (Workspace Admin)
       description: >
-        Workspace Admin of this workspace only. Platform Manage is not a workspace role
-        and does not automatically grant member management.
+        Workspace Admin of this workspace only. Identify the invitee by
+        `user_id` and/or `email` (at least one required). Platform Manage is
+        not a workspace role and does not automatically grant member management.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [user_id, role]
+              required: [role]
               properties:
-                user_id: { type: string, format: uuid }
+                user_id: { type: string, format: uuid, nullable: true }
+                email: { type: string, format: email, nullable: true }
                 role: { type: string, enum: [admin, editor, viewer] }
       responses:
         "201":
@@ -216,8 +218,43 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceMember" }
+        "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: User is already an active member
+
+  /workspaces/{workspaceId}/member-candidates:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+    get:
+      tags: [Workspaces]
+      summary: Tìm user để mời vào Workspace (Workspace Admin)
+      description: >
+        Search active users by full name or email for the invite UI.
+        Excludes users who are already active members of this workspace.
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, default: "" }
+          description: Substring match on full_name or email (case-insensitive)
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MemberCandidate" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /workspaces/{workspaceId}/members/{userId}:
     parameters:
@@ -1574,6 +1611,14 @@ components:
         email: { type: string }
         role: { type: string, enum: [admin, editor, viewer] }
         joined_at: { type: string, format: date-time }
+
+    MemberCandidate:
+      type: object
+      required: [user_id, email, full_name]
+      properties:
+        user_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        full_name: { type: string }
 
     Document:
       type: object

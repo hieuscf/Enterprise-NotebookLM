@@ -6,7 +6,8 @@
 # Responsibilities:
 #   - GET/POST /workspaces — list (member or Manage-all) + create (Manage)
 #   - GET/PATCH/DELETE /workspaces/{workspaceId} — Workspace RBAC + soft-delete
-#   - GET/POST /workspaces/{id}/members; PATCH/DELETE .../members/{userId}
+#   - GET/POST /workspaces/{id}/members; GET .../member-candidates;
+#     PATCH/DELETE .../members/{userId}
 # Dependencies:
 #   - get_current_user, require_platform_manage, require_workspace_*_rl
 #   - app.services.workspaces, app.services.members
@@ -43,6 +44,7 @@ from app.repositories.workspace_members import MemberDetailRow
 from app.schemas.common import ErrorResponse
 from app.schemas.members import (
     AddMemberRequest,
+    MemberCandidateResponse,
     UpdateMemberRoleRequest,
     WorkspaceMemberResponse,
 )
@@ -264,11 +266,47 @@ async def list_members(
     return [_member_response(r) for r in rows]
 
 
+@router.get(
+    "/{workspaceId}/member-candidates",
+    response_model=list[MemberCandidateResponse],
+    summary="Tìm user để mời vào workspace (Workspace Admin)",
+    operation_id="listWorkspaceMemberCandidates",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def list_member_candidates(
+    workspaceId: uuid.UUID,
+    q: str = Query("", description="Search by full name or email (optional)"),
+    limit: int = Query(20, ge=1, le=100),
+    access: WorkspaceAccess = Depends(require_workspace_admin_rl),
+    service: WorkspaceMemberService = Depends(get_member_service),
+) -> list[MemberCandidateResponse]:
+    """Directory search for invites — excludes users already active in workspace."""
+    del workspaceId
+    try:
+        rows = await service.list_candidates(
+            workspace_id=access.workspace_id,
+            query=q,
+            limit=limit,
+        )
+    except MemberError as exc:
+        raise _member_http_error(exc) from exc
+    return [
+        MemberCandidateResponse(user_id=uid, email=email, full_name=name)
+        for uid, email, name in rows
+    ]
+
+
 @router.post(
     "/{workspaceId}/members",
     response_model=WorkspaceMemberResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
+        status.HTTP_400_BAD_REQUEST: {"model": ErrorResponse},
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
@@ -282,12 +320,13 @@ async def add_member(
     access: WorkspaceAccess = Depends(require_workspace_admin_rl),
     service: WorkspaceMemberService = Depends(get_member_service),
 ) -> WorkspaceMemberResponse:
-    """Thêm thành viên — admin only. 409 nếu user đã là member active."""
+    """Thêm thành viên — admin only. Identify by user_id and/or email."""
     del workspaceId
     try:
         row = await service.add_member(
             workspace_id=access.workspace_id,
             user_id=body.user_id,
+            email=str(body.email) if body.email else None,
             role=RoleName(body.role),
         )
     except MemberError as exc:

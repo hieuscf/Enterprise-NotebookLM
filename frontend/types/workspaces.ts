@@ -10,7 +10,7 @@
  *   - docs/Enterprise_notebooklm_openapi.yaml
  * Public Exports:
  *   - Workspace, WorkspaceListResponse, WorkspaceCreateInput, WorkspaceUpdateInput
- *   - WorkspaceMember, AddMemberInput, UpdateMemberRoleInput
+ *   - WorkspaceMember, MemberCandidate, AddMemberInput, UpdateMemberRoleInput
  * Database/Table: N/A
  * Related Modules: lib/api-client, features/workspaces
  * Important Notes: deleted_at is not exposed in API responses.
@@ -52,10 +52,20 @@ export type WorkspaceMember = {
   joined_at: string;
 };
 
-/** POST /workspaces/{id}/members — user_id is required by the API contract
- * (no email-lookup endpoint exists yet; admin must know the target user's UUID). */
-export type AddMemberInput = {
+/** Active user eligible to invite (GET .../member-candidates). */
+export type MemberCandidate = {
   user_id: string;
+  email: string;
+  full_name: string;
+};
+
+/**
+ * POST /workspaces/{id}/members — provide user_id and/or email
+ * (backend requires at least one).
+ */
+export type AddMemberInput = {
+  user_id?: string;
+  email?: string;
   role: WorkspaceRole;
 };
 

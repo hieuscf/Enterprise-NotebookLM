@@ -92,6 +92,32 @@ class UserRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def search_active(
+        self,
+        *,
+        query: str,
+        limit: int = 20,
+        exclude_user_ids: list[uuid.UUID] | None = None,
+    ) -> list[User]:
+        """Active users matching email/full_name (case-insensitive ILIKE).
+
+        Used by workspace admins when inviting members — never invents accounts.
+        Empty ``query`` returns the first ``limit`` active users (directory browse).
+        """
+        limit = min(100, max(1, limit))
+        stmt = select(User).where(User.status == UserStatus.active)
+        q = query.strip()
+        if q:
+            pattern = f"%{q}%"
+            stmt = stmt.where(
+                (User.email.ilike(pattern)) | (User.full_name.ilike(pattern))
+            )
+        if exclude_user_ids:
+            stmt = stmt.where(User.id.notin_(exclude_user_ids))
+        stmt = stmt.order_by(User.full_name.asc(), User.email.asc()).limit(limit)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def list_users_without_active_membership(self) -> list[User]:
         """Active users with no active (non-soft-deleted) workspace membership."""
         active_member = (

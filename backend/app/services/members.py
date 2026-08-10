@@ -4,8 +4,8 @@
 # Layer: Service
 # Purpose: Business logic for workspace member management (FR1 / UC10).
 # Responsibilities:
-#   - List members; add / change role / remove with admin-only rules at API layer
-#   - Block demote/remove of the last remaining admin
+#   - List members; search invite candidates; add / change role / remove
+#   - Resolve invitee by user_id or email; block demote/remove of last admin
 #   - 409 on duplicate active membership; revive soft-deleted rows on re-invite
 # Dependencies:
 #   - app.repositories.workspace_members, roles, users, workspaces
@@ -74,22 +74,67 @@ class WorkspaceMemberService:
         await self._require_active_workspace(workspace_id)
         return await self._members.list_for_workspace(workspace_id)
 
+    async def list_candidates(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        query: str = "",
+        limit: int = 20,
+    ) -> list[tuple[uuid.UUID, str, str]]:
+        """Active users matching name/email, excluding current workspace members."""
+        await self._require_active_workspace(workspace_id)
+        members = await self._members.list_for_workspace(workspace_id)
+        exclude = [m.user_id for m in members]
+        users = await self._users.search_active(
+            query=query,
+            limit=limit,
+            exclude_user_ids=exclude or None,
+        )
+        return [(u.id, u.email, u.full_name) for u in users]
+
+    async def resolve_user_id(
+        self,
+        *,
+        user_id: uuid.UUID | None,
+        email: str | None,
+    ) -> uuid.UUID:
+        """Resolve invite identity — prefer explicit UUID; else email lookup."""
+        if user_id is not None:
+            user = await self._users.get_by_id(user_id)
+            if user is None:
+                raise MemberError("user_not_found", "User not found", status_code=404)
+            if email is not None and user.email.lower() != email.lower():
+                raise MemberError(
+                    "user_mismatch",
+                    "user_id and email refer to different users",
+                    status_code=400,
+                )
+            return user.id
+
+        assert email is not None
+        user = await self._users.get_by_email_ci(email)
+        if user is None:
+            raise MemberError(
+                "user_not_found",
+                "No user found with that email",
+                status_code=404,
+            )
+        return user.id
+
     async def add_member(
         self,
         *,
         workspace_id: uuid.UUID,
-        user_id: uuid.UUID,
+        user_id: uuid.UUID | None = None,
+        email: str | None = None,
         role: RoleName,
     ) -> MemberDetailRow:
         await self._require_active_workspace(workspace_id)
-
-        user = await self._users.get_by_id(user_id)
-        if user is None:
-            raise MemberError("user_not_found", "User not found", status_code=404)
+        resolved_id = await self.resolve_user_id(user_id=user_id, email=email)
 
         role_id = await self._role_id(role)
         existing = await self._members.get_any_member_row(
-            workspace_id=workspace_id, user_id=user_id
+            workspace_id=workspace_id, user_id=resolved_id
         )
         if existing is not None and existing.deleted_at is None:
             # Decision: 409 Conflict — not in OpenAPI but required to avoid silent
@@ -105,10 +150,10 @@ class WorkspaceMemberService:
         else:
             await self._members.add_member(
                 workspace_id=workspace_id,
-                user_id=user_id,
+                user_id=resolved_id,
                 role_id=role_id,
             )
-        return await self._detail(workspace_id=workspace_id, user_id=user_id)
+        return await self._detail(workspace_id=workspace_id, user_id=resolved_id)
 
     async def update_role(
         self,

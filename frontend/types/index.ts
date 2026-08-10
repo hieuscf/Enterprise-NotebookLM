@@ -64,6 +64,7 @@ export type {
 
 export type {
   AddMemberInput,
+  MemberCandidate,
   UpdateMemberRoleInput,
   Workspace,
   WorkspaceCreateInput,

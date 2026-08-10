@@ -523,3 +523,52 @@ async def test_remove_last_admin_400(
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "last_admin"
+
+
+@pytest.mark.asyncio
+async def test_add_member_by_email_resolves_user(
+    workspace_id: uuid.UUID, target_id: uuid.UUID
+) -> None:
+    svc, fake = _member_service(workspace_id)
+    target = User(
+        id=target_id,
+        email="invitee@example.com",
+        password_hash="x",
+        full_name="Invitee",
+    )
+    svc._users.get_by_email_ci = AsyncMock(return_value=target)
+    fake.details[workspace_id] = [
+        _detail(user_id=target_id, email=target.email, role=RoleName.viewer),
+    ]
+
+    row = await svc.add_member(
+        workspace_id=workspace_id,
+        email="Invitee@Example.com",
+        role=RoleName.viewer,
+    )
+    assert row.user_id == target_id
+    assert (workspace_id, target_id) in fake.active
+
+
+@pytest.mark.asyncio
+async def test_list_candidates_excludes_existing_members(
+    workspace_id: uuid.UUID, target_id: uuid.UUID
+) -> None:
+    svc, fake = _member_service(workspace_id)
+    existing = uuid.uuid4()
+    fake.details[workspace_id] = [
+        _detail(user_id=existing, email="in@example.com", role=RoleName.viewer),
+    ]
+    outsider = User(
+        id=target_id,
+        email="out@example.com",
+        password_hash="x",
+        full_name="Outside User",
+    )
+    svc._users.search_active = AsyncMock(return_value=[outsider])
+
+    rows = await svc.list_candidates(workspace_id=workspace_id, query="out", limit=20)
+    assert rows == [(target_id, "out@example.com", "Outside User")]
+    svc._users.search_active.assert_awaited_once()
+    kwargs = svc._users.search_active.await_args.kwargs
+    assert existing in kwargs["exclude_user_ids"]

@@ -15,7 +15,8 @@
  * Public Exports:
  *   - apiFetch, authLogin, authLogout, authMe, authRefresh
  *   - listWorkspaces, getWorkspace, createWorkspace, updateWorkspace, deleteWorkspace
- *   - listWorkspaceMembers, addWorkspaceMember, updateWorkspaceMemberRole, removeWorkspaceMember
+ *   - listWorkspaceMembers, listWorkspaceMemberCandidates, addWorkspaceMember,
+ *     updateWorkspaceMemberRole, removeWorkspaceMember
  *   - listAdminUsers, createAdminUser, deleteAdminUser
  *   - uploadDocumentXhr, uploadDocumentVersionXhr, getPipelineStatus
  *   - listDocuments, getDocument, listDocumentVersions, getDocumentVersion, setCurrentVersion
@@ -44,6 +45,7 @@ import type {
 } from "@/types/documents";
 import type {
   AddMemberInput,
+  MemberCandidate,
   UpdateMemberRoleInput,
   Workspace,
   WorkspaceCreateInput,
@@ -264,13 +266,29 @@ export async function listWorkspaceMembers(
   return apiJson<WorkspaceMember[]>(`/workspaces/${workspaceId}/members`);
 }
 
+export async function listWorkspaceMemberCandidates(
+  workspaceId: string,
+  params?: { q?: string; limit?: number },
+): Promise<MemberCandidate[]> {
+  const qs = new URLSearchParams();
+  if (params?.q?.trim()) qs.set("q", params.q.trim());
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return apiJson<MemberCandidate[]>(
+    `/workspaces/${workspaceId}/member-candidates${suffix}`,
+  );
+}
+
 export async function addWorkspaceMember(
   workspaceId: string,
   input: AddMemberInput,
 ): Promise<WorkspaceMember> {
+  const body: Record<string, string> = { role: input.role };
+  if (input.user_id) body.user_id = input.user_id;
+  if (input.email) body.email = input.email;
   return apiJson<WorkspaceMember>(`/workspaces/${workspaceId}/members`, {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify(body),
   });
 }
 
