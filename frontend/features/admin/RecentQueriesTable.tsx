@@ -22,6 +22,8 @@
 
 "use client";
 
+import type { ReactNode } from "react";
+
 import { AdminCard } from "@/features/admin/AdminCard";
 import {
   formatLatency,
@@ -39,6 +41,7 @@ type Props = {
   error: string | null;
   onRetry: () => void;
   headingId?: string;
+  action?: ReactNode;
 };
 
 function redactQueryText(text: string, max = 44): string {
@@ -47,12 +50,20 @@ function redactQueryText(text: string, max = 44): string {
   return `${clean.slice(0, max)}…`;
 }
 
-export function RecentQueriesTable({ items, loading, error, onRetry, headingId = "admin-recent-queries" }: Props) {
+export function RecentQueriesTable({
+  items,
+  loading,
+  error,
+  onRetry,
+  headingId = "admin-recent-queries",
+  action,
+}: Props) {
   return (
     <AdminCard
       headingId={headingId}
       title="Recent Query Activity"
       description="Các truy vấn gần nhất và cách Query Router định tuyến."
+      action={action}
     >
       {loading ? (
         <SectionSkeleton rows={5} />

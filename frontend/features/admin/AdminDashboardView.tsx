@@ -33,6 +33,7 @@
 "use client";
 
 import { ShieldAlert } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AdminHeaderControls } from "@/features/admin/AdminHeaderControls";
@@ -70,11 +71,8 @@ function UnauthorizedState() {
   );
 }
 
-function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
 export function AdminDashboardView() {
+  const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const {
     options: workspaceOptions,
@@ -184,7 +182,12 @@ export function AdminDashboardView() {
                 loading={cost.loading}
                 error={cost.error}
                 onRetry={cost.reload}
-                onViewQueryLogs={() => scrollToSection("admin-recent-queries")}
+                onViewQueryLogs={() => {
+                  const qs = selectedWorkspaceId
+                    ? `?workspace=${encodeURIComponent(selectedWorkspaceId)}`
+                    : "";
+                  router.push(`/admin/query-logs${qs}`);
+                }}
               />
             </div>
 
@@ -210,6 +213,20 @@ export function AdminDashboardView() {
                 loading={queryLogs.loading}
                 error={queryLogs.error}
                 onRetry={queryLogs.reload}
+                action={
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const qs = selectedWorkspaceId
+                        ? `?workspace=${encodeURIComponent(selectedWorkspaceId)}`
+                        : "";
+                      router.push(`/admin/query-logs${qs}`);
+                    }}
+                    className="inline-flex items-center gap-1 text-caption font-medium text-accent-primary hover:underline"
+                  >
+                    Open console
+                  </button>
+                }
               />
               <RecentPipelineTable
                 runs={pipelineRuns.runs}
