@@ -1,25 +1,29 @@
 /**
  * =============================================================================
  * File: admin.ts
- * Module/Service: Observability Module (Web App)
+ * Module/Service: Observability / Admin Console (Web App)
  * Layer: UI
- * Purpose: TypeScript types for Admin/Observability endpoints matching backend
- *          Pydantic schemas (app/schemas/admin.py) — query-logs, cost-summary.
+ * Purpose: TypeScript types for Admin endpoints matching backend Pydantic /
+ *          OpenAPI schemas (query-logs, cost-summary, users, documents).
  * Responsibilities:
- *   - Mirror QueryLogResponse / CostSummaryResponse 1:1 (no invented fields)
+ *   - Mirror admin response shapes 1:1 (no invented fields)
  * Dependencies:
- *   - types/chat (RouteType is already defined there — reused, not redefined)
+ *   - types/chat, types/documents
  * Public Exports:
- *   - QueryLogItem, CostByModelItem, CostByRouteTypeItem, AgentTypeCostSummary,
- *     CostSummary
- * Database/Table: query_logs, message_generations, agent_events
- * Related Modules: lib/admin.api, features/admin/*, backend/app/schemas/admin.py
- * Important Notes: pipeline-runs reuses the existing `PipelineRun` type from
- *   types/documents.ts (identical shape) — not redefined here.
+ *   - QueryLogItem, CostSummary, AdminUser*, AdminDocument*
+ * Database/Table: query_logs, message_generations, documents, document_versions
+ * Related Modules: lib/admin.api, features/admin/*
+ * Important Notes: pipeline-runs reuse PipelineRun from types/documents.ts.
  * =============================================================================
  */
 
 import type { RouteType } from "./chat";
+import type {
+  DocumentVersion,
+  DocumentVersionStatus,
+  FileType,
+  PipelineRun,
+} from "./documents";
 
 /** OpenAPI QueryLog (admin audit row) — matches app/schemas/admin.py QueryLogResponse. */
 export type QueryLogItem = {
@@ -95,4 +99,67 @@ export type AdminUserListItem = {
 /** OpenAPI AdminUserListResponse. */
 export type AdminUserListResponse = {
   items: AdminUserListItem[];
+};
+
+/** OpenAPI AdminDocumentSummary — counts by current DocumentVersion.status. */
+export type AdminDocumentSummary = {
+  total: number;
+  processing: number;
+  ready: number;
+  failed: number;
+};
+
+/** OpenAPI AdminDocumentListItem. */
+export type AdminDocumentListItem = {
+  id: string;
+  title: string;
+  filename: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  file_type: FileType;
+  current_version_id: string | null;
+  version_number: number | null;
+  file_size_bytes: number | null;
+  page_count: number | null;
+  status: DocumentVersionStatus | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** OpenAPI AdminDocumentListResponse. */
+export type AdminDocumentListResponse = {
+  items: AdminDocumentListItem[];
+  page: number;
+  page_size: number;
+  total: number;
+  summary: AdminDocumentSummary;
+};
+
+/** OpenAPI AdminDocumentDetailResponse. */
+export type AdminDocumentDetail = {
+  id: string;
+  title: string;
+  filename: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  file_type: FileType;
+  current_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+  current_version: DocumentVersion | null;
+  latest_pipeline_run: PipelineRun | null;
+};
+
+export type AdminDocumentSort = "updated_at" | "title" | "size" | "status" | "name";
+export type AdminDocumentSortOrder = "asc" | "desc";
+
+export type AdminDocumentListParams = {
+  page?: number;
+  pageSize?: number;
+  workspaceId?: string | null;
+  status?: DocumentVersionStatus | null;
+  fileType?: FileType | null;
+  search?: string | null;
+  sort?: AdminDocumentSort;
+  order?: AdminDocumentSortOrder;
 };

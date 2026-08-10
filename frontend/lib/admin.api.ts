@@ -1,33 +1,34 @@
 /**
  * =============================================================================
  * File: admin.api.ts
- * Module/Service: Observability Module (Web App)
+ * Module/Service: Observability / Admin Console (Web App)
  * Layer: UI
- * Purpose: Typed calls to the existing Admin/Observability contract:
- *          GET /admin/workspaces/{id}/query-logs, /pipeline-runs, /cost-summary
- *          (backend/app/api/admin.py — admin-only, RBAC enforced server-side).
+ * Purpose: Typed calls to Admin contract — observability + global documents.
  * Responsibilities:
- *   - listWorkspaceQueryLogs — route_type filter + page/page_size
- *   - listWorkspacePipelineRuns — status filter + page/page_size
- *   - getWorkspaceCostSummary — from/to date range
+ *   - listWorkspaceQueryLogs / listWorkspacePipelineRuns / getWorkspaceCostSummary
+ *   - listAdminDocuments / getAdminDocument / listAdminDocumentVersions
  * Dependencies:
- *   - lib/api-client (apiFetch, parseApiError)
+ *   - lib/api-client (apiFetch, parseApiError, apiJson)
  * Public Exports:
  *   - listWorkspaceQueryLogs, listWorkspacePipelineRuns, getWorkspaceCostSummary
- * Database/Table: query_logs, pipeline_runs, message_generations, agent_events
+ *   - listAdminDocuments, getAdminDocument, listAdminDocumentVersions
+ * Database/Table: query_logs, pipeline_runs, documents, document_versions
  * Related Modules: hooks/useAdmin*, features/admin/*
  * Important Notes:
- *   - Do NOT invent endpoints (no /admin/dashboard/stats, /admin/health, etc.) —
- *     only the three operations above exist server-side.
- *   - Admin-only: backend returns 403 for non-admin workspace members; the UI
- *     must not attempt to bypass this (see AdminDashboardView RBAC gate).
+ *   - Platform Manage only — backend require_platform_manage is authoritative.
  * =============================================================================
  */
 
 import { apiFetch, parseApiError } from "@/lib/api-client";
-import type { CostSummary, QueryLogItem } from "@/types/admin";
+import type {
+  AdminDocumentDetail,
+  AdminDocumentListParams,
+  AdminDocumentListResponse,
+  CostSummary,
+  QueryLogItem,
+} from "@/types/admin";
 import type { RouteType } from "@/types/chat";
-import type { PipelineRun, PipelineStatus } from "@/types/documents";
+import type { DocumentVersion, PipelineRun, PipelineStatus } from "@/types/documents";
 
 export async function listWorkspaceQueryLogs(
   workspaceId: string,
@@ -74,4 +75,42 @@ export async function getWorkspaceCostSummary(
   );
   if (!response.ok) throw await parseApiError(response);
   return (await response.json()) as CostSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Admin Documents — global document operations (Manage)
+// ---------------------------------------------------------------------------
+
+export async function listAdminDocuments(
+  params?: AdminDocumentListParams,
+): Promise<AdminDocumentListResponse> {
+  const qs = new URLSearchParams({
+    page: String(params?.page ?? 1),
+    page_size: String(params?.pageSize ?? 20),
+    sort: params?.sort ?? "updated_at",
+    order: params?.order ?? "desc",
+  });
+  if (params?.workspaceId) qs.set("workspace_id", params.workspaceId);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.fileType) qs.set("file_type", params.fileType);
+  if (params?.search?.trim()) qs.set("search", params.search.trim());
+  const response = await apiFetch(`/admin/documents?${qs.toString()}`);
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as AdminDocumentListResponse;
+}
+
+export async function getAdminDocument(
+  documentId: string,
+): Promise<AdminDocumentDetail> {
+  const response = await apiFetch(`/admin/documents/${documentId}`);
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as AdminDocumentDetail;
+}
+
+export async function listAdminDocumentVersions(
+  documentId: string,
+): Promise<DocumentVersion[]> {
+  const response = await apiFetch(`/admin/documents/${documentId}/versions`);
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as DocumentVersion[];
 }

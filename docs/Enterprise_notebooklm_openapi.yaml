@@ -26,6 +26,7 @@ tags:
   - name: Comparisons
   - name: Reports
   - name: Admin/Users
+  - name: Admin/Documents
   - name: Admin/Observability
 
 security:
@@ -1116,6 +1117,99 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
   # ---------------------------------------------------------------------
+  # ADMIN / DOCUMENTS (FR2, FR12 — Platform Manage)
+  # Gate: platform_role == manage. Workspace Admin ≠ Manage.
+  # Global document operations console — not a substitute for
+  # /workspaces/{workspaceId}/documents.
+  # ---------------------------------------------------------------------
+  /admin/documents:
+    get:
+      tags: [Admin/Documents]
+      summary: Danh sách toàn bộ tài liệu enterprise (Manage)
+      description: >
+        Platform Manage only. Cross-workspace document list with server-side
+        pagination, search, filters, and status summary. Status values are
+        DocumentVersion.status (processing|ready|failed). Does not return
+        binary content or storage credentials.
+      operationId: listAdminDocuments
+      parameters:
+        - { $ref: "#/components/parameters/PageParam" }
+        - { $ref: "#/components/parameters/PageSizeParam" }
+        - name: workspace_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: Filter by workspace
+        - name: status
+          in: query
+          schema: { type: string, enum: [processing, ready, failed] }
+          description: Filter by current DocumentVersion.status
+        - name: file_type
+          in: query
+          schema: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 200 }
+          description: Search title, filename basename, or workspace name
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [updated_at, title, size, status, name]
+            default: updated_at
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminDocumentListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/documents/{documentId}:
+    parameters:
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Admin/Documents]
+      summary: Chi tiết tài liệu enterprise (Manage)
+      description: >
+        Platform Manage only. Returns document metadata, workspace context,
+        current version, and latest pipeline run (with stages) for diagnosis.
+        Does not return document binary content.
+      operationId: getAdminDocument
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminDocumentDetailResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/documents/{documentId}/versions:
+    parameters:
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Admin/Documents]
+      summary: Lịch sử version tài liệu (Manage)
+      description: Platform Manage only. Same DocumentVersion shape as workspace API.
+      operationId: listAdminDocumentVersions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DocumentVersion" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ---------------------------------------------------------------------
   # ADMIN / USERS (FR12 — Platform Manage)
   # Gate: platform_role == manage. Workspace Admin ≠ Manage.
   # ---------------------------------------------------------------------
@@ -1356,6 +1450,74 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/AdminUserListItem" }
+
+    AdminDocumentSummary:
+      type: object
+      required: [total, processing, ready, failed]
+      properties:
+        total: { type: integer }
+        processing: { type: integer, description: Current version status = processing }
+        ready: { type: integer, description: Current version status = ready }
+        failed: { type: integer, description: Current version status = failed }
+
+    AdminDocumentListItem:
+      type: object
+      required:
+        [id, title, workspace_id, workspace_name, file_type, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        filename:
+          type: string
+          nullable: true
+          description: Original upload filename (storage key basename only)
+        workspace_id: { type: string, format: uuid }
+        workspace_name: { type: string }
+        file_type: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        current_version_id: { type: string, format: uuid, nullable: true }
+        version_number: { type: integer, nullable: true }
+        file_size_bytes: { type: integer, nullable: true }
+        page_count: { type: integer, nullable: true }
+        status:
+          type: string
+          nullable: true
+          enum: [processing, ready, failed]
+          description: Current DocumentVersion.status
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AdminDocumentListResponse:
+      type: object
+      required: [items, page, page_size, total, summary]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AdminDocumentListItem" }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+        summary: { $ref: "#/components/schemas/AdminDocumentSummary" }
+
+    AdminDocumentDetailResponse:
+      type: object
+      required:
+        [id, title, workspace_id, workspace_name, file_type, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        filename: { type: string, nullable: true }
+        workspace_id: { type: string, format: uuid }
+        workspace_name: { type: string }
+        file_type: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        current_version_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        current_version:
+          allOf: [{ $ref: "#/components/schemas/DocumentVersion" }]
+          nullable: true
+        latest_pipeline_run:
+          allOf: [{ $ref: "#/components/schemas/PipelineRun" }]
+          nullable: true
 
     Workspace:
       type: object

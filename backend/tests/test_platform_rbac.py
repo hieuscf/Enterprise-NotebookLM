@@ -101,6 +101,26 @@ async def test_admin_users_forbidden_for_workspace_admin(
 
 
 @pytest.mark.asyncio
+async def test_admin_documents_forbidden_for_workspace_admin(
+    workspace_admin: CurrentUser,
+) -> None:
+    async def _user() -> CurrentUser:
+        return workspace_admin
+
+    app.dependency_overrides[get_current_user] = _user
+    app.dependency_overrides[get_db_session] = _fake_db_session
+
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/admin/documents")
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "forbidden"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
 async def test_admin_observability_forbidden_for_workspace_admin(
     workspace_admin: CurrentUser,
     monkeypatch: pytest.MonkeyPatch,

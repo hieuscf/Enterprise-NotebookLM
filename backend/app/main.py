@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.admin import router as admin_router
+from app.api.admin_documents import router as admin_documents_router
 from app.api.admin_users import router as admin_users_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
@@ -81,6 +82,7 @@ app.include_router(comparisons_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
+app.include_router(admin_documents_router)
 
 
 @app.get("/health", tags=["Health"])

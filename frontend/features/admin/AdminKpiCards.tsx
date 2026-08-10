@@ -24,6 +24,7 @@
 "use client";
 
 import { AlertCircle } from "lucide-react";
+import Link from "next/link";
 
 import {
   deltaOf,
@@ -75,14 +76,16 @@ function MetricCard({
   state,
   format,
   deltaPrev,
+  href,
 }: {
   label: string;
   state: MetricState;
   format: (v: number) => string;
   deltaPrev?: number | null;
+  href?: string;
 }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-lg border border-border-default bg-surface p-4">
+  const body = (
+    <>
       <p className="text-caption font-medium uppercase tracking-wide text-tertiary">{label}</p>
       {state.loading ? (
         <div className="h-7 w-16 animate-pulse rounded bg-elevated" />
@@ -99,6 +102,23 @@ function MetricCard({
       {!state.loading && !state.error && state.value !== null && deltaPrev !== undefined ? (
         <DeltaTag current={state.value} previous={deltaPrev} />
       ) : null}
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="flex flex-col gap-1 rounded-lg border border-border-default bg-surface p-4 transition-colors hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/30"
+      >
+        {body}
+      </Link>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-border-default bg-surface p-4">
+      {body}
     </div>
   );
 }
@@ -118,7 +138,12 @@ export function AdminKpiCards({
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <MetricCard label="Workspaces" state={workspaces} format={formatCompactNumber} />
       <MetricCard label="Users" state={users} format={formatCompactNumber} />
-      <MetricCard label="Documents" state={documents} format={formatCompactNumber} />
+      <MetricCard
+        label="Documents"
+        state={documents}
+        format={formatCompactNumber}
+        href="/admin/documents"
+      />
       <MetricCard
         label="Queries"
         state={queries}
