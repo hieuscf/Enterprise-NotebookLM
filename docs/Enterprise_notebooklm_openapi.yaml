@@ -1932,6 +1932,10 @@ components:
       properties:
         total_cost_usd: { type: number, format: double }
         total_llm_calls: { type: integer }
+        # Additive token aggregates from message_generations (NULL tokens → 0)
+        total_prompt_tokens: { type: integer, description: Sum of prompt_tokens }
+        total_completion_tokens: { type: integer, description: Sum of completion_tokens }
+        total_tokens: { type: integer, description: Sum of total_tokens }
         by_model:
           type: array
           items:
@@ -1940,6 +1944,9 @@ components:
               model_used: { type: string }
               calls: { type: integer }
               cost_usd: { type: number, format: double }
+              prompt_tokens: { type: integer }
+              completion_tokens: { type: integer }
+              total_tokens: { type: integer }
         by_route_type:
           type: array
           items:

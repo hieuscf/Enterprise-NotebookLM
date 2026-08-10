@@ -43,6 +43,9 @@ export type CostByModelItem = {
   model_used: string;
   calls: number;
   cost_usd: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
 };
 
 export type CostByRouteTypeItem = {
@@ -61,6 +64,12 @@ export type AgentTypeCostSummary = {
 export type CostSummary = {
   total_cost_usd: number;
   total_llm_calls: number;
+  /** Additive — sum(message_generations.prompt_tokens); defaults to 0. */
+  total_prompt_tokens: number;
+  /** Additive — sum(message_generations.completion_tokens); defaults to 0. */
+  total_completion_tokens: number;
+  /** Additive — sum(message_generations.total_tokens); defaults to 0. */
+  total_tokens: number;
   by_model: CostByModelItem[];
   by_route_type: CostByRouteTypeItem[];
   by_agent_type: Record<string, AgentTypeCostSummary>;

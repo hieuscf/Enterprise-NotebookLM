@@ -13,7 +13,8 @@
 #   - CostSummaryResponse, CostByModelItem, CostByRouteTypeItem, AgentTypeCostSummary
 # Database/Table: N/A
 # Related Modules: docs/Enterprise_notebooklm_openapi.yaml QueryLog, CostSummary
-# Important Notes: by_agent_type is additive; existing fields unchanged.
+# Important Notes: by_agent_type + token totals are additive; existing fields
+#   unchanged for backward-compatible clients.
 # =============================================================================
 
 from __future__ import annotations
@@ -48,6 +49,9 @@ class CostByModelItem(BaseModel):
     model_used: str
     calls: int
     cost_usd: float
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class CostByRouteTypeItem(BaseModel):
@@ -69,12 +73,15 @@ class AgentTypeCostSummary(BaseModel):
 
 
 class CostSummaryResponse(BaseModel):
-    """OpenAPI CostSummary — existing fields + optional by_agent_type."""
+    """OpenAPI CostSummary — cost/calls + additive token + by_agent_type."""
 
     model_config = ConfigDict(extra="forbid")
 
     total_cost_usd: float
     total_llm_calls: int
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
     by_model: list[CostByModelItem] = Field(default_factory=list)
     by_route_type: list[CostByRouteTypeItem] = Field(default_factory=list)
     by_agent_type: dict[str, AgentTypeCostSummary] = Field(default_factory=dict)

@@ -58,8 +58,18 @@ async def test_cost_summary_includes_by_agent_type(
             return CostSummaryResponse(
                 total_cost_usd=1.25,
                 total_llm_calls=10,
+                total_prompt_tokens=12000,
+                total_completion_tokens=3400,
+                total_tokens=15400,
                 by_model=[
-                    CostByModelItem(model_used="claude-sonnet", calls=8, cost_usd=1.2)
+                    CostByModelItem(
+                        model_used="claude-sonnet",
+                        calls=8,
+                        cost_usd=1.2,
+                        prompt_tokens=10000,
+                        completion_tokens=3000,
+                        total_tokens=13000,
+                    )
                 ],
                 by_route_type=[
                     CostByRouteTypeItem(route_type="complex", count=7),
@@ -117,7 +127,11 @@ async def test_cost_summary_includes_by_agent_type(
         body = resp.json()
         assert body["total_cost_usd"] == 1.25
         assert body["total_llm_calls"] == 10
+        assert body["total_prompt_tokens"] == 12000
+        assert body["total_completion_tokens"] == 3400
+        assert body["total_tokens"] == 15400
         assert body["by_model"][0]["model_used"] == "claude-sonnet"
+        assert body["by_model"][0]["total_tokens"] == 13000
         assert body["by_route_type"][0]["route_type"] == "complex"
         assert body["by_agent_type"]["rewrite"]["count"] == 52
         assert body["by_agent_type"]["graph"]["total_latency_ms"] == 893

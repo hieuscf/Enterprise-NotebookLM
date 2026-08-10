@@ -205,6 +205,7 @@ export function AdminDashboardView() {
               error={cost.error}
               onRetry={cost.reload}
               rangeDays={rangeDays}
+              workspaceId={selectedWorkspaceId || undefined}
             />
 
             <div className="grid gap-4 lg:grid-cols-2">

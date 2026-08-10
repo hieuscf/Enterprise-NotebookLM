@@ -18,14 +18,16 @@
  * Database/Table: message_generations (via cost-summary aggregate)
  * Related Modules: features/admin/AdminDashboardView, hooks/useAdminCostSummary
  * Important Notes: The cost-summary contract returns ONE aggregate per
- *   from/to window (no daily buckets) and no token counts — do not fabricate
- *   a time-series line chart or Input/Output Token numbers; both are shown as
- *   "unavailable" rather than invented. No workspace-breakdown UI either,
- *   since the endpoint is already scoped to a single workspace.
+ *   from/to window (no daily buckets). Token totals come from CostSummary
+ *   (prompt/completion/total). No workspace-breakdown UI either, since the
+ *   endpoint is already scoped to a single workspace.
  * =============================================================================
  */
 
 "use client";
+
+import { ArrowRight } from "lucide-react";
+import Link from "next/link";
 
 import type { CostRangeDays } from "@/hooks/useAdminCostSummary";
 import { AdminCard } from "@/features/admin/AdminCard";
@@ -39,20 +41,43 @@ type Props = {
   error: string | null;
   onRetry: () => void;
   rangeDays: CostRangeDays;
+  workspaceId?: string;
 };
 
-export function UsageCostCard({ cost, loading, error, onRetry, rangeDays }: Props) {
+export function UsageCostCard({
+  cost,
+  loading,
+  error,
+  onRetry,
+  rangeDays,
+  workspaceId,
+}: Props) {
   const totalQueries = (cost?.by_route_type ?? []).reduce((sum, r) => sum + r.count, 0);
   const avgCostPerQuery =
     cost && totalQueries > 0 ? cost.total_cost_usd / totalQueries : null;
   const byModel = [...(cost?.by_model ?? [])].sort((a, b) => b.cost_usd - a.cost_usd);
   const maxModelCost = byModel.reduce((max, m) => Math.max(max, m.cost_usd), 0);
+  const usageHref = (() => {
+    const qs = new URLSearchParams();
+    if (workspaceId) qs.set("workspace", workspaceId);
+    qs.set("preset", rangeDays === 30 || rangeDays === 90 ? "last_30" : "last_7");
+    return `/admin/usage?${qs.toString()}`;
+  })();
 
   return (
     <AdminCard
       headingId="admin-usage-cost"
       title="Usage & Cost"
       description={`Chi phí LLM theo mô hình và loại định tuyến — ${rangeDays} ngày gần nhất.`}
+      action={
+        <Link
+          href={usageHref}
+          className="inline-flex items-center gap-1 text-caption font-medium text-accent-primary hover:underline"
+        >
+          Open usage
+          <ArrowRight className="h-3 w-3" aria-hidden />
+        </Link>
+      }
     >
       {loading ? (
         <SectionSkeleton rows={5} />
@@ -84,9 +109,16 @@ export function UsageCostCard({ cost, loading, error, onRetry, rangeDays }: Prop
                 {avgCostPerQuery === null ? "—" : formatCurrencyUsd(avgCostPerQuery)}
               </p>
             </div>
-            <div title="API chưa cung cấp tổng token — cần bổ sung ở backend (TODO)">
+            <div>
               <p className="text-caption text-tertiary">Input / Output Tokens</p>
-              <p className="text-h3 font-semibold text-tertiary">Chưa khả dụng</p>
+              <p className="text-h3 font-semibold text-primary">
+                {formatCompactNumber(cost.total_prompt_tokens ?? 0)}
+                <span className="mx-1 font-normal text-tertiary">/</span>
+                {formatCompactNumber(cost.total_completion_tokens ?? 0)}
+              </p>
+              <p className="text-caption text-tertiary">
+                Total {formatCompactNumber(cost.total_tokens ?? 0)}
+              </p>
             </div>
           </div>
 

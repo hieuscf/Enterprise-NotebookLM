@@ -2,14 +2,16 @@
 # File: cost_summary.py
 # Module/Service: Observability Module (FR13 + FR14)
 # Layer: Repository
-# Purpose: Aggregate LLM + Micro Agent cost/latency for admin cost-summary.
+# Purpose: Aggregate LLM + Micro Agent cost/latency/tokens for admin cost-summary.
 # Responsibilities:
 #   - Summarize message_generations by model / route_type (workspace-scoped)
+#   - Sum prompt/completion/total tokens (NULL → 0)
 #   - Summarize agent_events by agent_type (by_agent_type extension)
 # Dependencies:
 #   - SQLAlchemy AsyncSession, chat + agent_events models
 # Public Exports:
-#   - CostSummaryRepository, AgentTypeCostAgg, ModelCostAgg, RouteTypeAgg
+#   - CostSummaryRepository, AgentTypeCostAgg, ModelCostAgg, RouteTypeAgg,
+#     GenerationTotals
 # Database/Table: message_generations, agent_events, chat_messages, chat_sessions
 # Related Modules: CostSummaryService, OpenAPI CostSummary
 # Important Notes: Multi-tenant filter via chat_sessions.workspace_id always.
@@ -37,12 +39,24 @@ class ModelCostAgg:
     model_used: str
     calls: int
     cost_usd: Decimal
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
 class RouteTypeAgg:
     route_type: str
     count: int
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationTotals:
+    total_cost_usd: Decimal
+    total_llm_calls: int
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,29 +80,38 @@ class CostSummaryRepository:
         workspace_id: uuid.UUID,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> tuple[Decimal, int, list[ModelCostAgg], list[RouteTypeAgg]]:
+    ) -> tuple[GenerationTotals, list[ModelCostAgg], list[RouteTypeAgg]]:
         """Aggregate ``message_generations`` scoped to workspace chat sessions."""
         date_filters = _created_at_filters(MessageGeneration.created_at, date_from, date_to)
 
-        total_cost = (
-            await self._session.scalar(
-                select(func.coalesce(func.sum(MessageGeneration.cost_usd), 0))
+        totals_row = (
+            await self._session.execute(
+                select(
+                    func.coalesce(func.sum(MessageGeneration.cost_usd), 0).label("cost"),
+                    func.count().label("calls"),
+                    func.coalesce(func.sum(MessageGeneration.prompt_tokens), 0).label(
+                        "prompt_tokens"
+                    ),
+                    func.coalesce(func.sum(MessageGeneration.completion_tokens), 0).label(
+                        "completion_tokens"
+                    ),
+                    func.coalesce(func.sum(MessageGeneration.total_tokens), 0).label(
+                        "total_tokens"
+                    ),
+                )
                 .select_from(MessageGeneration)
                 .join(ChatMessage, ChatMessage.id == MessageGeneration.message_id)
                 .join(ChatSession, ChatSession.id == ChatMessage.session_id)
                 .where(ChatSession.workspace_id == workspace_id, *date_filters)
             )
-            or Decimal("0")
-        )
-        total_calls = (
-            await self._session.scalar(
-                select(func.count())
-                .select_from(MessageGeneration)
-                .join(ChatMessage, ChatMessage.id == MessageGeneration.message_id)
-                .join(ChatSession, ChatSession.id == ChatMessage.session_id)
-                .where(ChatSession.workspace_id == workspace_id, *date_filters)
-            )
-            or 0
+        ).one()
+
+        totals = GenerationTotals(
+            total_cost_usd=Decimal(str(totals_row.cost or 0)),
+            total_llm_calls=int(totals_row.calls or 0),
+            total_prompt_tokens=int(totals_row.prompt_tokens or 0),
+            total_completion_tokens=int(totals_row.completion_tokens or 0),
+            total_tokens=int(totals_row.total_tokens or 0),
         )
 
         model_rows = await self._session.execute(
@@ -96,6 +119,15 @@ class CostSummaryRepository:
                 MessageGeneration.model_used,
                 func.count().label("calls"),
                 func.coalesce(func.sum(MessageGeneration.cost_usd), 0).label("cost_usd"),
+                func.coalesce(func.sum(MessageGeneration.prompt_tokens), 0).label(
+                    "prompt_tokens"
+                ),
+                func.coalesce(func.sum(MessageGeneration.completion_tokens), 0).label(
+                    "completion_tokens"
+                ),
+                func.coalesce(func.sum(MessageGeneration.total_tokens), 0).label(
+                    "total_tokens"
+                ),
             )
             .join(ChatMessage, ChatMessage.id == MessageGeneration.message_id)
             .join(ChatSession, ChatSession.id == ChatMessage.session_id)
@@ -107,6 +139,9 @@ class CostSummaryRepository:
                 model_used=str(r.model_used or "unknown"),
                 calls=int(r.calls),
                 cost_usd=Decimal(str(r.cost_usd or 0)),
+                prompt_tokens=int(r.prompt_tokens or 0),
+                completion_tokens=int(r.completion_tokens or 0),
+                total_tokens=int(r.total_tokens or 0),
             )
             for r in model_rows.all()
         ]
@@ -130,7 +165,7 @@ class CostSummaryRepository:
             )
             for r in route_rows.all()
         ]
-        return Decimal(str(total_cost)), int(total_calls), by_model, by_route
+        return totals, by_model, by_route
 
     async def summarize_agents(
         self,

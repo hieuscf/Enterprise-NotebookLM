@@ -4,7 +4,7 @@
 # Layer: Service
 # Purpose: Build CostSummary response (message_generations + agent_events).
 # Responsibilities:
-#   - Aggregate totals / by_model / by_route_type (existing contract)
+#   - Aggregate totals / tokens / by_model / by_route_type
 #   - Add by_agent_type from agent_events (backward-compatible extension)
 # Dependencies:
 #   - CostSummaryRepository, CostSummary schemas
@@ -42,7 +42,7 @@ class CostSummaryService:
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> CostSummaryResponse:
-        total_cost, total_calls, by_model, by_route = await self._repo.summarize_generations(
+        totals, by_model, by_route = await self._repo.summarize_generations(
             workspace_id=workspace_id,
             date_from=date_from,
             date_to=date_to,
@@ -53,13 +53,19 @@ class CostSummaryService:
             date_to=date_to,
         )
         return CostSummaryResponse(
-            total_cost_usd=float(total_cost),
-            total_llm_calls=total_calls,
+            total_cost_usd=float(totals.total_cost_usd),
+            total_llm_calls=totals.total_llm_calls,
+            total_prompt_tokens=totals.total_prompt_tokens,
+            total_completion_tokens=totals.total_completion_tokens,
+            total_tokens=totals.total_tokens,
             by_model=[
                 CostByModelItem(
                     model_used=m.model_used,
                     calls=m.calls,
                     cost_usd=float(m.cost_usd),
+                    prompt_tokens=m.prompt_tokens,
+                    completion_tokens=m.completion_tokens,
+                    total_tokens=m.total_tokens,
                 )
                 for m in by_model
             ],

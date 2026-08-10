@@ -16,7 +16,8 @@
  *   - AdminSidebar, type AdminSidebarActiveKey
  * Database/Table: N/A
  * Related Modules: features/admin/AdminShell.tsx
- * Important Notes: Dashboard, Workspaces, Documents, Pipeline, Query Logs, Users.
+ * Important Notes: Dashboard, Workspaces, Documents, Pipeline, Query Logs,
+ *   Usage, Users.
  * =============================================================================
  */
 
@@ -25,6 +26,7 @@
 import {
   ArrowLeft,
   Building2,
+  CircleDollarSign,
   FileText,
   GitBranch,
   type LucideIcon,
@@ -46,6 +48,7 @@ export type AdminSidebarActiveKey =
   | "documents"
   | "pipeline"
   | "query-logs"
+  | "usage"
   | "users";
 
 type NavItem = {
@@ -85,6 +88,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Query Logs",
     icon: Route,
     href: "/admin/query-logs",
+  },
+  {
+    key: "usage",
+    label: "Usage",
+    icon: CircleDollarSign,
+    href: "/admin/usage",
   },
   {
     key: "users",
