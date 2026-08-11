@@ -29,6 +29,12 @@
  *     streaming starts (see message_service.stream_answer_events), so the
  *     partial text is intentionally left as-is rather than silently
  *     replaced with the full answer.
+ *   - On a genuine failure (SSE error frame or network drop) before any
+ *     token arrived, the empty optimistic assistant placeholder is removed
+ *     so the UI shows only the error banner + retry, never a confusing
+ *     "no content" bubble next to it.
+ *   - Updates target the SAME assistant row via message_id (temp → real);
+ *     generation's final `message` always wins for content.
  * =============================================================================
  */
 
@@ -44,6 +50,36 @@ type SetMessages = React.Dispatch<React.SetStateAction<ChatMessage[]>>;
 
 function makeTempId(prefix: string): string {
   return `temp-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Locate the in-flight assistant bubble (by id, else last assistant row). */
+function patchAssistant(
+  prev: ChatMessage[],
+  assistantId: string | null,
+  patch: (current: ChatMessage) => ChatMessage,
+): ChatMessage[] {
+  const byId = assistantId ? prev.findIndex((m) => m.id === assistantId) : -1;
+  if (byId >= 0) {
+    const next = [...prev];
+    next[byId] = patch(prev[byId]);
+    return next;
+  }
+  for (let i = prev.length - 1; i >= 0; i -= 1) {
+    if (prev[i].role === "assistant") {
+      const next = [...prev];
+      next[i] = patch(prev[i]);
+      return next;
+    }
+  }
+  return prev;
+}
+
+/** Drop the assistant placeholder only if it never received any token. */
+function dropEmptyAssistantPlaceholder(setMessages: SetMessages, assistantId: string | null) {
+  if (!assistantId) return;
+  setMessages((prev) =>
+    prev.filter((m) => !(m.id === assistantId && m.role === "assistant" && m.content.length === 0)),
+  );
 }
 
 export function useChatStream(
@@ -83,6 +119,7 @@ export function useChatStream(
           generation: null,
           citations: [],
           created_at: nowIso,
+          status: "completed",
         },
         {
           id: tempAssistantId,
@@ -92,6 +129,7 @@ export function useChatStream(
           generation: null,
           citations: [],
           created_at: nowIso,
+          status: "pending",
         },
       ]);
 
@@ -107,33 +145,55 @@ export function useChatStream(
           {
             onToken: (text) => {
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantIdRef.current ? { ...m, content: m.content + text } : m,
-                ),
+                patchAssistant(prev, assistantIdRef.current, (m) => ({
+                  ...m,
+                  content: m.content + text,
+                  status: "streaming",
+                })),
               );
             },
             onCitations: (citations) => {
               setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === assistantIdRef.current ? { ...m, citations } : m,
-                ),
+                patchAssistant(prev, assistantIdRef.current, (m) => ({
+                  ...m,
+                  citations,
+                  status: m.status === "pending" ? "streaming" : m.status,
+                })),
               );
             },
             onGeneration: (_generation, message) => {
-              // Swap the placeholder for the authoritative backend message
-              // (real id, final content, citations, generation) in place.
+              // Final authoritative message wins (real id + persisted content).
               setMessages((prev) =>
-                prev.map((m) => (m.id === assistantIdRef.current ? message : m)),
+                patchAssistant(prev, assistantIdRef.current, () => ({
+                  ...message,
+                  status: "completed" as const,
+                })),
               );
-              assistantIdRef.current = message.id;
+              if (message?.id) {
+                assistantIdRef.current = message.id;
+              }
             },
             onDone: () => {
+              setMessages((prev) =>
+                patchAssistant(prev, assistantIdRef.current, (m) =>
+                  m.status === "completed" || m.status === "failed"
+                    ? m
+                    : { ...m, status: "completed" },
+                ),
+              );
               setIsStreaming(false);
               onSettled?.();
             },
             onError: (message) => {
               setStreamError(message);
+              setMessages((prev) =>
+                patchAssistant(prev, assistantIdRef.current, (m) => ({
+                  ...m,
+                  status: "failed",
+                })),
+              );
               setIsStreaming(false);
+              dropEmptyAssistantPlaceholder(setMessages, assistantIdRef.current);
             },
           },
           controller.signal,
@@ -141,12 +201,25 @@ export function useChatStream(
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           setStoppedMessageId(assistantIdRef.current);
+          setMessages((prev) =>
+            patchAssistant(prev, assistantIdRef.current, (m) => ({
+              ...m,
+              status: m.content.trim() ? "completed" : "failed",
+            })),
+          );
         } else {
           setStreamError(
             err instanceof ApiClientError
               ? err.message
               : "Mất kết nối trong khi nhận câu trả lời.",
           );
+          setMessages((prev) =>
+            patchAssistant(prev, assistantIdRef.current, (m) => ({
+              ...m,
+              status: "failed",
+            })),
+          );
+          dropEmptyAssistantPlaceholder(setMessages, assistantIdRef.current);
         }
         setIsStreaming(false);
       } finally {

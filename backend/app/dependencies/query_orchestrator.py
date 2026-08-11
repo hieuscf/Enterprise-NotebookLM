@@ -27,19 +27,17 @@ from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.repositories.agent_events import AgentEventRepository
 from app.repositories.metadata_query import PostgresMetadataRepository
-from app.repositories.query_cache import QueryCacheRepository
 from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.chat.answer_generator import PromptAnswerGenerator
 from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
+from app.services.chat.context_assembly import RetrievalRepositoryContextPort
 from app.services.event_policy.agents.graph_agent import GraphAgent
 from app.services.event_policy.agents.rewrite_agent import RewriteAgent
 from app.services.event_policy.agents.sql_agent import SqlAgent
-from app.services.query_router.cache import QueryCacheService
 from app.services.query_router.classifier import build_rule_based_classifier
-from app.services.query_router.embedding_provider import SettingsEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.handlers.metadata_handler import MetadataHandler
 from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
@@ -80,16 +78,8 @@ def get_query_orchestrator(
         ),
         reranker=Reranker(settings),
     )
-    cache = QueryCacheService(
-        settings=settings,
-        rules=rules,
-        repo=QueryCacheRepository(session),
-        qdrant=get_qdrant_store(),
-        embedding=SettingsEmbeddingProvider(settings),
-    )
     router = QueryRouter(
         rules=rules,
-        cache=cache,
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
@@ -106,7 +96,10 @@ def get_query_orchestrator(
         rewrite_agent=RewriteAgent(settings),
         graph_agent=GraphAgent(settings, get_neo4j_graph()),
         sql_agent=SqlAgent(metadata_handler),
-        answer_generator=PromptAnswerGenerator(settings),
+        answer_generator=PromptAnswerGenerator(
+            settings,
+            context_port=RetrievalRepositoryContextPort(retrieval_repo),
+        ),
         retrieval_top_k=max(1, int(settings.retrieval_per_source_top_k)),
     )
     return QueryOrchestrator(

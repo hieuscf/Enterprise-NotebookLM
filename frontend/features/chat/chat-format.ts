@@ -58,3 +58,19 @@ export function buildChatCitationHref(
   if (!citation.document_id) return null;
   return `/workspaces/${workspaceId}/documents/${citation.document_id}`;
 }
+
+/** 1-based presentation index from order_index (stable across sorts). */
+export function citationDisplayIndex(citation: Pick<Citation, "order_index">): number {
+  return Math.max(1, Number(citation.order_index) + 1);
+}
+
+/**
+ * Defense-in-depth: strip any leftover bracketed UUIDs from answer prose
+ * (backend should already rewrite/remove these before persist/stream).
+ */
+export function stripLeakedCitationUuids(content: string): string {
+  return content.replace(
+    /\[\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*\]/g,
+    "",
+  );
+}

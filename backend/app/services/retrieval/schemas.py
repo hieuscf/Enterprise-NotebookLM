@@ -40,6 +40,9 @@ class RetrievalCandidate:
     section_index: int | None = None
     section_title: str | None = None
     document_title: str | None = None
+    heading_path: str | None = None
+    chunk_index: int | None = None
+    document_version_id: UUID | None = None
 
 
 @dataclass(slots=True)
@@ -50,3 +53,8 @@ class RetrievalResult:
     latency_ms: int
     sources_used: list[str]
     timings: dict[str, int | None] = field(default_factory=dict)
+    # Pre-truncation counts (RAG quality diagnostics §15/§18) — 0 when unknown
+    # (e.g. tests that construct RetrievalResult directly without running the
+    # full hybrid pipeline).
+    candidate_count: int = 0
+    reranked_count: int = 0

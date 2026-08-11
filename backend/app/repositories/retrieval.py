@@ -23,11 +23,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Select, case, desc, func, literal_column, or_, select
+from sqlalchemy import Select, and_, case, desc, func, literal_column, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import FileType
+from app.models.enums import ChunkLayoutType, FileType
 from app.models.knowledge import DocumentChunk, Entity, Topic, TopicChunk
 
 
@@ -106,6 +106,158 @@ class RetrievalRepository:
                 heading_path=chunk.heading_path,
             )
         return out
+
+    async def fetch_sibling_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        seeds: list[tuple[uuid.UUID, int]],
+        *,
+        window: int = 1,
+        exclude_chunk_ids: set[uuid.UUID] | None = None,
+        max_total: int = 20,
+    ) -> list[ChunkHydrationRow]:
+        """Bounded neighbor expansion: chunks within ``window`` of each seed.
+
+        Args:
+            seeds: ``(document_version_id, chunk_index)`` pairs for chunks
+                already retrieved — the anchor to expand around.
+            window: How many chunks before/after each seed to include.
+            exclude_chunk_ids: Chunk ids already present in the retrieval set
+                (skip re-fetching them as "new" neighbors).
+            max_total: Hard cap — never blindly expand to a whole document.
+
+        Returns:
+            Deduplicated sibling rows ordered by ``(document_version_id, chunk_index)``.
+        """
+        if not seeds or max_total <= 0:
+            return []
+        exclude = exclude_chunk_ids or set()
+        window = max(0, window)
+
+        version_ranges: dict[uuid.UUID, set[int]] = {}
+        for version_id, chunk_index in seeds:
+            if chunk_index is None:
+                continue
+            lo = max(0, int(chunk_index) - window)
+            hi = int(chunk_index) + window
+            version_ranges.setdefault(version_id, set()).update(range(lo, hi + 1))
+        if not version_ranges:
+            return []
+
+        conditions = [
+            and_(
+                DocumentChunk.document_version_id == version_id,
+                DocumentChunk.chunk_index.in_(indices),
+            )
+            for version_id, indices in version_ranges.items()
+        ]
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(Document.workspace_id == workspace_id, or_(*conditions))
+            .order_by(
+                DocumentChunk.document_version_id.asc(),
+                DocumentChunk.chunk_index.asc(),
+            )
+            .limit(max(1, max_total) + len(exclude))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        out: list[ChunkHydrationRow] = []
+        for chunk, document, version in rows:
+            if chunk.id in exclude:
+                continue
+            out.append(
+                ChunkHydrationRow(
+                    chunk_id=chunk.id,
+                    document_id=document.id,
+                    document_version_id=version.id,
+                    workspace_id=document.workspace_id,
+                    content=chunk.content or "",
+                    title=document.title,
+                    page_number=chunk.page_number,
+                    section_index=chunk.section_index,
+                    section=chunk.section,
+                    chunk_index=chunk.chunk_index,
+                    heading_path=chunk.heading_path,
+                )
+            )
+            if len(out) >= max_total:
+                break
+        return out
+
+    async def fetch_representative_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        *,
+        limit: int = 6,
+    ) -> list[ChunkHydrationRow]:
+        """Deterministic representative-coverage chunks for global questions (§7).
+
+        Picks the document's first chunk (title/intro), evenly-spaced heading
+        chunks across the document, and the last chunk — bounded by ``limit``.
+        No LLM / no embedding; pure ``chunk_index`` + ``layout_type`` heuristic.
+        """
+        if limit <= 0:
+            return []
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                DocumentChunk.document_version_id == document_version_id,
+            )
+            .order_by(DocumentChunk.chunk_index.asc())
+        )
+        rows = (await self._session.execute(stmt)).all()
+        if not rows:
+            return []
+
+        def _to_row(chunk: DocumentChunk, document: Document, version: DocumentVersion) -> ChunkHydrationRow:
+            return ChunkHydrationRow(
+                chunk_id=chunk.id,
+                document_id=document.id,
+                document_version_id=version.id,
+                workspace_id=document.workspace_id,
+                content=chunk.content or "",
+                title=document.title,
+                page_number=chunk.page_number,
+                section_index=chunk.section_index,
+                section=chunk.section,
+                chunk_index=chunk.chunk_index,
+                heading_path=chunk.heading_path,
+            )
+
+        headings = [
+            (chunk, document, version)
+            for chunk, document, version in rows
+            if chunk.layout_type == ChunkLayoutType.heading
+        ]
+        picked: list[ChunkHydrationRow] = [_to_row(*rows[0])]  # first chunk (title/intro)
+        remaining = max(0, limit - 2)  # reserve slots for first + last
+        if headings and remaining > 0:
+            step = max(1, len(headings) // remaining)
+            for chunk, document, version in headings[::step][:remaining]:
+                picked.append(_to_row(chunk, document, version))
+        if len(rows) > 1:
+            picked.append(_to_row(*rows[-1]))  # last chunk (conclusion/signature)
+
+        seen: set[uuid.UUID] = set()
+        deduped: list[ChunkHydrationRow] = []
+        for row in picked:
+            if row.chunk_id in seen:
+                continue
+            seen.add(row.chunk_id)
+            deduped.append(row)
+        return deduped[:limit]
 
     async def chunks_for_entity_versions(
         self,

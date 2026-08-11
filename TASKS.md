@@ -6,9 +6,11 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 ---
 
-## Trạng thái triển khai (cập nhật 2026-08-09)
+## Trạng thái triển khai (cập nhật 2026-08-11)
 
-**Baseline code hiện tại:** schema **v3** + chat migrations + **FR6 summaries** + **FR7 extractions** (Alembic head `b6c7d8e9f0a1`: summaries observability/async/sections + extractions observability/async); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth, Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), Chat API + Prompt/SSE + **FE Chat UI**, AI Summary (async Celery + FE), Information Extraction (async Celery + FE, entities reuse Graph 0 LLM), `GET .../cost-summary` (+ `by_agent_type`) đã xong.
+**Baseline code hiện tại:** schema **v3** + chat migrations + **FR6 summaries** + **FR7 extractions** + **FR12 Platform Manage RBAC** (Alembic head `e9f0a1b2c3d4`: `users.platform_role`); pipeline 6 stage: `document_understanding` → `cleaning_normalize` → `hierarchical_chunking` → `embedding` → `graph_extraction` → `indexing`. LlamaParse client có **retry (tenacity)** + **circuit breaker riêng (pybreaker)** tách khỏi LLM Provider. Auth (Platform `manage` + Workspace `admin|editor|viewer`), Workspace, Document API + FE upload/list/version/pipeline, Search (Hybrid + FE), Query Router (4 nhánh + cache cleanup), Confidence Engine & Micro Agents (FR14), Chat API + Prompt/SSE + **FE Chat UI**, AI Summary (async Celery + FE), Information Extraction (async Celery + FE, entities reuse Graph 0 LLM), Admin Console (`/admin/*` — Manage only) + `GET .../cost-summary` (+ `by_agent_type`) đã xong.
+
+**RBAC (2026-08-11):** Tách rõ **Platform Manage** (`users.platform_role = manage | null`) và **Workspace roles** (`admin | editor | viewer` trên `workspace_members`). `/admin/*` chỉ Manage; Workspace Admin không vào Admin Console; `manage` không phải workspace role; không auto-promote Workspace Admin → Manage. Bootstrap: `BOOTSTRAP_MANAGE_EMAIL` + `scripts/create_manage_user.py`. `/auth/me` trả `platform_role`.
 
 **Chat LLM provider (2026-08-08):** `CHAT_LLM_PROVIDER=anthropic|openai` — answer + rewrite dùng provider đã chọn; OpenAI Chat Completions wired (`OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`); Gemini chỉ placeholder env. Embedding vẫn `EMBEDDING_*` (độc lập). Qdrant adapter dùng `query_points` (client 1.18+ bỏ `.search`). Summary/Extraction generation (Celery) reuse cùng chat LLM + model tiering; Celery async tasks dùng `run_celery_async` (dispose AsyncEngine mỗi task — tránh asyncpg event-loop lỗi prefork).
 
@@ -16,7 +18,8 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 
 | Hạng mục | Đã có | Còn thiếu (mục tiêu) |
 |---|---|---|
-| Schema DB / Pipeline / LlamaParse | Khớp v3 + chat soft-delete / last-message + FR6/FR7 columns | — |
+| Schema DB / Pipeline / LlamaParse | Khớp v3 + chat soft-delete / last-message + FR6/FR7 columns + `users.platform_role` | — |
+| Auth / RBAC (FR12) | Platform Manage + Workspace RBAC; `/admin/*` Manage-only; FE `RequireManage` + `lib/rbac.ts` | Encryption at rest / TLS production hardening |
 | Search (FR3) | Hybrid Vector+BM25+Graph → Rerank; Search API + FE | Metadata DB là filter/post-query (`SearchService`), không phải nguồn fan-out thứ 4 |
 | Query Router (FR11) | Classifier + cache + metadata/factoid/complex + `query_logs` + Celery cleanup | — |
 | FR14 Confidence & Agents | Engine + Event Policy + Rewrite/Graph/SQL + Second Retrieval + `agent_events` + tests/metrics | — |
@@ -25,11 +28,11 @@ Task được nhóm theo **Module/FR**, không gắn tuần/ngày cụ thể —
 | Summary (FR6) | Async POST 202 + Celery `generate_summary` + status lifecycle + FE Document Detail (4 styles, reuse version, poll, history, copy) | — |
 | Extraction (FR7) | Async POST 202 + Celery `generate_extraction` + structured schemas; entities **reuse Graph** (0 LLM); FE table/JSON + CSV/JSON export | Visual timeline (backlog); sidebar “Sắp có” chưa gỡ |
 
-**Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline xong.
+**Tiến độ GĐ1 (P0):** ~100% — backend + FE documents/upload/version/pipeline + Platform/Workspace RBAC xong.
 
 **Tiến độ GĐ2 (P1):** ~90% — Search + Query Router + FR14 + Chat Memory + POST messages/Prompt/SSE + **FE Chat** xong; còn **Citation Verification cứng (2.5)** (+ GET citations / highlight viewer).
 
-**Tiến độ GĐ3 (P2):** Summary (3.1) + Extraction (3.2) **DONE**; còn Comparison / Report / Observability FE / hardening / E2E tests.
+**Tiến độ GĐ3 (P2):** Summary (3.1) + Extraction (3.2) + Admin Observability BE/FE (3.5, Manage) **DONE**; còn Comparison / Report / LLM circuit breaker / hardening / E2E tests.
 
 ---
 
@@ -58,15 +61,20 @@ Mục tiêu: có thể tạo workspace, upload tài liệu, chạy xong pipeline
 - [x] [BE] Setup logging/tracing cơ bản (structlog + OpenTelemetry) — nền cho FR13.
 
 ### 1.2 Auth & RBAC (FR12)
-- [x] [BE] `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me` (OAuth2/JWT).
-- [x] [BE] Middleware RBAC theo Workspace (role admin/editor/viewer) — API Gateway/Auth Middleware component.
+- [x] [BE] `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me` (OAuth2/JWT) — `/auth/me` trả `platform_role` + `workspaces[].role`.
+- [x] [BE] Workspace RBAC middleware (`require_workspace_role` — admin/editor/viewer theo `workspace_id`) — API Gateway/Auth Middleware.
+- [x] [BE][DB] **Platform Manage RBAC** — migration `e9f0a1b2c3d4` (`users.platform_role`: `manage` | NULL); `require_platform_manage` cho `/admin/*`; domain helpers `is_manage` / `is_workspace_admin`; **không** thêm `manage` vào bảng `roles`.
 - [x] [BE] Rate limiting theo Workspace (Redis token bucket) — chuẩn bị cho FR12.
-- [x] [FE] Trang Login, lưu token, route guard theo role.
+- [x] [BE] Admin Users API — `GET/POST/DELETE /admin/users` (Manage only; permanent delete global user).
+- [x] [FE] Trang Login, lưu token; `RequireManage` layout cho `/admin/*`; `lib/rbac.ts` (`canAccessAdmin` ≠ workspace admin); Admin Console nav chỉ hiện với Manage.
+- [x] [BE] Bootstrap Manage — `BOOTSTRAP_MANAGE_EMAIL` (startup) + `scripts/create_manage_user.py` (dev CLI).
 
 ### 1.3 Workspace Management (FR1, UC1)
 - [x] [BE] CRUD Workspace: `GET/POST /workspaces`, `GET/PATCH/DELETE /workspaces/{id}`.
-- [x] [BE] Quản lý thành viên: `GET/POST /workspaces/{id}/members`, `PATCH/DELETE /workspaces/{id}/members/{userId}`.
-- [x] [FE] UI danh sách Workspace, tạo/sửa/xoá, quản lý thành viên + phân quyền (UC10).
+  - `POST /workspaces` = **Platform Manage** (enterprise provisioning); creator → `owner_id` + Workspace Admin membership.
+  - `PATCH/DELETE` = Workspace Admin của workspace đó **hoặc** Manage (enterprise override).
+- [x] [BE] Quản lý thành viên: `GET/POST /workspaces/{id}/members`, `PATCH/DELETE /workspaces/{id}/members/{userId}` — **chỉ Workspace Admin** của workspace đó (Manage không tự thành workspace admin).
+- [x] [FE] UI danh sách Workspace, tạo/sửa/xoá (Admin Console Manage), quản lý thành viên + phân quyền trong Workspace (UC10).
 
 ### 1.4 Document Ingestion & Versioning (FR2, UC2)
 
@@ -226,14 +234,14 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 - [ ] [FE] UI tạo báo cáo (chọn nguồn), theo dõi trạng thái, tải file.
 
 ### 3.5 Observability & Reliability (FR13, UC11 phần hệ thống)
-- [ ] [BE] `GET /admin/workspaces/{id}/query-logs` (filter route_type).
-- [ ] [BE] `GET /admin/workspaces/{id}/pipeline-runs` (filter status).
-- [x] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type; FR14 thêm `by_agent_type` từ `agent_events`, backward-compatible).
+- [x] [BE] `GET /admin/workspaces/{id}/query-logs` (filter route_type) — **Platform Manage only**.
+- [x] [BE] `GET /admin/workspaces/{id}/pipeline-runs` (filter status) — **Platform Manage only**.
+- [x] [BE] `GET /admin/workspaces/{id}/cost-summary` (tổng hợp `message_generations` theo model/route_type; FR14 thêm `by_agent_type` từ `agent_events`, backward-compatible) — **Platform Manage only**.
 - [ ] [BE] Circuit breaker + fallback khi **LLM provider** lỗi/chậm (Prompt Construction → LLM call). **Tách instance/state/metrics khỏi LlamaParse CB** (`anthropic_cb_*` hoặc tương đương — dùng chung framework `app/core/resilience/`).
-- [ ] [FE] Dashboard admin cơ bản: cost summary, pipeline status, query log.
+- [x] [FE] Dashboard admin: cost summary, pipeline status, query log, users, workspaces — `/admin/*` gated by `platform_role === manage` (`RequireManage`).
 
 ### 3.6 Bảo mật & Đa tenant (hoàn thiện FR12)
-- [ ] [BE] Rà soát RBAC toàn bộ endpoint theo `workspaceId` (không rò rỉ chéo workspace).
+- [x] [BE] Rà soát / refactor RBAC: tách Platform Manage vs Workspace Admin/Editor/Viewer; `/admin/*` không cấp bởi workspace admin; isolation theo `workspaceId` cho member APIs; tests `test_platform_rbac.py`.
 - [ ] [BE] Mã hoá dữ liệu khi truyền (TLS Nginx + internal TLS/overlay network nếu multi-node) và tại chỗ (encryption at rest cho MinIO/Postgres).
 - [ ] [BE] Audit lại rate limiting theo Workspace dưới tải thực tế.
 
@@ -269,5 +277,5 @@ Mục tiêu: hỏi đáp AI Chat có dẫn nguồn xác thực được (đúng 
 | 8. Comparison | FR8 | comparisons, comparison_documents | `/workspaces/{id}/comparisons` |
 | 9. Report | FR9 | reports, report_items | `/workspaces/{id}/reports` |
 | 10. Query Router | FR11 | query_cache, query_logs | (internal, xuyên suốt Chat) |
-| Auth/RBAC | FR12 | users | `/auth/*` |
-| Observability | FR13 | query_logs, pipeline_stage_logs, message_generations | `/admin/workspaces/{id}/*` |
+| Auth/RBAC | FR12 | users (`platform_role`), roles, workspace_members | `/auth/*`, `/admin/users`, `/workspaces/{id}/members` |
+| Observability | FR13 | query_logs, pipeline_stage_logs, message_generations | `/admin/workspaces/{id}/*` (Manage) |

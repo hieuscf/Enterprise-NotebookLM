@@ -95,6 +95,7 @@ def extract_structured_json(
             timeout_seconds=timeout_seconds,
             temperature=temperature,
             top_p=top_p,
+            reasoning_effort=settings.openai_reasoning_effort,
             cost_estimator=cost_estimator,
         )
     return anthropic_client.extract_structured_json(
@@ -135,6 +136,7 @@ async def extract_structured_json_async(
             temperature=temperature,
             top_p=top_p,
             timeout_seconds=timeout_seconds,
+            reasoning_effort=settings.openai_reasoning_effort,
             cost_estimator=cost_estimator,
         )
     return await anthropic_client.extract_structured_json_async(

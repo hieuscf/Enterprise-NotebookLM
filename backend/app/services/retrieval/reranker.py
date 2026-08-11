@@ -82,6 +82,18 @@ class Reranker:
                     score=float(score),
                     rank=None,
                     source_methods=methods,
+                    # BUG FIX (RAG quality P1): these hierarchical/structural
+                    # fields were previously omitted here, silently resetting
+                    # to None on every rerank — the LLM prompt lost all
+                    # document/section/page context regardless of what
+                    # hydration + merge upstream had populated.
+                    page_number=cand.page_number,
+                    section_index=cand.section_index,
+                    section_title=cand.section_title,
+                    document_title=cand.document_title,
+                    heading_path=cand.heading_path,
+                    chunk_index=cand.chunk_index,
+                    document_version_id=cand.document_version_id,
                 )
             )
         ranked.sort(key=lambda c: c.score if c.score is not None else 0.0, reverse=True)

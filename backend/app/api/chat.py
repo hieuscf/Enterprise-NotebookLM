@@ -79,6 +79,7 @@ def get_message_processing_service(
 ) -> MessageProcessingService:
     return MessageProcessingService(
         settings=get_settings(),
+        session=session,
         sessions=ChatSessionRepository(session),
         messages=ChatMessageRepository(session),
         citations=CitationRepository(session),

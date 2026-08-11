@@ -31,6 +31,7 @@ from app.core.logging import get_logger
 from app.services.retrieval.bm25_search import Bm25Search
 from app.services.retrieval.exceptions import RetrievalUnavailableError
 from app.services.retrieval.graph_search import GraphSearch
+from app.services.retrieval.query_expansion import expand_lexical_query
 from app.services.retrieval.reranker import Reranker
 from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 from app.services.retrieval.vector_search import VectorSearch
@@ -94,10 +95,14 @@ class HybridRetrievalService:
                 query_vector=query_vector or None,
             ),
         )
+        # Deterministic (0 LLM) lexical widening for document-level questions
+        # (spec §7/§8) — BM25/lexical only; vector query text stays untouched
+        # so embedding similarity keeps reflecting the user's literal intent.
+        bm25_query = expand_lexical_query(q)
         bm25_task = self._timed_source(
             "bm25",
             self._settings.retrieval_bm25_timeout_seconds,
-            lambda: self._bm25.search(workspace_id, q, per_source),
+            lambda: self._bm25.search(workspace_id, bm25_query, per_source),
         )
         graph_task = self._timed_source(
             "graph",
@@ -175,6 +180,8 @@ class HybridRetrievalService:
             latency_ms=total_ms,
             sources_used=sources_used,
             timings=timings,
+            candidate_count=candidate_count,
+            reranked_count=len(ranked),
         )
 
     async def _embed_once(self, query_text: str) -> list[float]:
@@ -253,6 +260,9 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 section_index=cand.section_index,
                 section_title=cand.section_title,
                 document_title=cand.document_title,
+                heading_path=cand.heading_path,
+                chunk_index=cand.chunk_index,
+                document_version_id=cand.document_version_id,
             )
             continue
         methods = list(
@@ -281,6 +291,11 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 else existing.section_index,
                 section_title=cand.section_title or existing.section_title,
                 document_title=cand.document_title or existing.document_title,
+                heading_path=cand.heading_path or existing.heading_path,
+                chunk_index=cand.chunk_index
+                if cand.chunk_index is not None
+                else existing.chunk_index,
+                document_version_id=cand.document_version_id or existing.document_version_id,
             )
         else:
             existing.source_methods = methods
@@ -298,6 +313,12 @@ def _merge_dedupe(candidates: list[RetrievalCandidate]) -> list[RetrievalCandida
                 existing.section_title = cand.section_title
             if not existing.document_title and cand.document_title:
                 existing.document_title = cand.document_title
+            if not existing.heading_path and cand.heading_path:
+                existing.heading_path = cand.heading_path
+            if existing.chunk_index is None and cand.chunk_index is not None:
+                existing.chunk_index = cand.chunk_index
+            if existing.document_version_id is None and cand.document_version_id is not None:
+                existing.document_version_id = cand.document_version_id
 
     merged = list(best.values())
     merged.sort(key=lambda c: c.raw_score, reverse=True)

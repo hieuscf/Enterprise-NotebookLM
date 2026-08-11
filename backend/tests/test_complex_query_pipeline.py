@@ -31,7 +31,9 @@ from app.models.enums import (
     ConfidenceLevel,
     RouteType,
 )
+from app.adapters.llm_result import EmptyCompletionError
 from app.services.chat.complex_query_pipeline import (
+    PENDING_LLM_STATUS,
     AnswerGenerationResult,
     ComplexQueryPipeline,
 )
@@ -133,6 +135,19 @@ class FakeAnswerGenerator:
             latency_ms=50,
             verify=True,
         )
+
+
+class FailingAnswerGenerator:
+    """Simulates a provider call that raises instead of returning an answer
+    (e.g. EmptyCompletionError from a reasoning-model empty completion)."""
+
+    def __init__(self, exc: Exception) -> None:
+        self.calls = 0
+        self._exc = exc
+
+    async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
+        self.calls += 1
+        raise self._exc
 
 
 def _pipeline(
@@ -371,3 +386,34 @@ async def test_case5_second_retrieval_still_low_continues_to_llm_no_second_agent
     assert rewrite.run.call_count == 1  # no second agent loop
     assert hybrid.retrieve.await_count == 1  # only one Second Retrieval
     assert ans.calls == 1  # still goes to Prompt/LLM
+
+
+@pytest.mark.asyncio
+async def test_case6_provider_empty_completion_never_becomes_fake_success() -> None:
+    """P0 regression: an OpenAI reasoning-model empty completion (HTTP 200,
+    finish_reason=length) must surface as answer=None / pending status — never
+    silently coerced into a fabricated answer — and must NOT trigger a retry
+    (still exactly one main-answer LLM attempt)."""
+    rewrite = MagicMock()
+    ans = FailingAnswerGenerator(
+        EmptyCompletionError(model="gpt-5", finish_reason="length", output_tokens=4096)
+    )
+    pipe, ae, rr, obs, _ = _pipeline(rewrite=rewrite, answer=ans)
+    initial = _result(0.97, 0.55, 0.40)  # HIGH confidence — no agent path
+    result = await pipe.run(
+        workspace_id=uuid.uuid4(),
+        query_text="Explain the remote work leave policy in detail",
+        message_id=uuid.uuid4(),
+        initial_retrieval=initial,
+        assistant_message_id=uuid.uuid4(),
+    )
+    assert ans.calls == 1
+    assert result.answer is None
+    assert result.status == PENDING_LLM_STATUS
+    assert result.llm_calls_count == 1  # one attempt counted, no silent retry
+    assert result.citation_refs == []
+    assert result.verify is False
+    # message_generations still records the attempt (for cost/observability),
+    # but honestly reflects failure — never a fake successful model/answer.
+    assert len(obs.generations) == 1
+    assert obs.generations[0]["model_used"] is None

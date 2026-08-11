@@ -6,6 +6,9 @@
 # Responsibilities:
 #   - Model tiering from Settings; structured {answer, citation_ids}
 #   - Map citation_ids against latest-pass retrieval items only
+#   - Structured stage logging (llm_request_started / llm_response_received /
+#     llm_structured_output_parsed / chat_answer_llm_failed) — no prompt or
+#     document content in logs, ever
 # Dependencies:
 #   - prompt_builder, model_tiering, chat_llm, Settings
 # Public Exports:
@@ -13,7 +16,10 @@
 # Database/Table: N/A (persistence owned by ComplexQueryPipeline / MessageService)
 # Related Modules: ComplexQueryPipeline.answer_generator
 # Important Notes: Exactly one answer LLM call; Rewrite Agent is separate.
-#   Provider selected via CHAT_LLM_PROVIDER (anthropic | openai).
+#   Provider selected via CHAT_LLM_PROVIDER (anthropic | openai). Provider
+#   failures (incl. EmptyCompletionError) are re-raised here — never coerced
+#   into ``answer=""`` — so the caller (ComplexQueryPipeline) can classify and
+#   fall back deterministically without a second LLM call.
 # =============================================================================
 
 from __future__ import annotations
@@ -28,6 +34,11 @@ from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_ll
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.chat.complex_query_pipeline import AnswerGenerationResult
+from app.services.chat.context_assembly import (
+    ChunkContextPort,
+    ContextAssemblyConfig,
+    assemble_context,
+)
 from app.services.chat.model_tiering import estimate_answer_cost_usd, select_answer_model
 from app.services.chat.prompt_builder import (
     build_prompt,
@@ -49,11 +60,15 @@ class PromptAnswerGenerator:
         settings: Settings,
         *,
         llm_call: Any | None = None,
+        context_port: ChunkContextPort | None = None,
     ) -> None:
         self._settings = settings
         # Injectable for tests. Signature: async (**kwargs) -> StructuredLlmResult-like.
         # When None, uses chat_llm.extract_structured_json_async (provider-aware).
         self._llm_call = llm_call
+        # Optional bounded neighbor/coverage expansion (context_assembly.py).
+        # None disables expansion but grouping/ordering/dedup still run.
+        self._context_port = context_port
 
     async def generate(
         self,
@@ -82,8 +97,41 @@ class PromptAnswerGenerator:
                 verify=False,
             )
 
-        # In-memory retrieval_result is already the active (latest) pass from pipeline.
-        prompt_items = retrieval_candidates_to_prompt_items(retrieval_result.items)
+        # In-memory retrieval_result is already the active (latest) pass from
+        # pipeline. Context Assembly (dedup + bounded neighbor/coverage
+        # expansion + grouping/ordering) runs BEFORE Prompt Construction —
+        # RAG answer-quality P1, spec §4-§6, §16-§18. Still exactly 1 LLM call.
+        assembly = await assemble_context(
+            query_text,
+            retrieval_result.items,
+            workspace_id=workspace_id,
+            port=self._context_port if settings.context_assembly_enabled else None,
+            config=ContextAssemblyConfig(
+                neighbor_window=int(settings.context_neighbor_window),
+                max_neighbor_seeds=int(settings.context_max_neighbor_seeds),
+                max_context_chunks=int(settings.context_max_chunks),
+                coverage_min_sections=int(settings.context_coverage_min_sections),
+                coverage_max_chunks=int(settings.context_coverage_max_chunks),
+            ),
+            candidate_count=retrieval_result.candidate_count,
+            reranked_count=retrieval_result.reranked_count,
+        )
+        logger.info(
+            "retrieval_quality_debug",
+            workspace_id=str(workspace_id),
+            query_type=assembly.debug.query_type,
+            candidate_count=assembly.debug.candidate_count,
+            reranked_count=assembly.debug.reranked_count,
+            unique_documents=assembly.debug.unique_documents,
+            unique_sections=assembly.debug.unique_sections,
+            neighbor_expansion_count=assembly.debug.neighbor_expansion_count,
+            coverage_expansion_count=assembly.debug.coverage_expansion_count,
+            duplicate_count=assembly.debug.duplicate_count,
+            final_context_chunks=assembly.debug.final_context_chunks,
+            final_context_tokens=assembly.debug.final_context_tokens,
+            coverage_score=assembly.debug.coverage_score,
+        )
+        prompt_items = retrieval_candidates_to_prompt_items(assembly.items)
         built = build_prompt(
             ANSWER_SYSTEM_PROMPT,
             list(chat_history) if chat_history else None,
@@ -111,6 +159,14 @@ class PromptAnswerGenerator:
                 output_tokens=output_tokens,
             ),
         }
+        logger.info(
+            "llm_request_started",
+            workspace_id=str(workspace_id),
+            provider=str(settings.chat_llm_provider),
+            model_used=model,
+            agent_triggered=agent_triggered,
+            context_chunks=len(prompt_items),
+        )
         try:
             if self._llm_call is not None:
                 llm = await self._llm_call(**call_kwargs)
@@ -119,32 +175,51 @@ class PromptAnswerGenerator:
                     settings=settings,
                     **call_kwargs,
                 )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — classify + log, never swallow silently
             logger.warning(
                 "chat_answer_llm_failed",
                 workspace_id=str(workspace_id),
                 provider=str(settings.chat_llm_provider),
+                model_used=model,
                 error=type(exc).__name__,
                 detail=str(exc),
+                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
             )
             raise
 
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+        # getattr: self._llm_call is injectable (tests use duck-typed stand-ins
+        # that may predate the finish_reason field on StructuredLlmResult).
+        finish_reason = getattr(llm, "finish_reason", None)
+        logger.info(
+            "llm_response_received",
+            workspace_id=str(workspace_id),
+            provider=str(settings.chat_llm_provider),
+            model_used=str(llm.model or model),
+            finish_reason=finish_reason,
+            prompt_tokens=int(llm.input_tokens),
+            completion_tokens=int(llm.output_tokens),
+            latency_ms=latency_ms,
+        )
         data = llm.data if isinstance(llm.data, dict) else {}
         answer = str(data.get("answer") or "").strip() or None
         raw_ids = data.get("citation_ids") or []
         if not isinstance(raw_ids, list):
             raw_ids = []
         allowed = {item.citation_id for item in prompt_items}
+        # by_chunk must reflect what was actually shown in the prompt —
+        # assembly.items includes bounded neighbor/coverage expansion chunks
+        # that are not present in the raw (pre-assembly) retrieval_result.
         by_chunk = {
             str(c.chunk_id): c
-            for c in retrieval_result.items
+            for c in assembly.items
             if getattr(c, "chunk_id", None) is not None
         }
         citation_refs: list[CitationRef] = []
+        seen_chunk: set[str] = set()
         for raw in raw_ids:
             cid = str(raw).strip()
-            if cid not in allowed:
+            if cid not in allowed or cid in seen_chunk:
                 continue
             cand = by_chunk.get(cid)
             if cand is None:
@@ -157,8 +232,34 @@ class PromptAnswerGenerator:
                     verify=True,
                 )
             )
+            seen_chunk.add(cid)
+        # Never persist/stream raw chunk UUIDs inside answer prose — rewrite
+        # verified [uuid] markers to presentation [n], drop the rest.
+        if answer:
+            from app.services.chat.answer_sanitizer import rewrite_inline_citation_markers
+
+            answer = rewrite_inline_citation_markers(
+                answer,
+                [str(ref.chunk_id) for ref in citation_refs if ref.chunk_id is not None],
+            ) or None
+        logger.info(
+            "llm_structured_output_parsed",
+            workspace_id=str(workspace_id),
+            has_answer=bool(answer),
+            raw_citation_id_count=len(raw_ids),
+            valid_citation_id_count=len(citation_refs),
+        )
 
         total_tokens = int(llm.input_tokens) + int(llm.output_tokens)
+        original_chunk_ids = {
+            str(c.chunk_id) for c in retrieval_result.items if getattr(c, "chunk_id", None)
+        }
+        expansion_items = [
+            c
+            for c in assembly.items
+            if getattr(c, "chunk_id", None) is not None
+            and str(c.chunk_id) not in original_chunk_ids
+        ]
         return AnswerGenerationResult(
             answer=answer,
             citation_refs=citation_refs,
@@ -169,4 +270,5 @@ class PromptAnswerGenerator:
             cost_usd=Decimal(str(llm.estimated_cost_usd)),
             latency_ms=latency_ms,
             verify=bool(citation_refs) if answer else False,
+            expansion_items=expansion_items,
         )

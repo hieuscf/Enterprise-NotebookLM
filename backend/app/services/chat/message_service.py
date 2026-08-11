@@ -17,6 +17,7 @@
 # Important Notes:
 #   - Does not alter Query Router / Confidence / Agent logic.
 #   - SSE emits token chunks after structured generation (citations last).
+#   - Commit before yielding SSE so live UI / remount refetch sees content.
 # =============================================================================
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -47,6 +50,13 @@ from app.services.query_router.orchestrator import QueryOrchestrator
 from app.services.query_router.schemas import CitationRef, QueryExecutionResult
 
 logger = get_logger(__name__)
+
+# Never leave the pre-created assistant row with empty content — an unhandled
+# pipeline failure must not turn into a permanent "no content" ghost bubble
+# on every future reload of the chat history.
+PIPELINE_FAILURE_TEXT = (
+    "Xin lỗi, đã xảy ra lỗi khi tạo câu trả lời. Vui lòng thử lại."
+)
 
 
 @dataclass(slots=True)
@@ -76,6 +86,7 @@ class MessageProcessingService:
         self,
         *,
         settings: Settings,
+        session: AsyncSession,
         sessions: ChatSessionRepository,
         messages: ChatMessageRepository,
         citations: CitationRepository,
@@ -84,6 +95,7 @@ class MessageProcessingService:
         orchestrator: QueryOrchestrator,
     ) -> None:
         self._settings = settings
+        self._session = session
         self._sessions = sessions
         self._messages = messages
         self._citations = citations
@@ -154,6 +166,7 @@ class MessageProcessingService:
                 error=type(exc).__name__,
                 detail=str(exc),
             )
+            await self._fail_assistant_message(assistant_msg.id)
             raise ChatServiceError(
                 "pipeline_error",
                 "Failed to process chat message",
@@ -232,6 +245,9 @@ class MessageProcessingService:
                 user_id=user_id,
                 content=content,
             )
+            # Persist before the first SSE byte so a client remount/refetch
+            # during/after the stream cannot load the empty placeholder row.
+            await self._session.commit()
         except ChatServiceError as exc:
             yield ChatStreamEvent(
                 event="error",
@@ -264,6 +280,18 @@ class MessageProcessingService:
             },
         )
         yield ChatStreamEvent(event="done", data={})
+
+    async def _fail_assistant_message(self, assistant_message_id: UUID) -> None:
+        """Best-effort: replace the empty placeholder with a visible error text
+        and commit immediately so it survives the request's rollback-on-error
+        (``get_db_session`` rolls back the whole transaction when the caller
+        re-raises). Never let this secondary failure mask the original error.
+        """
+        try:
+            await self._messages.update_content(assistant_message_id, PIPELINE_FAILURE_TEXT)
+            await self._session.commit()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("chat_fail_assistant_message_failed", error=str(exc))
 
     async def _load_history(
         self,

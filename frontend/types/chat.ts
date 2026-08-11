@@ -25,6 +25,9 @@ import type { Citation } from "./citations";
 
 export type MessageRole = "user" | "assistant";
 
+/** Client-side lifecycle for live streaming (history rows omit this → completed). */
+export type ChatMessageStatus = "pending" | "streaming" | "completed" | "failed";
+
 export type RouteType = "cache_hit" | "metadata" | "factoid" | "complex";
 
 export type ConfidenceLevel = "high" | "low";
@@ -61,4 +64,6 @@ export type ChatMessage = {
   generation: MessageGeneration | null;
   citations: Citation[];
   created_at: string;
+  /** Live-only; omitted on GET history (treat as completed). */
+  status?: ChatMessageStatus;
 };

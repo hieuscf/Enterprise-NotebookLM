@@ -23,7 +23,7 @@
 import { FileText, ShieldCheck, ShieldQuestion } from "lucide-react";
 import Link from "next/link";
 
-import { buildChatCitationHref } from "@/features/chat/chat-format";
+import { buildChatCitationHref, citationDisplayIndex } from "@/features/chat/chat-format";
 import { CitationLocationLabel } from "@/features/citation/CitationLocationLabel";
 import { cn } from "@/lib/utils";
 import type { Citation } from "@/types/citations";
@@ -44,8 +44,9 @@ export function CitationSection({ workspaceId, citations }: Props) {
         Nguồn trích dẫn
       </p>
       <ul className="mt-1.5 flex flex-col gap-1.5">
-        {sorted.map((citation, index) => {
+        {sorted.map((citation) => {
           const href = buildChatCitationHref(workspaceId, citation);
+          const displayIndex = citationDisplayIndex(citation);
           const content = (
             <>
               <span
@@ -66,7 +67,7 @@ export function CitationSection({ workspaceId, citations }: Props) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-caption font-medium text-secondary">
                   <FileText className="mr-1 inline h-3 w-3 text-tertiary" aria-hidden />
-                  Trích dẫn {index + 1}
+                  [{displayIndex}] Trích dẫn {displayIndex}
                   <CitationLocationLabel
                     location={citation.location}
                     className="ml-1 text-caption text-citation"

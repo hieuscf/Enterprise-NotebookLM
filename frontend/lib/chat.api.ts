@@ -112,7 +112,9 @@ function dispatchFrame(frame: string, handlers: ChatStreamHandlers): void {
       handlers.onCitations?.(payload.citations ?? []);
       break;
     case "generation":
-      handlers.onGeneration?.(payload.generation ?? null, payload.message);
+      if (payload.message) {
+        handlers.onGeneration?.(payload.generation ?? null, payload.message);
+      }
       break;
     case "done":
       handlers.onDone?.();

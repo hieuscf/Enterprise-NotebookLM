@@ -29,6 +29,7 @@ import remarkGfm from "remark-gfm";
 
 import { AgentBadge } from "@/features/chat/AgentBadge";
 import { CitationSection } from "@/features/chat/CitationSection";
+import { stripLeakedCitationUuids } from "@/features/chat/chat-format";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
@@ -49,21 +50,28 @@ export function AssistantBubble({
   canRegenerate,
   onRegenerate,
 }: Props) {
+  // History rows have no status → treat as completed. Never show the empty
+  // state while pending/streaming/failed (failed uses the stream error banner).
+  const status = message.status ?? "completed";
   const isEmpty = message.content.trim().length === 0;
+  const showEmptyState = status === "completed" && isEmpty;
 
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] rounded-lg border border-border-default bg-surface px-4 py-2.5 shadow-sm sm:max-w-[75%]">
-        {isEmpty && !isStreamingThis ? (
+        {showEmptyState ? (
           <p className="text-body-sm italic text-tertiary">Không có nội dung trả lời.</p>
         ) : (
           <div
             className={cn(
               "prose-chat text-body-sm text-primary",
-              isStreamingThis && "chat-streaming-caret",
+              (isStreamingThis || status === "streaming" || status === "pending") &&
+                "chat-streaming-caret",
             )}
           >
-            <Markdown remarkPlugins={[remarkGfm]}>{message.content}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]}>
+              {stripLeakedCitationUuids(message.content)}
+            </Markdown>
           </div>
         )}
 

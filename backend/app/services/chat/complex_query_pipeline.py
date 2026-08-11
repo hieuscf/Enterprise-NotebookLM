@@ -70,6 +70,11 @@ class AnswerGenerationResult:
     cost_usd: Decimal | None = None
     latency_ms: int | None = None
     verify: bool = False
+    # Context Assembly may add bounded neighbor/coverage chunks (RAG
+    # answer-quality P1, §4/§7) that were not part of the raw reranked
+    # retrieval passed in. These are persisted into ``retrievals`` too so
+    # Citation Verification can resolve citation_ids pointing at them.
+    expansion_items: list[RetrievalCandidate] = field(default_factory=list)
 
 
 class AnswerGeneratorPort(Protocol):
@@ -363,6 +368,15 @@ class ComplexQueryPipeline:
             chat_history=chat_history,
             message_id=message_id,
         )
+        pass_for_expansion = 2 if second_retrieval_executed else 1
+        if answer_result is not None and answer_result.expansion_items:
+            # Context Assembly's bounded neighbor/coverage chunks (§4/§7) were
+            # shown to the LLM but are not part of the raw reranked retrieval
+            # already persisted above — persist them too (same pass) so any
+            # citation_ids pointing at them resolve during Citation Verification.
+            await self._safe_persist_retrievals(
+                message_id, answer_result.expansion_items, retrieval_pass=pass_for_expansion
+            )
 
         # llm_calls_count = Rewrite lightweight calls (0|1) + main answer LLM (0|1).
         # Rewrite Agent is the only allowed extra lightweight-model call; it does

@@ -78,6 +78,24 @@ assert(
   "Citation without document_id → no link",
 );
 
+function citationDisplayIndex(citation) {
+  return Math.max(1, Number(citation.order_index) + 1);
+}
+function stripLeakedCitationUuids(content) {
+  return content.replace(
+    /\[\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*\]/g,
+    "",
+  );
+}
+assert(citationDisplayIndex({ order_index: 0 }) === 1, "order_index 0 → display [1]");
+assert(citationDisplayIndex({ order_index: 2 }) === 3, "order_index 2 → display [3]");
+assert(
+  stripLeakedCitationUuids("text [84672b7c-7509-4848-aea5-dbaefcc4af53] end").includes(
+    "84672b7c",
+  ) === false,
+  "Frontend strips leftover bracketed UUIDs",
+);
+
 // --- formatRelativeTime ---------------------------------------------------
 const now = Date.parse("2026-08-06T12:00:00Z");
 assert(

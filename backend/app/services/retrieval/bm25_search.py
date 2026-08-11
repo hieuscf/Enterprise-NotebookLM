@@ -93,6 +93,9 @@ class Bm25Search:
             section_index = None
             section_title = None
             document_title = None
+            heading_path = None
+            chunk_index = None
+            document_version_id = None
             if row is not None:
                 content = (row.content or content)[:max_chars]
                 document_id = row.document_id
@@ -100,6 +103,9 @@ class Bm25Search:
                 section_index = row.section_index
                 section_title = row.section
                 document_title = row.title
+                heading_path = row.heading_path
+                chunk_index = row.chunk_index
+                document_version_id = row.document_version_id
             else:
                 raw_doc = hit.get("document_id")
                 if raw_doc:
@@ -129,6 +135,9 @@ class Bm25Search:
                     section_index=section_index,
                     section_title=section_title,
                     document_title=document_title,
+                    heading_path=heading_path,
+                    chunk_index=chunk_index,
+                    document_version_id=document_version_id,
                 )
             )
         return candidates

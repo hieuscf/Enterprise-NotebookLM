@@ -40,10 +40,9 @@ from app.models.enums import FileType, RoleName, RouteType
 from app.models.query import QueryCache, SearchHistory
 from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
 from app.repositories.workspace_members import WorkspaceMemberRepository
-from app.services.query_router.cache import QueryCacheService, build_normalized_query
+from app.services.query_router.cache import build_normalized_query
 from app.services.query_router.cache_writer import QueryCacheWriter
 from app.services.query_router.classifier import build_rule_based_classifier
-from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
 from app.services.query_router.metadata_branch import MetadataBranch
@@ -647,15 +646,11 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
     )
     cache_repo = FakeCacheRepo()
     observability = FakeObservability()
+    # Router no longer checks query_cache at all — cache_repo/cache_writer
+    # below are only used to exercise the (chat-independent) cache write +
+    # cleanup lifecycle in tests.
     router = QueryRouter(
         rules=rules,
-        cache=QueryCacheService(
-            settings=settings,
-            rules=rules,
-            repo=cache_repo,  # type: ignore[arg-type]
-            qdrant=qdrant,  # type: ignore[arg-type]
-            embedding=HashingNgramEmbeddingProvider(dimension=32),
-        ),
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
@@ -813,12 +808,12 @@ async def test_search_api_and_history_e2e(
 
 
 # ---------------------------------------------------------------------------
-# 2–4. Orchestrator routes + logging + cache lifecycle + no LLM
+# 2–4. Orchestrator routes directly to complex + logging + no LLM
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
+async def test_orchestrator_direct_complex_logging_no_llm(
     stack: IntegrationStack,
 ) -> None:
     world = stack.world
@@ -828,7 +823,7 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
     llm_spy = MagicMock(side_effect=AssertionError("LLM must not be called"))
 
     with patch(LLM_TARGETS[0], llm_spy):
-        # --- Metadata ---
+        # Former metadata query → complex directly (no cache check)
         meta_msg = uuid.uuid4()
         meta = await orch.handle_query(
             world.workspace_id,
@@ -836,33 +831,24 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
             "Có bao nhiêu tài liệu?",
             message_id=meta_msg,
         )
-        assert meta.route_type == RouteType.metadata
-        assert meta.verify is True
-        assert meta.metadata.get("count") == len(world.docs)
-        assert str(len(world.docs)) in (meta.answer or "")
-        # Metadata must not fan out hybrid adapters
-        qdrant_before_factoid = stack.qdrant.search_calls
+        assert meta.route_type == RouteType.complex
+        assert meta.status == COMPLEX_STATUS
+        assert meta.cache_id is None
+        assert meta.answer is None
 
-        # --- Factoid (lightweight vector retrieve inside FactoidHandler) ---
+        # Former factoid query → complex
         fact_msg = uuid.uuid4()
-        calls_before = stack.qdrant.search_calls
         fact = await orch.handle_query(
             world.workspace_id,
             world.user_id,
             "AI là gì?",
             message_id=fact_msg,
         )
-        assert fact.route_type == RouteType.factoid
-        assert fact.answer == world.snippet
-        assert fact.verify is True
-        assert len(fact.citation_refs) == 1
-        assert fact.citation_refs[0].chunk_id == world.chunk_id
-        assert fact.citation_refs[0].verify is True
-        # Lightweight retriever hits Qdrant once (not hybrid fan-out).
-        assert stack.qdrant.search_calls > calls_before
-        assert stack.qdrant.search_calls > qdrant_before_factoid
+        assert fact.route_type == RouteType.complex
+        assert fact.status == COMPLEX_STATUS
+        assert fact.cache_id is None
 
-        # --- Complex placeholder ---
+        # Explicit complex query
         complex_msg = uuid.uuid4()
         complex_result = await orch.handle_query(
             world.workspace_id,
@@ -874,107 +860,88 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         assert complex_result.status == COMPLEX_STATUS
         assert complex_result.answer is None
 
-        # --- Cache write-back then cache_hit (Part 5 lifecycle) ---
-        cache_query = "What is machine learning?"
-        written = await stack.cache_writer.write_cache(
-            world.workspace_id,
-            cache_query,
-            None,
-            "Machine learning is a subset of AI.",
-            [
-                CitationRef(
-                    chunk_id=world.chunk_id,
-                    document_id=world.document_id,
-                    page_number=1,
-                    verify=True,
-                )
-            ],
-            ttl_seconds=3600,
-        )
-        assert written.hit_count == 0
-        nq = build_normalized_query(cache_query)
-        assert written.query_hash == nq.query_hash
-
-        retrieve_calls_before_hit = stack.qdrant.search_calls
-        cache_msg = uuid.uuid4()
-        hit = await orch.handle_query(
-            world.workspace_id,
-            world.user_id,
-            cache_query,
-            message_id=cache_msg,
-        )
-        assert hit.route_type == RouteType.cache_hit
-        assert hit.answer == "Machine learning is a subset of AI."
-        assert hit.verify is True
-        assert hit.cache_id == written.id
-        # No additional hybrid retrieval after cache_hit
-        assert stack.qdrant.search_calls == retrieve_calls_before_hit
-        assert stack.cache_repo.rows[written.id].hit_count == 1
-
-        # Second identical call increments hit_count again
-        hit2 = await orch.handle_query(
-            world.workspace_id,
-            world.user_id,
-            cache_query,
-            message_id=uuid.uuid4(),
-        )
-        assert hit2.route_type == RouteType.cache_hit
-        assert stack.cache_repo.rows[written.id].hit_count == 2
-        assert stack.qdrant.search_calls == retrieve_calls_before_hit
-
-    # Unified logging: exactly one query_logs row per handle_query
-    # (meta + factoid + complex + 2 cache hits = 5). Chat owns message_generations.
+    # Unified logging: exactly one query_logs row per handle_query (3 calls).
     route_logs = obs.query_logs
-    assert len(route_logs) == 5
+    assert len(route_logs) == 3
     assert len(obs.generations) == 0
-    routes_seen = {row["route_type"] for row in route_logs}
-    assert RouteType.cache_hit in routes_seen
-    assert RouteType.metadata in routes_seen
-    assert RouteType.factoid in routes_seen
-    assert RouteType.complex in routes_seen
+    assert {row["route_type"] for row in route_logs} == {RouteType.complex}
     assert all(row["llm_calls_count"] == 0 for row in route_logs)
     assert all(row["model_used"] is None for row in route_logs)
-
-    # Dedicated 4-request logging check (fresh stack)
-    stack2 = build_stack()
-    with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
-        # Seed cache for cache_hit path
-        await stack2.cache_writer.write_cache(
-            stack2.world.workspace_id,
-            "AI là gì?",
-            None,
-            stack2.world.snippet,
-            [],
-        )
-        queries = [
-            ("AI là gì?", RouteType.cache_hit),
-            ("Có bao nhiêu tài liệu?", RouteType.metadata),
-            ("Who is the author?", RouteType.factoid),
-            ("So sánh chiến lược AI giữa hai tài liệu.", RouteType.complex),
-        ]
-        for q, expected in queries:
-            # For factoid use a non-cached factoid question
-            result = await stack2.orchestrator.handle_query(
-                stack2.world.workspace_id,
-                stack2.world.user_id,
-                q,
-                message_id=uuid.uuid4(),
-            )
-            assert result.route_type == expected
-            assert result.message_generation_id is None
-
-    assert len(stack2.observability.query_logs) == 4
-    assert len(stack2.observability.generations) == 0
-    assert {r["route_type"] for r in stack2.observability.query_logs} == {
-        RouteType.cache_hit,
-        RouteType.metadata,
-        RouteType.factoid,
-        RouteType.complex,
-    }
+    assert all(row["cache_id"] is None for row in route_logs)
 
     llm_spy.assert_not_called()
 
-    # Cleanup job: expire one entry, keep another
+
+@pytest.mark.asyncio
+async def test_every_query_is_complex_no_cache_check(stack: IntegrationStack) -> None:
+    """Former factoid/metadata paths go straight to complex — no cache lookup."""
+    world = stack.world
+
+    with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
+        result = await stack.orchestrator.handle_query(
+            world.workspace_id,
+            world.user_id,
+            "What is RAG?",
+            message_id=uuid.uuid4(),
+        )
+    assert result.route_type == RouteType.complex
+    assert result.cache_id is None
+    assert "cache_hit" not in result.metadata
+    assert result.status == COMPLEX_STATUS
+
+
+@pytest.mark.asyncio
+async def test_cached_answer_is_never_read_by_router(stack: IntegrationStack) -> None:
+    """A previously written cache entry must NOT short-circuit or be surfaced —
+    the router no longer reads query_cache at all."""
+    world = stack.world
+    query = "Cached definition of AI"
+    await stack.cache_writer.write_cache(
+        world.workspace_id,
+        query,
+        None,
+        "cached answer body",
+        [],
+    )
+
+    with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
+        result = await stack.orchestrator.handle_query(
+            world.workspace_id,
+            world.user_id,
+            query,
+            message_id=uuid.uuid4(),
+        )
+    assert result.route_type == RouteType.complex
+    assert result.cache_id is None
+    assert "cache_hit" not in result.metadata
+    assert result.answer is None  # complex pending without injected pipeline
+
+
+@pytest.mark.asyncio
+async def test_cache_write_and_cleanup_lifecycle(stack: IntegrationStack) -> None:
+    """Cache subsystem (write + TTL cleanup) still works standalone — it is
+    just no longer consulted by the chat routing path."""
+    world = stack.world
+
+    written = await stack.cache_writer.write_cache(
+        world.workspace_id,
+        "What is machine learning?",
+        None,
+        "Machine learning is a subset of AI.",
+        [
+            CitationRef(
+                chunk_id=world.chunk_id,
+                document_id=world.document_id,
+                page_number=1,
+                verify=True,
+            )
+        ],
+        ttl_seconds=3600,
+    )
+    assert written.hit_count == 0
+    nq = build_normalized_query("What is machine learning?")
+    assert written.query_hash == nq.query_hash
+
     now = datetime.now(UTC)
     live = await stack.cache_writer.write_cache(
         world.workspace_id,
@@ -994,13 +961,11 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         ttl_seconds=60,
         now=now - timedelta(hours=2),
     )
-    # Sync cleanup via FakeCacheRepo.delete_expired (mirrors Celery job semantics)
     deleted = await stack.cache_repo.delete_expired(now=now + timedelta(minutes=1))
     assert deleted >= 1
     assert live.id in stack.cache_repo.rows
     assert expired.id not in stack.cache_repo.rows
 
-    # Celery helper with mocked session (idempotent second run)
     session = MagicMock()
     session.execute.side_effect = [
         MagicMock(rowcount=1),
@@ -1015,56 +980,3 @@ async def test_orchestrator_four_routes_logging_cache_cleanup_no_llm(
         second = run_cleanup_expired_query_cache(session, now=now)
     assert first["deleted_count"] == 1
     assert second["deleted_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_factoid_retrieval_called_at_most_once(stack: IntegrationStack) -> None:
-    """FactoidHandler uses lightweight vector retrieve; hybrid must not run."""
-    world = stack.world
-    hybrid_retrieve = stack.hybrid.retrieve
-    call_counter = {"n": 0}
-
-    async def _counting_retrieve(*args: Any, **kwargs: Any) -> Any:
-        call_counter["n"] += 1
-        return await hybrid_retrieve(*args, **kwargs)
-
-    stack.hybrid.retrieve = _counting_retrieve  # type: ignore[method-assign]
-    qdrant_before = stack.qdrant.search_calls
-
-    with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
-        result = await stack.orchestrator.handle_query(
-            world.workspace_id,
-            world.user_id,
-            "What is RAG?",
-            message_id=uuid.uuid4(),
-        )
-    assert result.route_type == RouteType.factoid
-    assert call_counter["n"] == 0
-    # Semantic cache miss (+ optional) then lightweight chunk search.
-    assert stack.qdrant.search_calls >= qdrant_before + 1
-
-
-@pytest.mark.asyncio
-async def test_cache_hit_skips_retrieval_entirely(stack: IntegrationStack) -> None:
-    world = stack.world
-    query = "Cached definition of AI"
-    await stack.cache_writer.write_cache(
-        world.workspace_id,
-        query,
-        None,
-        "cached answer body",
-        [],
-    )
-    hybrid_spy = AsyncMock(side_effect=AssertionError("retrieve must not run"))
-    stack.hybrid.retrieve = hybrid_spy  # type: ignore[method-assign]
-
-    with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
-        result = await stack.orchestrator.handle_query(
-            world.workspace_id,
-            world.user_id,
-            query,
-            message_id=uuid.uuid4(),
-        )
-    assert result.route_type == RouteType.cache_hit
-    assert result.answer == "cached answer body"
-    hybrid_spy.assert_not_awaited()

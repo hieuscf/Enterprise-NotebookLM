@@ -85,6 +85,9 @@ class GraphSearch:
                 section_index: int | None = None
                 section_title: str | None = None
                 document_title: str | None = None
+                heading_path: str | None = None
+                chunk_index: int | None = None
+                document_version_id: UUID | None = None
                 if self._repo is not None:
                     hydrated = await self._repo.hydrate_chunks(workspace_id, [chunk_id])
                     h = hydrated.get(chunk_id)
@@ -95,6 +98,9 @@ class GraphSearch:
                         section_index = h.section_index
                         section_title = h.section
                         document_title = h.title
+                        heading_path = h.heading_path
+                        chunk_index = h.chunk_index
+                        document_version_id = h.document_version_id
                 candidates.append(
                     RetrievalCandidate(
                         workspace_id=workspace_id,
@@ -109,6 +115,9 @@ class GraphSearch:
                         section_index=section_index,
                         section_title=section_title,
                         document_title=document_title,
+                        heading_path=heading_path,
+                        chunk_index=chunk_index,
+                        document_version_id=document_version_id,
                     )
                 )
             elif source_version_id is not None:
@@ -146,6 +155,9 @@ class GraphSearch:
                         section_index=row.section_index,
                         section_title=row.section,
                         document_title=row.title,
+                        heading_path=row.heading_path,
+                        chunk_index=row.chunk_index,
+                        document_version_id=row.document_version_id,
                     )
                 )
 

@@ -55,7 +55,10 @@ export function ConversationPanel({
 }: Props) {
   const lastMessage = messages[messages.length - 1];
   const waitingForFirstToken =
-    isStreaming && lastMessage?.role === "assistant" && lastMessage.content.length === 0;
+    isStreaming &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.content.length === 0 &&
+    (lastMessage.status === "pending" || lastMessage.status === "streaming" || !lastMessage.status);
 
   const { containerRef, handleScroll, hasNewContent, scrollToBottom } = useAutoScroll(
     `${messages.length}:${lastMessage?.content.length ?? 0}`,

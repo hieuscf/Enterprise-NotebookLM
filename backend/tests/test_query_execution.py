@@ -2,9 +2,10 @@
 # File: test_query_execution.py
 # Module/Service: Query Router Execution (Part 4)
 # Layer: Service
-# Purpose: Unit tests for metadata/factoid/cache branches, logging, orchestrator.
+# Purpose: Unit tests for metadata/factoid branches (legacy, retained for DI/
+#          compat) + orchestrator direct-to-complex execution, logging.
 # Responsibilities:
-#   - Whitelist metadata intents; extractive factoid; cache_hit; complex stub;
+#   - Whitelist metadata intents; extractive factoid; complex stub;
 #     unified query_logs only (message_generations = Chat Service); 0 LLM
 # Dependencies:
 #   - pytest, AsyncMock, app.services.query_router.*
@@ -12,7 +13,7 @@
 #   - N/A
 # Database/Table: N/A (fakes)
 # Related Modules: QueryOrchestrator, MetadataBranch, FactoidBranch
-# Important Notes: Does not modify QueryRouter; no live LLM/DB.
+# Important Notes: QueryRouter no longer checks query_cache; no live LLM/DB.
 # =============================================================================
 
 from __future__ import annotations
@@ -28,11 +29,8 @@ import pytest
 from app.config.router_rules import RouterRules, build_router_rules
 from app.core.config import Settings
 from app.models.enums import FileType, RouteType
-from app.models.query import QueryCache
 from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
-from app.services.query_router.cache import QueryCacheService, build_normalized_query
 from app.services.query_router.classifier import build_rule_based_classifier
-from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.handlers.factoid_handler import FactoidHandler
 from app.services.query_router.interfaces.retriever import RetrievedChunk
@@ -90,78 +88,6 @@ def _settings(**overrides: Any) -> Settings:
 
 def _rules(settings: Settings | None = None) -> RouterRules:
     return build_router_rules(settings or _settings())
-
-
-class FakeCacheRepo:
-    def __init__(self) -> None:
-        self.rows: dict[uuid.UUID, QueryCache] = {}
-        self.by_hash: dict[tuple[uuid.UUID, str], QueryCache] = {}
-
-    def add(self, row: QueryCache) -> QueryCache:
-        self.rows[row.id] = row
-        self.by_hash[(row.workspace_id, row.query_hash)] = row
-        return row
-
-    async def find_exact_hit(
-        self,
-        *,
-        workspace_id: uuid.UUID,
-        query_hash: str,
-        now: datetime | None = None,
-    ) -> QueryCache | None:
-        row = self.by_hash.get((workspace_id, query_hash))
-        if row is None:
-            return None
-        ts = now or datetime.now(UTC)
-        if row.expires_at <= ts:
-            return None
-        return row
-
-    async def get_exact(
-        self,
-        *,
-        workspace_id: uuid.UUID,
-        query_hash: str,
-        now: datetime | None = None,
-    ) -> QueryCache | None:
-        return await self.find_exact_hit(
-            workspace_id=workspace_id, query_hash=query_hash, now=now
-        )
-
-    async def get_by_id(
-        self,
-        *,
-        workspace_id: uuid.UUID,
-        cache_id: uuid.UUID,
-        now: datetime | None = None,
-    ) -> QueryCache | None:
-        row = self.rows.get(cache_id)
-        if row is None or row.workspace_id != workspace_id:
-            return None
-        ts = now or datetime.now(UTC)
-        if row.expires_at <= ts:
-            return None
-        return row
-
-    async def get_similar(
-        self,
-        *,
-        workspace_id: uuid.UUID,
-        cache_ids: list[uuid.UUID],
-        now: datetime | None = None,
-    ) -> list[QueryCache]:
-        out: list[QueryCache] = []
-        for cid in cache_ids:
-            row = await self.get_by_id(workspace_id=workspace_id, cache_id=cid, now=now)
-            if row is not None:
-                out.append(row)
-        return out
-
-    async def record_hit(self, cache: QueryCache, *, now: datetime | None = None) -> QueryCache:
-        ts = now or datetime.now(UTC)
-        cache.hit_count = int(cache.hit_count or 0) + 1
-        cache.last_used_at = ts
-        return cache
 
 
 class FakeObservability:
@@ -271,31 +197,6 @@ class FakeMemberRepo:
         return 4
 
 
-def _make_cache(
-    *,
-    workspace_id: uuid.UUID,
-    query_text: str,
-    answer: str = "cached answer",
-    citation_refs: Any = None,
-) -> QueryCache:
-    nq = build_normalized_query(query_text)
-    return QueryCache(
-        id=uuid.uuid4(),
-        workspace_id=workspace_id,
-        query_embedding_id=None,
-        query_hash=nq.query_hash,
-        query_text=query_text,
-        answer=answer,
-        citation_refs=citation_refs,
-        similarity_threshold=0.9,
-        hit_count=0,
-        ttl_seconds=3600,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-        created_at=datetime.now(UTC),
-        last_used_at=None,
-    )
-
-
 def _retrieval(
     workspace_id: uuid.UUID,
     score: float,
@@ -327,37 +228,21 @@ def _retrieval(
 def _build_router(
     *,
     settings: Settings | None = None,
-    repo: FakeCacheRepo | None = None,
-    qdrant: MagicMock | None = None,
     hybrid: AsyncMock | None = None,
-) -> tuple[QueryRouter, FakeCacheRepo, AsyncMock, MagicMock]:
+) -> tuple[QueryRouter, AsyncMock]:
     settings = settings or _settings()
     rules = _rules(settings)
-    repo = repo or FakeCacheRepo()
-    qdrant = qdrant or MagicMock()
-    if getattr(qdrant.search_similar, "return_value", None) is None and not getattr(
-        qdrant.search_similar, "side_effect", None
-    ):
-        qdrant.search_similar.return_value = []
     if hybrid is None:
         hybrid = AsyncMock()
         hybrid.retrieve = AsyncMock(
             return_value=RetrievalResult(items=[], latency_ms=1, sources_used=[], timings={})
         )
-    cache = QueryCacheService(
-        settings=settings,
-        rules=rules,
-        repo=repo,  # type: ignore[arg-type]
-        qdrant=qdrant,
-        embedding=HashingNgramEmbeddingProvider(dimension=32),
-    )
     router = QueryRouter(
         rules=rules,
-        cache=cache,
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
     )
-    return router, repo, hybrid, qdrant
+    return router, hybrid
 
 
 class FakeFactoidRetriever:
@@ -390,14 +275,13 @@ def _build_orchestrator(
     member_repo: FakeMemberRepo | None = None,
     observability: FakeObservability | None = None,
     hybrid: AsyncMock | None = None,
-    cache_repo: FakeCacheRepo | None = None,
     factoid_retriever: FakeFactoidRetriever | None = None,
 ) -> tuple[QueryOrchestrator, FakeObservability, AsyncMock, FakeRetrievalRepo]:
     retrieval_repo = retrieval_repo or FakeRetrievalRepo()
     member_repo = member_repo or FakeMemberRepo()
     observability = observability or FakeObservability()
     if router is None:
-        router, _, hybrid_out, _ = _build_router(repo=cache_repo, hybrid=hybrid)
+        router, hybrid_out = _build_router(hybrid=hybrid)
     else:
         hybrid_out = hybrid or AsyncMock()
     retriever = factoid_retriever or FakeFactoidRetriever()
@@ -601,7 +485,7 @@ async def test_factoid_extractive_answer_and_citation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_factoid_does_not_call_hybrid_again() -> None:
+async def test_former_factoid_query_goes_complex() -> None:
     workspace_id = uuid.uuid4()
     hybrid = AsyncMock()
     hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.99))
@@ -616,45 +500,28 @@ async def test_factoid_does_not_call_hybrid_again() -> None:
             "What is RAG?",
             message_id=uuid.uuid4(),
         )
-    assert result.route_type == RouteType.factoid
-    assert result.answer == "exact snippet text"
-    # Router must not hybrid-retrieve for factoid (handler owns lightweight retrieve).
+    assert result.route_type == RouteType.complex
+    assert result.status == COMPLEX_STATUS
+    assert result.cache_id is None
+    # Router no longer checks cache or hybrid-probes; ComplexQueryPipeline
+    # owns retrieval when wired.
     hybrid_out.retrieve.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
-# Cache Hit
+# Direct-to-complex (no cache check at all)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_cache_hit_returns_cached_answer_without_branches() -> None:
+async def test_repeated_query_is_never_served_from_cache() -> None:
+    """Identical questions never short-circuit — always run complex fresh."""
     workspace_id = uuid.uuid4()
     query = "What is the leave policy?"
-    chunk_id = uuid.uuid4()
-    doc_id = uuid.uuid4()
-    cache_repo = FakeCacheRepo()
-    cache_repo.add(
-        _make_cache(
-            workspace_id=workspace_id,
-            query_text=query,
-            answer="Leave is 12 days per year.",
-            citation_refs=[
-                {
-                    "chunk_id": str(chunk_id),
-                    "document_id": str(doc_id),
-                    "page_number": 3,
-                    "verify": True,
-                }
-            ],
-        )
-    )
-    hybrid = AsyncMock()
-    hybrid.retrieve = AsyncMock(side_effect=AssertionError("no retrieval on cache_hit"))
     meta = AsyncMock()
     fact = AsyncMock()
 
-    router, _, hybrid_out, _ = _build_router(repo=cache_repo, hybrid=hybrid)
+    router, hybrid_out = _build_router()
     obs = FakeObservability()
     orch = QueryOrchestrator(
         router=router,
@@ -666,26 +533,28 @@ async def test_cache_hit_returns_cached_answer_without_branches() -> None:
         "app.adapters.anthropic_client.extract_structured_json",
         MagicMock(side_effect=AssertionError("LLM must not be called")),
     ):
-        result = await orch.handle_query(
-            workspace_id,
-            uuid.uuid4(),
-            query,
-            message_id=uuid.uuid4(),
+        first = await orch.handle_query(
+            workspace_id, uuid.uuid4(), query, message_id=uuid.uuid4()
+        )
+        second = await orch.handle_query(
+            workspace_id, uuid.uuid4(), query, message_id=uuid.uuid4()
         )
 
-    assert result.route_type == RouteType.cache_hit
-    assert result.answer == "Leave is 12 days per year."
-    assert result.verify is True
-    assert result.citation_refs[0].chunk_id == chunk_id
-    assert result.cache_id is not None
+    for result in (first, second):
+        assert result.route_type == RouteType.complex
+        assert result.status == COMPLEX_STATUS
+        assert result.cache_id is None
+        assert "cache_hit" not in result.metadata
+        assert result.answer is None
     hybrid_out.retrieve.assert_not_awaited()
     meta.execute.assert_not_awaited()
     fact.execute.assert_not_awaited()
-    assert len(obs.query_logs) == 1
+    assert len(obs.query_logs) == 2
+    assert all(row["cache_id"] is None for row in obs.query_logs)
     assert len(obs.generations) == 0
-    assert result.message_generation_id is None
-    assert result.llm_calls_count == 0
-    assert result.model_used is None
+    assert first.message_generation_id is None
+    assert first.llm_calls_count == 0
+    assert first.model_used is None
 
 
 # ---------------------------------------------------------------------------
@@ -733,9 +602,7 @@ async def test_complex_placeholder_logs_no_llm() -> None:
 @pytest.mark.parametrize("query", ALL_PART3_SAMPLES)
 async def test_handle_query_logs_one_row_each(query: str) -> None:
     workspace_id = uuid.uuid4()
-    # High score so factoid samples succeed; low score for complex samples.
-    is_complexish = query in COMPLEX_SAMPLES
-    score = 0.2 if is_complexish else 0.95
+    score = 0.2 if query in COMPLEX_SAMPLES else 0.95
     hybrid = AsyncMock()
     hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, score))
     orch, obs, _, _ = _build_orchestrator(hybrid=hybrid)
@@ -752,9 +619,10 @@ async def test_handle_query_logs_one_row_each(query: str) -> None:
             message_id=message_id,
         )
 
+    assert result.route_type == RouteType.complex
     assert len(obs.query_logs) == 1
     assert len(obs.generations) == 0
-    assert obs.query_logs[0]["route_type"] == result.route_type
+    assert obs.query_logs[0]["route_type"] == RouteType.complex
     assert obs.query_logs[0]["llm_calls_count"] == 0
     assert obs.query_logs[0]["message_id"] == message_id
     assert result.query_log_id == obs.query_logs[0]["id"]
@@ -762,64 +630,33 @@ async def test_handle_query_logs_one_row_each(query: str) -> None:
     assert result.llm_calls_count == 0
 
 
-@pytest.mark.asyncio
-async def test_cache_hit_logging_included() -> None:
-    workspace_id = uuid.uuid4()
-    query = "Cached factoid question?"
-    cache_repo = FakeCacheRepo()
-    cache_repo.add(_make_cache(workspace_id=workspace_id, query_text=query))
-    orch, obs, hybrid, _ = _build_orchestrator(cache_repo=cache_repo)
-    result = await orch.handle_query(
-        workspace_id, uuid.uuid4(), query, message_id=uuid.uuid4()
-    )
-    assert result.route_type == RouteType.cache_hit
-    assert len(obs.query_logs) == 1
-    assert len(obs.generations) == 0
-    assert obs.query_logs[0]["cache_id"] == result.cache_id
-    assert result.message_generation_id is None
-    hybrid.retrieve.assert_not_awaited()
-
-
 # ---------------------------------------------------------------------------
-# No LLM across orchestrator paths
+# No LLM across orchestrator paths (all → complex; no cache check)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_no_llm_on_metadata_factoid_cache_complex() -> None:
+async def test_no_llm_on_direct_complex_paths() -> None:
     workspace_id = uuid.uuid4()
     cases = [
-        ("Có bao nhiêu tài liệu?", RouteType.metadata, 0.95),
-        ("What is RAG?", RouteType.factoid, 0.95),
-        (
-            "Analyze multi-hop relationships between entities and summarize risks",
-            RouteType.complex,
-            0.1,
-        ),
+        "Có bao nhiêu tài liệu?",
+        "What is RAG?",
+        "Analyze multi-hop relationships between entities and summarize risks",
     ]
     with patch(
         "app.adapters.anthropic_client.extract_structured_json",
         MagicMock(side_effect=AssertionError("LLM must not be called")),
     ) as llm_spy:
-        for query, expected, score in cases:
+        for query in cases:
             hybrid = AsyncMock()
-            hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, score))
+            hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.5))
             orch, _, _, _ = _build_orchestrator(hybrid=hybrid)
             result = await orch.handle_query(
                 workspace_id, uuid.uuid4(), query, message_id=uuid.uuid4()
             )
-            assert result.route_type == expected
-        # cache hit
-        cache_repo = FakeCacheRepo()
-        q = "unique cached query xyz"
-        cache_repo.add(_make_cache(workspace_id=workspace_id, query_text=q))
-        orch, _, _, _ = _build_orchestrator(cache_repo=cache_repo)
-        result = await orch.handle_query(
-            workspace_id, uuid.uuid4(), q, message_id=uuid.uuid4()
-        )
-        assert result.route_type == RouteType.cache_hit
+            assert result.route_type == RouteType.complex
+            assert result.cache_id is None
         llm_spy.assert_not_called()
-
 
 @pytest.mark.asyncio
 async def test_citation_ref_dataclass() -> None:

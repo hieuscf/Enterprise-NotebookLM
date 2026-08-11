@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     openai_api_base: str = "https://api.openai.com/v1"
     openai_chat_model: str = "gpt-5"
     openai_chat_strong_model: str | None = None  # defaults to openai_chat_model
+    # gpt-5 / o-series are reasoning models: at the API default ("medium")
+    # effort, hidden reasoning tokens can consume the entire completion
+    # budget and return an EMPTY message with finish_reason="length" (see
+    # app.adapters.openai_chat). These structured extraction calls (answer +
+    # rewrite) do not need deep reasoning, so default to "minimal" — override
+    # via OPENAI_REASONING_EFFORT if a future model requires a different tier.
+    openai_reasoning_effort: str = "minimal"
     # Reserved for later Gemini adapter (not used until provider=gemini is implemented).
     google_api_key: str | None = None
     gemini_chat_model: str = "gemini-2.5-pro"
@@ -160,6 +167,16 @@ class Settings(BaseSettings):
     reranker_backend: Literal["heuristic", "cross_encoder"] = "heuristic"
     reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+    # FR4/FR3 — Context Assembly (0 LLM; RAG answer-quality P1). Bounded
+    # contextual expansion + grouping BEFORE Prompt Construction — see
+    # app/services/chat/context_assembly.py. Never blindly include whole docs.
+    context_assembly_enabled: bool = True
+    context_neighbor_window: int = 1
+    context_max_neighbor_seeds: int = 8
+    context_max_chunks: int = 24
+    context_coverage_min_sections: int = 3
+    context_coverage_max_chunks: int = 5
+
     # FR14 — Confidence Engine (0 LLM). Tunables for post-rerank complex-route gate.
     # Consumed by app.services.retrieval.confidence_engine.build_confidence_config.
     confidence_relevance_threshold: float = 0.65
@@ -177,7 +194,11 @@ class Settings(BaseSettings):
 
     # FR14 — Rewrite Agent (Haiku-tier only; never Sonnet for rewrite).
     rewrite_agent_model: str = "claude-3-5-haiku-latest"
-    rewrite_agent_max_tokens: int = 256
+    # 512 (not 256): with a reasoning-tier model (OpenAI provider) even
+    # "minimal" reasoning_effort can use a small non-zero token budget before
+    # the visible {"rewritten_query": ...} JSON — 256 left ~0 room and caused
+    # empty completions (see openai_reasoning_effort docstring above).
+    rewrite_agent_max_tokens: int = 512
     rewrite_agent_timeout_seconds: float = 30.0
 
     # FR14 — Graph Agent Neo4j expansion depth (1–2 only).

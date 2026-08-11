@@ -61,6 +61,11 @@ from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 
 def _settings(**overrides: Any) -> Settings:
     base = {
+        # Pin provider explicitly — Settings() also reads the local dev .env
+        # (env_file=(".env", "../.env")); without this, a machine with
+        # CHAT_LLM_PROVIDER=openai in .env silently breaks these
+        # anthropic-tiering assertions below.
+        "chat_llm_provider": "anthropic",
         "anthropic_api_key": "test-key",
         "chat_answer_light_model": "claude-3-5-haiku-latest",
         "chat_answer_strong_model": "claude-sonnet-mock",
@@ -317,6 +322,7 @@ async def test_case1_high_confidence_json_path() -> None:
 
     svc = MessageProcessingService(
         settings=_settings(),
+        session=AsyncMock(),  # type: ignore[arg-type]
         sessions=sessions,  # type: ignore[arg-type]
         messages=messages,  # type: ignore[arg-type]
         citations=FakeCitations(),  # type: ignore[arg-type]
@@ -340,6 +346,53 @@ async def test_case1_high_confidence_json_path() -> None:
     assert messages.rows[0].role is MessageRole.user
     assert messages.rows[1].content == "High conf answer"
     assert sessions.touches
+
+
+@pytest.mark.asyncio
+async def test_pipeline_failure_never_leaves_empty_assistant_content() -> None:
+    """A crashing/timing-out handle_query must not leave a permanent empty
+    assistant row — reloading chat history should show an error text, never
+    the frontend's "Không có nội dung trả lời." ghost bubble."""
+    from app.services.chat.session_service import ChatServiceError
+
+    ws, user = uuid.uuid4(), uuid.uuid4()
+    session = _session(user, ws)
+    sessions = FakeSessions(session)
+    messages = FakeMessages()
+    commit_calls = 0
+
+    class FakeSession:
+        async def commit(self) -> None:
+            nonlocal commit_calls
+            commit_calls += 1
+
+    class FailingOrch:
+        async def handle_query(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("pipeline timed out")
+
+    svc = MessageProcessingService(
+        settings=_settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        sessions=sessions,  # type: ignore[arg-type]
+        messages=messages,  # type: ignore[arg-type]
+        citations=FakeCitations(),  # type: ignore[arg-type]
+        retrieval_records=FakeRetrievalRecords(),  # type: ignore[arg-type]
+        observability=FakeObservability(),  # type: ignore[arg-type]
+        orchestrator=FailingOrch(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ChatServiceError):
+        await svc.generate_answer(
+            workspace_id=ws,
+            session_id=session.id,
+            user_id=user,
+            content="Explain the policy",
+        )
+
+    assistant_row = messages.rows[1]
+    assert assistant_row.role is MessageRole.assistant
+    assert assistant_row.content.strip() != ""
+    assert commit_calls == 1
 
 
 @pytest.mark.asyncio
@@ -388,6 +441,7 @@ async def test_case2_low_confidence_uses_latest_pass_only() -> None:
 
     svc = MessageProcessingService(
         settings=_settings(),
+        session=AsyncMock(),  # type: ignore[arg-type]
         sessions=FakeSessions(session),  # type: ignore[arg-type]
         messages=messages,  # type: ignore[arg-type]
         citations=citations,  # type: ignore[arg-type]
@@ -455,6 +509,7 @@ async def test_case3_and_4_api_json_and_sse(monkeypatch: pytest.MonkeyPatch) -> 
             # Reuse real chunking via MessageProcessingService.stream after generate
             real = MessageProcessingService(
                 settings=_settings(chat_sse_token_chunk_chars=5),
+                session=AsyncMock(),
                 sessions=AsyncMock(),
                 messages=AsyncMock(),
                 citations=AsyncMock(),
