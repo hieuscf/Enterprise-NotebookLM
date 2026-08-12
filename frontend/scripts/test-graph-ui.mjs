@@ -106,6 +106,38 @@ assert(!hop1.nodeIds.has("e"), "depth 1 should not reach concept via a only as f
 const hop2 = computeNeighborhood(edges, "b", 2);
 assert(hop2.nodeIds.has("e"), "depth 2 reaches concept through topic a");
 
+function resolveVisibleGraph(nodes, edges, opts) {
+  const { selectedNodeId, depth, expandedIds } = opts;
+  if (selectedNodeId) {
+    const nb = computeNeighborhood(edges, selectedNodeId, depth);
+    const visNodes = nodes.filter((n) => nb.nodeIds.has(n.id));
+    const ids = new Set(visNodes.map((n) => n.id));
+    const visEdges = edges.filter((e) => ids.has(e.source) && ids.has(e.target));
+    return { nodes: visNodes, edges: visEdges };
+  }
+  if (nodes.length <= 28 && expandedIds.size === 0) return { nodes, edges };
+  const keep = new Set(nodes.filter((n) => n.type === "topic").map((n) => n.id));
+  for (const id of expandedIds) {
+    keep.add(id);
+    const nb = computeNeighborhood(edges, id, 1);
+    for (const nid of nb.nodeIds) keep.add(nid);
+  }
+  const visNodes = nodes.filter((n) => keep.has(n.id));
+  const ids = new Set(visNodes.map((n) => n.id));
+  return {
+    nodes: visNodes,
+    edges: edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+  };
+}
+
+const depthScoped = resolveVisibleGraph(nodes, edges, {
+  selectedNodeId: "b",
+  depth: 1,
+  expandedIds: new Set(),
+});
+assert(depthScoped.nodes.every((n) => ["a", "b", "c", "d"].includes(n.id)), "depth scopes display");
+assert(!depthScoped.nodes.some((n) => n.id === "e"), "depth 1 hides distant concept");
+
 const filtered = filterGraphPayload(
   { nodes, edges },
   {

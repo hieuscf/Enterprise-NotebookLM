@@ -337,6 +337,18 @@ mark.highlight-citation {
 
 .knowledge-graph-canvas .react-flow__node {
   transition: opacity 200ms ease, transform 200ms ease;
+  animation: kg-node-enter 320ms ease-out both;
+}
+
+@keyframes kg-node-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .knowledge-graph-canvas .react-flow__edge-path {
@@ -351,5 +363,19 @@ mark.highlight-citation {
   .knowledge-graph-canvas .react-flow__node,
   .knowledge-graph-canvas .react-flow__edge-path {
     transition: none;
+    animation: none;
   }
+}
+
+/* Settings — interface density hooks (data-density on <html>) */
+html[data-density="comfortable"] {
+  --settings-row-py: 0.875rem;
+}
+
+html[data-density="standard"] {
+  --settings-row-py: 0.75rem;
+}
+
+html[data-density="compact"] {
+  --settings-row-py: 0.5rem;
 }

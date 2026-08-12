@@ -207,6 +207,7 @@ function GraphCanvasInner(
         fitViewOptions={{ padding: 0.22 }}
         minZoom={0.25}
         maxZoom={1.75}
+        onlyRenderVisibleElements
         selectionMode={SelectionMode.Partial}
         multiSelectionKeyCode="Shift"
         proOptions={{ hideAttribution: true }}

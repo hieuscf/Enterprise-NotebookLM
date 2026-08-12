@@ -18,9 +18,9 @@
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
  *   "search", "graph", "chat", "summaries", "extractions", "comparisons",
- *   "reports" (when a workspaceId is in context) and "admin" (entry into the
- *   dedicated Admin Console at /admin) are real routes today. Everything else
- *   must stay visibly disabled — never link to a page that 404s.
+ *   "reports", "settings" (when a workspaceId is in context) and "admin"
+ *   (entry into the dedicated Admin Console at /admin) are real routes today.
+ *   Everything else must stay visibly disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -66,6 +66,7 @@ export type SidebarActiveKey =
   | "extractions"
   | "comparisons"
   | "reports"
+  | "settings"
   | "admin";
 
 type NavItem = {
@@ -86,7 +87,8 @@ type NavItem = {
     | "summaries"
     | "extractions"
     | "comparisons"
-    | "reports";
+    | "reports"
+    | "settings";
 };
 
 type NavGroup = {
@@ -125,7 +127,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
       {
         key: "graph",
-        label: "Knowledge Graph",
+        label: "Đồ thị tri thức",
         icon: Network,
         contextual: "graph",
         badge: "Chọn workspace",
@@ -194,7 +196,13 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Shield,
         href: "/admin",
       },
-      { label: "Cài đặt", icon: Settings, badge: "Sắp có" },
+      {
+        key: "settings",
+        label: "Cài đặt",
+        icon: Settings,
+        contextual: "settings",
+        badge: "Chọn workspace",
+      },
     ],
   },
 ];
@@ -224,6 +232,8 @@ function resolveContextualHref(
       return `/workspaces/${workspaceId}/comparisons`;
     case "reports":
       return `/workspaces/${workspaceId}/reports`;
+    case "settings":
+      return `/workspaces/${workspaceId}/settings/general`;
     default:
       return undefined;
   }

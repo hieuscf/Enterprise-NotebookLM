@@ -16,8 +16,9 @@
  * Database/Table: N/A
  * Related Modules: app/page.tsx, features/workspaces/WorkspaceListView,
  *   features/workspaces/WorkspaceDetailView, features/workspaces/WorkspaceMembersView
- * Important Notes: Search & notifications are visual placeholders only —
- *   no backend endpoint exists for them yet (Phase 1.3 scope is Workspaces).
+ * Important Notes: Search is live when workspaceId is set. Notifications remain
+ *   a visual placeholder until a notifications API exists. Settings live under
+ *   /workspaces/[id]/settings/*.
  * =============================================================================
  */
 

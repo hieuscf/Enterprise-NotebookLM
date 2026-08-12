@@ -36,9 +36,11 @@ import { GraphFilters } from "@/features/graph/GraphFilters";
 import { GraphSearch } from "@/features/graph/GraphSearch";
 import { GraphStatusBar } from "@/features/graph/GraphStatusBar";
 import { fetchKnowledgeGraph } from "@/features/graph/graph.api";
+import { relationLabel } from "@/features/graph/graph-style";
 import {
   computeNeighborhood,
   filterGraphPayload,
+  resolveVisibleGraph,
   searchGraphNodes,
 } from "@/features/graph/graph-selection";
 import { layoutKnowledgeGraph } from "@/features/graph/layout/hierarchicalLayout";
@@ -126,6 +128,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
   const [flowEdges, setFlowEdges] = useState<KnowledgeFlowEdge[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
 
   const reload = useCallback(() => {
     setLoadState({ status: "loading" });
@@ -161,6 +164,16 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     return filterGraphPayload(payload, filters);
   }, [payload, filters]);
 
+  const visible = useMemo(
+    () =>
+      resolveVisibleGraph(filtered.nodes, filtered.edges, {
+        selectedNodeId,
+        depth: filters.depth,
+        expandedIds,
+      }),
+    [filtered.nodes, filtered.edges, selectedNodeId, filters.depth, expandedIds],
+  );
+
   const nodesById = useMemo(() => {
     const map = new Map<string, KnowledgeGraphNode>();
     for (const n of filtered.nodes) map.set(n.id, n);
@@ -177,7 +190,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     [query, searchResults],
   );
 
-  // Layout when filtered set / seed changes (preserve drag positions otherwise)
+  // Layout when visible set / seed changes (preserve drag positions otherwise)
   useEffect(() => {
     if (!payload) {
       setFlowNodes([]);
@@ -185,11 +198,11 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
       return;
     }
     const neighborhood = computeNeighborhood(
-      filtered.edges,
+      visible.edges,
       selectedNodeId,
       filters.depth,
     );
-    const positioned = layoutKnowledgeGraph(filtered.nodes, filtered.edges);
+    const positioned = layoutKnowledgeGraph(visible.nodes, visible.edges);
     setFlowNodes(
       positioned.map((n) => ({
         id: n.id,
@@ -206,7 +219,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
       })),
     );
     setFlowEdges(
-      filtered.edges.map((e) => ({
+      visible.edges.map((e) => ({
         id: e.id,
         source: e.source,
         target: e.target,
@@ -227,12 +240,12 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     );
     // Intentionally omit selection from deps for layout — handled below
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [payload, filtered.nodes, filtered.edges, layoutSeed]);
+  }, [payload, visible.nodes, visible.edges, layoutSeed]);
 
   // Update emphasis / selection without recomputing layout
   useEffect(() => {
     const neighborhood = computeNeighborhood(
-      filtered.edges,
+      visible.edges,
       selectedNodeId,
       filters.depth,
     );
@@ -253,7 +266,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     );
     setFlowEdges((prev) =>
       prev.map((e) => {
-        const src = filtered.edges.find((x) => x.id === e.id);
+        const src = visible.edges.find((x) => x.id === e.id);
         if (!src) return e;
         return {
           ...e,
@@ -276,7 +289,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     selectedEdgeId,
     matchIds,
     filters.depth,
-    filtered.edges,
+    visible.edges,
   ]);
 
   const selectedNode = selectedNodeId
@@ -291,7 +304,7 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     if (selectedEdge) {
       const s = nodesById.get(selectedEdge.source)?.label ?? selectedEdge.source;
       const t = nodesById.get(selectedEdge.target)?.label ?? selectedEdge.target;
-      return `${s} → ${selectedEdge.relation} → ${t}`;
+      return `${s} → ${relationLabel(selectedEdge.relation)} → ${t}`;
     }
     return null;
   }, [selectedNode, selectedEdge, nodesById]);
@@ -315,6 +328,23 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
     selectNode(nodeId);
     requestAnimationFrame(() => canvasRef.current?.centerNode(nodeId));
   }, [selectNode]);
+
+  const expandNode = useCallback((nodeId: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.add(nodeId);
+      return next;
+    });
+    selectNode(nodeId);
+    requestAnimationFrame(() => canvasRef.current?.centerNode(nodeId));
+  }, [selectNode]);
+
+  const collapseCluster = useCallback(() => {
+    setExpandedIds(new Set());
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setLayoutSeed((s) => s + 1);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -450,8 +480,11 @@ export function KnowledgeGraphView({ workspaceId }: Props) {
                 onEdgesChange={setFlowEdges}
                 onSelectNode={selectNode}
                 onSelectEdge={selectEdge}
-                onNodeDoubleClick={centerOnNode}
-                onResetLayout={() => setLayoutSeed((s) => s + 1)}
+                onNodeDoubleClick={expandNode}
+                onResetLayout={() => {
+                  collapseCluster();
+                  setLayoutSeed((s) => s + 1);
+                }}
                 showLabels={showLabels}
                 showRelations={showRelations}
                 onToggleLabels={() => setShowLabels((v) => !v)}

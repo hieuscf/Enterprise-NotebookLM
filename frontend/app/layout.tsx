@@ -23,6 +23,8 @@
 import type { Metadata } from "next";
 import { Be_Vietnam_Pro, Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 
+import { ThemeBootstrap } from "@/features/settings/ThemeBootstrap";
+
 import "./globals.css";
 
 const geistSans = Geist({
@@ -64,6 +66,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${beVietnam.variable} ${sourceSerif.variable} min-h-screen bg-base font-sans text-primary antialiased`}
         suppressHydrationWarning
       >
+        <ThemeBootstrap />
         {children}
       </body>
     </html>

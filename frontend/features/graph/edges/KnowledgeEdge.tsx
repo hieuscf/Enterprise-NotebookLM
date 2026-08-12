@@ -7,13 +7,14 @@
  * Responsibilities:
  *   - Smooth Bézier path with low default weight
  *   - Emphasize selected / path edges; fade unrelated
+ *   - Show relation label on hover / path / explicit toggle
  * Dependencies:
  *   - @xyflow/react, graph-style
  * Public Exports:
  *   - KnowledgeEdge, KnowledgeEdgeData
  * Database/Table: N/A
  * Related Modules: features/graph/GraphCanvas.tsx
- * Important Notes: Labels appear only when edge is selected or hovered.
+ * Important Notes: Labels appear only when useful — not on every edge by default.
  * =============================================================================
  */
 
@@ -26,6 +27,7 @@ import {
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
+import { useState } from "react";
 
 import { relationLabel } from "@/features/graph/graph-style";
 import { cn } from "@/lib/utils";
@@ -49,7 +51,9 @@ export function KnowledgeEdge({
   data,
   selected,
   markerEnd,
+  interactionWidth = 20,
 }: EdgeProps<KnowledgeFlowEdge>) {
+  const [hovered, setHovered] = useState(false);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -62,22 +66,35 @@ export function KnowledgeEdge({
   const emphasis = data?.emphasis ?? "default";
   const isPath = selected || emphasis === "path" || emphasis === "selected";
   const isDimmed = emphasis === "dimmed";
-  const showLabel = Boolean(data?.showLabel) || isPath;
+  const showLabel =
+    Boolean(data?.showLabel) || isPath || (hovered && !isDimmed);
 
   return (
     <>
+      {/* Wider invisible hit area for hover / click */}
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={interactionWidth}
+        className="react-flow__edge-interaction"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
       <BaseEdge
         id={id}
         path={edgePath}
         markerEnd={markerEnd}
         style={{
-          stroke: isPath
+          stroke: isPath || hovered
             ? "var(--accent-secondary)"
             : "var(--border-strong)",
-          strokeWidth: isPath ? 1.75 : 1,
+          strokeWidth: isPath || hovered ? 1.75 : 1,
           strokeDasharray: isPath ? "5 4" : undefined,
-          opacity: isDimmed ? 0.18 : isPath ? 1 : 0.55,
-          transition: "stroke 180ms ease, opacity 180ms ease, stroke-width 180ms ease",
+          opacity: isDimmed ? 0.18 : isPath || hovered ? 1 : 0.55,
+          transition:
+            "stroke 180ms ease, opacity 180ms ease, stroke-width 180ms ease",
+          pointerEvents: "none",
         }}
       />
       {showLabel && data?.relation ? (
