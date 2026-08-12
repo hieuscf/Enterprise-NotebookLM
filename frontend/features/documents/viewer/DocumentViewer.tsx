@@ -26,6 +26,7 @@ import {
   PDFViewer,
   type PDFViewerHandle,
 } from "@/features/documents/viewer/PDFViewer";
+import { SnippetNavigator } from "@/features/documents/viewer/SnippetNavigator";
 import { ViewerToolbar } from "@/features/documents/viewer/ViewerToolbar";
 import {
   ApiClientError,
@@ -41,7 +42,11 @@ type Props = {
   documentId: string;
   focusChunkId: string | null;
   focusPage: number | null;
+  /** Chat citation focus — resolve via text_snippet when no chunk id. */
+  focusCitationId?: string | null;
+  focusSnippet?: string | null;
   onMissingChunk?: () => void;
+  onHighlightFailed?: () => void;
 };
 
 type TocNode = { key: string; label: string; page?: number | null; children?: TocNode[] };
@@ -51,7 +56,10 @@ export function DocumentViewer({
   documentId,
   focusChunkId,
   focusPage,
+  focusCitationId = null,
+  focusSnippet = null,
   onMissingChunk,
+  onHighlightFailed,
 }: Props) {
   const router = useRouter();
   const pdfRef = useRef<PDFViewerHandle | null>(null);
@@ -64,6 +72,9 @@ export function DocumentViewer({
   const [rotation, setRotation] = useState(0);
   const [activeChunkId, setActiveChunkId] = useState<string | null>(focusChunkId);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [citationSnippetPreview, setCitationSnippetPreview] = useState<string | null>(
+    focusSnippet,
+  );
 
   const contentUrl = useMemo(
     () => documentContentUrl(workspaceId, documentId),
@@ -89,9 +100,20 @@ export function DocumentViewer({
   }, [focusChunkId]);
 
   useEffect(() => {
+    setCitationSnippetPreview(focusSnippet);
+  }, [focusSnippet]);
+
+  useEffect(() => {
     setPdfReady(false);
     setPdfError(null);
   }, [contentUrl]);
+
+  // Page-only deep link (no chunk / citation snippet).
+  useEffect(() => {
+    if (focusChunkId || focusCitationId || focusSnippet) return;
+    if (!pdfReady || !focusPage || focusPage <= 0) return;
+    pdfRef.current?.jumpToPage(focusPage);
+  }, [focusChunkId, focusCitationId, focusSnippet, focusPage, pdfReady]);
 
   // Poll chunk meta until preview is terminal (pending/processing → wait).
   useEffect(() => {
@@ -294,6 +316,24 @@ export function DocumentViewer({
                 onMissing={handleMissing}
                 onLocated={handleLocated}
               />
+              <SnippetNavigator
+                enabled={Boolean(focusCitationId || focusSnippet) && !focusChunkId}
+                snippet={focusSnippet}
+                pageHint={focusPage}
+                chunks={meta?.items ?? []}
+                pdfRef={pdfRef}
+                ready={metaReady && pdfReady}
+                onLocated={(chunk, matched) => {
+                  if (chunk) {
+                    setActiveChunkId(chunk.id);
+                    handleLocated(chunk);
+                  }
+                  if (!matched) {
+                    setCitationSnippetPreview(focusSnippet);
+                  }
+                }}
+                onHighlightFailed={onHighlightFailed}
+              />
             </>
           ) : (
             <div className="rounded-lg border border-dashed border-border-default px-6 py-10 text-center">
@@ -327,7 +367,13 @@ export function DocumentViewer({
                     chunkId: activeChunk.id,
                     textSnippet: activeChunk.content,
                   }
-                : null
+                : citationSnippetPreview
+                  ? {
+                      chunkId: focusCitationId || "citation",
+                      textSnippet: citationSnippetPreview,
+                      documentTitle: meta?.document_title,
+                    }
+                  : null
           }
           matchIndex={matchIndex >= 0 ? matchIndex : 0}
           matchCount={matches.length}

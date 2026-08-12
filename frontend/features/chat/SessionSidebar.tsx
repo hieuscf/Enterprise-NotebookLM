@@ -3,30 +3,36 @@
  * File: SessionSidebar.tsx
  * Module/Service: Chat Service (Web App)
  * Layer: UI
- * Purpose: Chat session list — title, updated time, New Chat, mobile drawer.
+ * Purpose: Collapsible chat session list grouped by day (Research Workspace).
  * Responsibilities:
- *   - Render sessions in the exact order the backend returns them (never
- *     re-sorted client-side — updated_at DESC is already applied server-side)
- *   - Highlight the active session; "New Chat" creates + selects a session
- *   - Off-canvas drawer on mobile, static column on desktop (mirrors the
- *     app-level Sidebar's fixed/translate-x pattern — no new dependency)
+ *   - New Chat; Hôm nay / Hôm qua sections; active state; collapse to icons
+ *   - Off-canvas drawer on mobile
  * Dependencies:
- *   - lucide-react, lib/utils, features/chat/chat-format
+ *   - lucide-react, chat-format
  * Public Exports:
  *   - SessionSidebar
  * Database/Table: N/A
- * Related Modules: features/chat/ChatLayout, hooks/useChatSessions
- * Important Notes: No "last message preview" — OpenAPI ChatSession does not
- *   expose last_message_preview/message_count (see session_service.py TODO);
- *   showing title + relative updated time only keeps the contract untouched.
+ * Related Modules: features/chat/ChatLayout
+ * Important Notes: No last-message preview — not in OpenAPI ChatSession.
  * =============================================================================
  */
 
 "use client";
 
-import { Loader2, MessageSquarePlus, X } from "lucide-react";
+import {
+  Loader2,
+  MessageSquare,
+  MessageSquarePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
+} from "lucide-react";
 
-import { formatRelativeTime, sessionTitleLabel } from "@/features/chat/chat-format";
+import {
+  formatRelativeTime,
+  groupSessionsByDay,
+  sessionTitleLabel,
+} from "@/features/chat/chat-format";
 import { cn } from "@/lib/utils";
 import type { ChatSession } from "@/types/chat";
 
@@ -36,6 +42,8 @@ type Props = {
   error: string | null;
   activeSessionId: string | null;
   creating: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onSelectSession: (sessionId: string) => void;
   onNewChat: () => void;
   mobileOpen: boolean;
@@ -48,11 +56,15 @@ export function SessionSidebar({
   error,
   activeSessionId,
   creating,
+  collapsed,
+  onToggleCollapsed,
   onSelectSession,
   onNewChat,
   mobileOpen,
   onClose,
 }: Props) {
+  const groups = groupSessionsByDay(sessions);
+
   return (
     <>
       {mobileOpen ? (
@@ -66,25 +78,41 @@ export function SessionSidebar({
       <aside
         aria-label="Danh sách phiên chat"
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 flex-col border-r border-border-default bg-surface",
-          "transition-transform duration-200 lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col border-r border-border-default bg-surface",
+          "transition-[width,transform] duration-200 lg:static lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
+          collapsed ? "lg:w-14" : "w-[min(100%,17.5rem)] lg:w-[17.5rem]",
+          "w-[min(100%,17.5rem)]",
         )}
       >
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border-default p-3">
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-2 border-b border-border-default p-2.5",
+            collapsed && "lg:flex-col",
+          )}
+        >
           <button
             type="button"
             onClick={onNewChat}
             disabled={creating}
-            className="flex flex-1 items-center gap-2 rounded-md bg-accent-primary px-3 py-2 text-body-sm font-medium text-white transition-colors hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+            title="Chat mới"
+            aria-label="Chat mới"
+            className={cn(
+              "inline-flex items-center justify-center gap-2 rounded-md bg-accent-primary text-white",
+              "transition-colors hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:opacity-60",
+              collapsed
+                ? "h-9 w-9 lg:w-9"
+                : "h-9 flex-1 px-3 text-body-sm font-medium",
+            )}
           >
             {creating ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             ) : (
               <MessageSquarePlus className="h-4 w-4" aria-hidden />
             )}
-            Chat mới
+            {!collapsed ? <span className="lg:inline">Chat mới</span> : null}
           </button>
+
           <button
             type="button"
             onClick={onClose}
@@ -93,49 +121,97 @@ export function SessionSidebar({
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
+
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Mở rộng sidebar chat" : "Thu gọn sidebar chat"}
+            className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-md text-secondary hover:bg-elevated lg:flex"
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4" aria-hidden />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" aria-hidden />
+            )}
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto p-2" aria-label="Phiên chat">
           {loading ? (
-            <div className="flex flex-col gap-2 p-2" aria-busy aria-label="Đang tải phiên chat">
+            <div className="flex flex-col gap-2 p-1" aria-busy aria-label="Đang tải phiên chat">
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-14 animate-pulse rounded-md bg-elevated/60" />
+                <div key={i} className="h-11 animate-pulse rounded-md bg-elevated/60" />
               ))}
             </div>
           ) : error ? (
-            <p className="p-3 text-body-sm text-danger">{error}</p>
+            <p className={cn("p-2 text-body-sm text-danger", collapsed && "lg:hidden")}>{error}</p>
           ) : sessions.length === 0 ? (
-            <p className="p-3 text-body-sm text-tertiary">Chưa có cuộc trò chuyện nào.</p>
-          ) : (
-            <ul className="flex flex-col gap-1">
+            <p className={cn("p-2 text-body-sm text-tertiary", collapsed && "lg:hidden")}>
+              Chưa có cuộc trò chuyện nào.
+            </p>
+          ) : collapsed ? (
+            <ul className="hidden flex-col gap-1 lg:flex">
               {sessions.map((session) => {
                 const isActive = session.id === activeSessionId;
                 return (
                   <li key={session.id}>
                     <button
                       type="button"
-                      onClick={() => {
-                        onSelectSession(session.id);
-                        onClose();
-                      }}
+                      title={sessionTitleLabel(session)}
+                      aria-label={sessionTitleLabel(session)}
+                      onClick={() => onSelectSession(session.id)}
                       className={cn(
-                        "flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors",
+                        "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
                         isActive
                           ? "bg-accent-primary-soft text-accent-primary"
                           : "text-secondary hover:bg-elevated hover:text-primary",
                       )}
                     >
-                      <span className="truncate text-body-sm font-medium">
-                        {sessionTitleLabel(session)}
-                      </span>
-                      <span className="text-caption text-tertiary">
-                        {formatRelativeTime(session.updated_at)}
-                      </span>
+                      <MessageSquare className="h-4 w-4" aria-hidden />
                     </button>
                   </li>
                 );
               })}
             </ul>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {groups.map((group) => (
+                <div key={group.key}>
+                  <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-tertiary">
+                    {group.label}
+                  </p>
+                  <ul className="flex flex-col gap-0.5">
+                    {group.sessions.map((session) => {
+                      const isActive = session.id === activeSessionId;
+                      return (
+                        <li key={session.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onSelectSession(session.id);
+                              onClose();
+                            }}
+                            className={cn(
+                              "flex w-full flex-col gap-0.5 rounded-md px-2.5 py-2 text-left transition-colors",
+                              isActive
+                                ? "bg-accent-primary-soft text-accent-primary"
+                                : "text-secondary hover:bg-elevated hover:text-primary",
+                            )}
+                          >
+                            <span className="truncate text-body-sm font-medium">
+                              {sessionTitleLabel(session)}
+                            </span>
+                            <span className="text-caption text-tertiary">
+                              {formatRelativeTime(session.updated_at)}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
           )}
         </nav>
       </aside>

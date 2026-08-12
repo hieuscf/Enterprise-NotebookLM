@@ -7,14 +7,15 @@
  * Responsibilities:
  *   - Relative "updated_at" label for the session sidebar
  *   - Session title fallback when title is NULL (contract has no preview)
- *   - Document deep-link for a Chat citation (document-level only — Chat's
- *     Citation schema carries no chunk_id/location, unlike Search results)
+ *   - Document deep-link for a Chat citation (page + citation focus when known)
+ *   - Conversation date grouping labels
  * Dependencies:
  *   - types/chat, types/citations
  * Public Exports:
  *   - formatRelativeTime, sessionTitleLabel, buildChatCitationHref
+ *   - citationDisplayIndex, stripLeakedCitationUuids, conversationDayLabel
  * Database/Table: N/A
- * Related Modules: features/chat/SessionSidebar, CitationSection
+ * Related Modules: features/chat/SessionSidebar, CitationChip, SourcePanel
  * Important Notes: Kept dependency-free and pure so scripts/test-chat-ui.mjs
  *   can re-implement/exercise the same logic without a bundler.
  * =============================================================================
@@ -47,16 +48,30 @@ export function sessionTitleLabel(session: Pick<ChatSession, "title">): string {
   return trimmed || "Cuộc trò chuyện mới";
 }
 
+export type ChatCitationHrefInput = Pick<Citation, "document_id"> & {
+  page?: number | null;
+  citationId?: string | null;
+};
+
 /**
- * Chat's Citation has no chunk_id/location (unlike Search results), so we can
- * only deep-link to the document itself, not a specific page/chunk.
+ * Deep-link to the document viewer. Optional page + citation id enable
+ * highlight via sessionStorage payload (see citation-session.ts).
  */
 export function buildChatCitationHref(
   workspaceId: string,
-  citation: Pick<Citation, "document_id">,
+  citation: ChatCitationHrefInput,
 ): string | null {
   if (!citation.document_id) return null;
-  return `/workspaces/${workspaceId}/documents/${citation.document_id}`;
+  const params = new URLSearchParams();
+  if (citation.page != null && citation.page > 0) {
+    params.set("page", String(citation.page));
+  }
+  if (citation.citationId) {
+    params.set("citation", citation.citationId);
+  }
+  const qs = params.toString();
+  const base = `/workspaces/${workspaceId}/documents/${citation.document_id}`;
+  return qs ? `${base}?${qs}` : base;
 }
 
 /** 1-based presentation index from order_index (stable across sorts). */
@@ -73,4 +88,61 @@ export function stripLeakedCitationUuids(content: string): string {
     /\[\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*\]/g,
     "",
   );
+}
+
+/** Local calendar day key YYYY-MM-DD for grouping sessions. */
+export function conversationDayKey(isoDate: string, now = new Date()): string {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return "unknown";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  void now;
+  return `${y}-${m}-${day}`;
+}
+
+export function conversationDayLabel(isoDate: string, now = new Date()): string {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return "Trước đây";
+
+  const startOf = (date: Date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.round((startOf(now) - startOf(d)) / dayMs);
+
+  if (diffDays === 0) return "Hôm nay";
+  if (diffDays === 1) return "Hôm qua";
+  if (diffDays < 7) return "Tuần này";
+  return d.toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+export type SessionDayGroup = {
+  key: string;
+  label: string;
+  sessions: ChatSession[];
+};
+
+/** Group sessions by local day while preserving input order within each group. */
+export function groupSessionsByDay(
+  sessions: ChatSession[],
+  now = new Date(),
+): SessionDayGroup[] {
+  const groups: SessionDayGroup[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const session of sessions) {
+    const key = conversationDayKey(session.updated_at, now);
+    const existing = indexByKey.get(key);
+    if (existing == null) {
+      indexByKey.set(key, groups.length);
+      groups.push({
+        key,
+        label: conversationDayLabel(session.updated_at, now),
+        sessions: [session],
+      });
+    } else {
+      groups[existing].sessions.push(session);
+    }
+  }
+  return groups;
 }

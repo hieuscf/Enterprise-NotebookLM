@@ -3,29 +3,38 @@
  * File: ThinkingIndicator.tsx
  * Module/Service: Chat Service (Web App)
  * Layer: UI
- * Purpose: "Đang chờ token đầu tiên" loading state (FR4 §8.A).
+ * Purpose: Lightweight stream-wait indicator before the first token (FR4 §8.A).
  * Responsibilities:
- *   - Animated dots inside an assistant-shaped skeleton bubble
- *   - Screen-reader label via aria-live (spec §15 accessibility)
+ *   - Animated dots + "AI đang trả lời…" label; aria-live for screen readers
  * Dependencies:
- *   - None
+ *   - lucide-react
  * Public Exports:
  *   - ThinkingIndicator
  * Database/Table: N/A
  * Related Modules: features/chat/ConversationPanel
- * Important Notes: Only shown before the first token arrives — once a token
- *   is received, the spinner disappears and streaming text takes over (§8.B).
+ * Important Notes: Hidden once tokens flow — AnswerContent streaming caret takes over.
  * =============================================================================
  */
 
+import { Bot } from "lucide-react";
+
 export function ThinkingIndicator() {
   return (
-    <div className="flex justify-start" aria-live="polite" aria-label="Đang soạn câu trả lời">
-      <div className="flex items-center gap-1.5 rounded-lg border border-border-default bg-surface px-4 py-3 shadow-sm">
-        <span className="sr-only">Đang soạn câu trả lời…</span>
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary [animation-delay:-0.3s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary [animation-delay:-0.15s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary" />
+    <div
+      className="flex justify-start gap-3"
+      aria-live="polite"
+      aria-label="AI đang trả lời"
+    >
+      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-primary-soft text-accent-primary">
+        <Bot className="h-3.5 w-3.5" aria-hidden />
+      </span>
+      <div className="flex items-center gap-2 py-1.5">
+        <span className="text-body-sm text-secondary">AI đang trả lời…</span>
+        <span className="flex items-center gap-1" aria-hidden>
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary [animation-delay:-0.3s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary [animation-delay:-0.15s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-tertiary" />
+        </span>
       </div>
     </div>
   );

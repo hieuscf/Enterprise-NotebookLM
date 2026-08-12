@@ -17,6 +17,7 @@
  */
 
 import { AssistantBubble } from "@/features/chat/AssistantBubble";
+import type { DocumentMetaLookup } from "@/features/chat/citation/citation-mapper";
 import { UserBubble } from "@/features/chat/UserBubble";
 import type { ChatMessage } from "@/types/chat";
 
@@ -27,6 +28,7 @@ type Props = {
   isStopped: boolean;
   canRegenerate: boolean;
   onRegenerate?: () => void;
+  docsById: Map<string, DocumentMetaLookup>;
 };
 
 export function ChatMessageItem({
@@ -36,6 +38,7 @@ export function ChatMessageItem({
   isStopped,
   canRegenerate,
   onRegenerate,
+  docsById,
 }: Props) {
   if (message.role === "user") {
     return <UserBubble message={message} />;
@@ -48,6 +51,7 @@ export function ChatMessageItem({
       isStopped={isStopped}
       canRegenerate={canRegenerate}
       onRegenerate={onRegenerate}
+      docsById={docsById}
     />
   );
 }

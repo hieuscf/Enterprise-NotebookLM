@@ -3,33 +3,33 @@
  * File: AssistantBubble.tsx
  * Module/Service: Chat Service (Web App)
  * Layer: UI
- * Purpose: Render one assistant chat message — markdown answer, agent badge,
- *          citations, and regenerate/stopped affordances (FR4 §6/§7/§11).
+ * Purpose: Assistant answer as a reading surface — inline citations + source summary.
  * Responsibilities:
- *   - Markdown-render `content` (GFM) — never raw HTML (react-markdown default
- *     AST rendering, no dangerouslySetInnerHTML, so this stays XSS-safe)
- *   - Show AgentBadge when generation.agent_triggered
- *   - Show CitationSection once citations have arrived
- *   - Show a streaming caret while this specific message is still streaming
- *   - Offer "Tạo lại câu trả lời" on the latest completed assistant message
+ *   - Map citations → view models; AnswerContent with chips; SourceSummary footer
+ *   - Copy / regenerate actions (no tokens/latency in normal mode)
  * Dependencies:
- *   - react-markdown, remark-gfm, features/chat/AgentBadge, CitationSection
+ *   - AnswerContent, SourceSummary, AgentBadge, citation-mapper
  * Public Exports:
  *   - AssistantBubble
  * Database/Table: N/A
- * Related Modules: features/chat/ChatMessageItem, hooks/useChatStream
- * Important Notes: Never renders tokens/cost/latency/confidence — those are
- *   Admin Dashboard data only (spec §18).
+ * Related Modules: ChatMessageItem, ChatCitationContext
+ * Important Notes: Never renders tokens/cost/latency/confidence — Admin only.
  * =============================================================================
  */
 
-import { RotateCcw } from "lucide-react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+"use client";
+
+import { Bot, Check, Copy, RotateCcw } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import { AgentBadge } from "@/features/chat/AgentBadge";
-import { CitationSection } from "@/features/chat/CitationSection";
-import { stripLeakedCitationUuids } from "@/features/chat/chat-format";
+import { useChatCitationUiOptional } from "@/features/chat/ChatCitationContext";
+import { AnswerContent } from "@/features/chat/citation/AnswerContent";
+import {
+  mapCitations,
+  type DocumentMetaLookup,
+} from "@/features/chat/citation/citation-mapper";
+import { SourceSummary } from "@/features/chat/citation/SourceSummary";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
@@ -40,6 +40,7 @@ type Props = {
   isStopped: boolean;
   canRegenerate: boolean;
   onRegenerate?: () => void;
+  docsById: Map<string, DocumentMetaLookup>;
 };
 
 export function AssistantBubble({
@@ -49,30 +50,50 @@ export function AssistantBubble({
   isStopped,
   canRegenerate,
   onRegenerate,
+  docsById,
 }: Props) {
-  // History rows have no status → treat as completed. Never show the empty
-  // state while pending/streaming/failed (failed uses the stream error banner).
+  const ui = useChatCitationUiOptional();
+  const [copied, setCopied] = useState(false);
+
   const status = message.status ?? "completed";
   const isEmpty = message.content.trim().length === 0;
   const showEmptyState = status === "completed" && isEmpty;
+  const citations = useMemo(
+    () => mapCitations(message.citations ?? [], docsById),
+    [message.citations, docsById],
+  );
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
 
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-lg border border-border-default bg-surface px-4 py-2.5 shadow-sm sm:max-w-[75%]">
+    <div className="flex justify-start gap-3">
+      <span
+        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-primary-soft text-accent-primary"
+        aria-hidden
+      >
+        <Bot className="h-3.5 w-3.5" />
+      </span>
+
+      <div className="min-w-0 max-w-[min(46rem,calc(100%-2.5rem))] flex-1">
         {showEmptyState ? (
           <p className="text-body-sm italic text-tertiary">Không có nội dung trả lời.</p>
         ) : (
-          <div
-            className={cn(
-              "prose-chat text-body-sm text-primary",
-              (isStreamingThis || status === "streaming" || status === "pending") &&
-                "chat-streaming-caret",
-            )}
-          >
-            <Markdown remarkPlugins={[remarkGfm]}>
-              {stripLeakedCitationUuids(message.content)}
-            </Markdown>
-          </div>
+          <AnswerContent
+            workspaceId={workspaceId}
+            content={message.content}
+            citations={citations}
+            isStreaming={
+              isStreamingThis || status === "streaming" || status === "pending"
+            }
+          />
         )}
 
         {isStopped ? (
@@ -85,17 +106,53 @@ export function AssistantBubble({
           </div>
         ) : null}
 
-        <CitationSection workspaceId={workspaceId} citations={message.citations} />
+        {!isStreamingThis && status === "completed" ? (
+          <SourceSummary citations={citations} emptyHint={!isEmpty} />
+        ) : null}
 
-        {canRegenerate && !isStreamingThis ? (
-          <button
-            type="button"
-            onClick={onRegenerate}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-caption font-medium text-secondary hover:bg-elevated hover:text-primary"
-          >
-            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-            Tạo lại câu trả lời
-          </button>
+        {!isStreamingThis && status === "completed" && !isEmpty ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-caption font-medium text-secondary hover:bg-elevated hover:text-primary"
+              aria-label="Sao chép câu trả lời"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-success" aria-hidden />
+              ) : (
+                <Copy className="h-3.5 w-3.5" aria-hidden />
+              )}
+              {copied ? "Đã sao chép" : "Copy"}
+            </button>
+
+            {canRegenerate ? (
+              <button
+                type="button"
+                onClick={onRegenerate}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-caption font-medium text-secondary hover:bg-elevated hover:text-primary"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                Tạo lại
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => {
+                ui?.setPanelCitations(citations);
+                ui?.setSourcePanelOpen(true);
+                ui?.setSourcePanelMobileOpen(true);
+              }}
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1",
+                "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",
+                "xl:hidden",
+              )}
+            >
+              Sources
+            </button>
+          </div>
         ) : null}
       </div>
     </div>

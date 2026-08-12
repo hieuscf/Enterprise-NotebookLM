@@ -36,6 +36,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { ToastStack } from "@/components/ui/toast";
+import { loadCitationFocus } from "@/features/chat/citation/citation-session";
 import { DocumentUploadDropzone } from "@/features/documents/DocumentUploadDropzone";
 import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHistory";
 import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
@@ -57,6 +58,8 @@ type Props = {
   /** Deep-link from Search (?chunk=). */
   focusChunkId?: string | null;
   focusPage?: number | null;
+  /** Deep-link from Chat citation (?citation=) — snippet loaded from sessionStorage. */
+  focusCitationId?: string | null;
 };
 
 function formatDate(iso: string): string {
@@ -72,6 +75,7 @@ export function DocumentDetailView({
   documentId,
   focusChunkId = null,
   focusPage = null,
+  focusCitationId = null,
 }: Props) {
   const { user } = useAuth();
   const { isEditor } = useWorkspaceRole(workspaceId);
@@ -80,6 +84,22 @@ export function DocumentDetailView({
   const [doc, setDoc] = useState<Document | null>(null);
   const [docError, setDocError] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(true);
+  const [focusSnippet, setFocusSnippet] = useState<string | null>(null);
+  const [resolvedPage, setResolvedPage] = useState<number | null>(focusPage);
+
+  useEffect(() => {
+    if (!focusCitationId) {
+      setFocusSnippet(null);
+      setResolvedPage(focusPage);
+      return;
+    }
+    const payload = loadCitationFocus(workspaceId, focusCitationId);
+    setFocusSnippet(payload?.textSnippet ?? null);
+    setResolvedPage(
+      focusPage ??
+        (payload?.page != null && payload.page > 0 ? payload.page : null),
+    );
+  }, [workspaceId, focusCitationId, focusPage]);
 
   useEffect(() => {
     let active = true;
@@ -142,6 +162,14 @@ export function DocumentDetailView({
               Quay lại tìm kiếm
             </Link>
           ) : null}
+          {focusCitationId ? (
+            <Link
+              href={`/workspaces/${workspaceId}/chat`}
+              className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-accent-primary hover:underline"
+            >
+              Quay lại chat
+            </Link>
+          ) : null}
         </div>
 
         {docError ? (
@@ -174,9 +202,18 @@ export function DocumentDetailView({
             workspaceId={workspaceId}
             documentId={documentId}
             focusChunkId={focusChunkId}
-            focusPage={focusPage}
+            focusPage={resolvedPage}
+            focusCitationId={focusCitationId}
+            focusSnippet={focusSnippet}
             onMissingChunk={() =>
               pushError("Không tìm thấy đoạn được tham chiếu.")
+            }
+            onHighlightFailed={() =>
+              pushError(
+                focusSnippet
+                  ? "Không khớp được đoạn trích — đã mở trang nguồn nếu có."
+                  : "Không xác định được vị trí highlight trong tài liệu.",
+              )
             }
           />
         </section>

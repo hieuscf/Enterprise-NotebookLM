@@ -13,7 +13,16 @@ function sessionTitleLabel(session) {
 
 function buildChatCitationHref(workspaceId, citation) {
   if (!citation.document_id) return null;
-  return `/workspaces/${workspaceId}/documents/${citation.document_id}`;
+  const params = new URLSearchParams();
+  if (citation.page != null && citation.page > 0) {
+    params.set("page", String(citation.page));
+  }
+  if (citation.citationId) {
+    params.set("citation", citation.citationId);
+  }
+  const qs = params.toString();
+  const base = `/workspaces/${workspaceId}/documents/${citation.document_id}`;
+  return qs ? `${base}?${qs}` : base;
 }
 
 function formatRelativeTime(isoDate, nowMs) {
@@ -71,11 +80,55 @@ assert(
 assert(
   buildChatCitationHref("ws-1", { document_id: "doc-1" }) ===
     "/workspaces/ws-1/documents/doc-1",
-  "Citation with document_id → document deep-link (no chunk/page — not in contract)",
+  "Citation with document_id → document deep-link",
+);
+assert(
+  buildChatCitationHref("ws-1", {
+    document_id: "doc-1",
+    page: 18,
+    citationId: "c1",
+  }) === "/workspaces/ws-1/documents/doc-1?page=18&citation=c1",
+  "Citation with page + citationId → deep-link query",
 );
 assert(
   buildChatCitationHref("ws-1", { document_id: null }) === null,
   "Citation without document_id → no link",
+);
+
+function conversationDayLabel(isoDate, nowMs) {
+  const d = new Date(isoDate);
+  const now = new Date(nowMs);
+  const startOf = (date) =>
+    new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.round((startOf(now) - startOf(d)) / dayMs);
+  if (diffDays === 0) return "Hôm nay";
+  if (diffDays === 1) return "Hôm qua";
+  if (diffDays < 7) return "Tuần này";
+  return "other";
+}
+assert(
+  conversationDayLabel("2026-08-06T11:00:00Z", Date.parse("2026-08-06T12:00:00Z")) ===
+    "Hôm nay",
+  "Same local calendar day → Hôm nay",
+);
+
+function normalizeSnippet(value) {
+  return (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+function matchSnippetInText(haystack, snippet) {
+  if (!haystack || !snippet) return null;
+  if (haystack.indexOf(snippet) >= 0) return true;
+  if (haystack.toLowerCase().indexOf(snippet.toLowerCase()) >= 0) return true;
+  return normalizeSnippet(haystack).includes(normalizeSnippet(snippet));
+}
+assert(
+  matchSnippetInText("Hello World", "Hello") === true,
+  "Exact snippet match",
+);
+assert(
+  matchSnippetInText("Hello   World", "hello world") === true,
+  "Normalized whitespace + case-insensitive match",
 );
 
 function citationDisplayIndex(citation) {

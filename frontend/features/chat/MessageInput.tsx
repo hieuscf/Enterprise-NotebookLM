@@ -3,19 +3,17 @@
  * File: MessageInput.tsx
  * Module/Service: Chat Service (Web App)
  * Layer: UI
- * Purpose: Multi-line chat composer — Enter=send, Shift+Enter=newline (FR4 §4).
+ * Purpose: Sticky research-workspace composer — document context + send/stop.
  * Responsibilities:
- *   - Auto-resize textarea up to a max height
- *   - Disable Send when empty or sending; show Stop while streaming (§5 UX add)
- *   - Refocus the textarea after a message is sent (spec §15 accessibility)
+ *   - Auto-resize textarea; Enter=send, Shift+Enter=newline
+ *   - DocumentContextBar above input; floating composer chrome
  * Dependencies:
- *   - lucide-react
+ *   - DocumentContextBar, lucide-react
  * Public Exports:
  *   - MessageInput
  * Database/Table: N/A
  * Related Modules: features/chat/ChatLayout, hooks/useChatStream
- * Important Notes: Business logic (send/stop) lives in the caller — this
- *   component only owns the draft text + keyboard/resize behavior.
+ * Important Notes: Business logic (send/stop) lives in the caller.
  * =============================================================================
  */
 
@@ -24,18 +22,34 @@
 import { Loader2, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  DocumentContextBar,
+  type ContextDocument,
+} from "@/features/chat/DocumentContextBar";
 import { cn } from "@/lib/utils";
+import type { Document } from "@/types/documents";
 
-const MAX_HEIGHT_PX = 200;
+const MAX_HEIGHT_PX = 160;
 
 type Props = {
+  workspaceId: string;
   disabled?: boolean;
   isStreaming: boolean;
   onSend: (content: string) => void;
   onStop: () => void;
+  usedDocuments?: ContextDocument[];
+  workspaceDocuments?: Document[];
 };
 
-export function MessageInput({ disabled, isStreaming, onSend, onStop }: Props) {
+export function MessageInput({
+  workspaceId,
+  disabled,
+  isStreaming,
+  onSend,
+  onStop,
+  usedDocuments = [],
+  workspaceDocuments = [],
+}: Props) {
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -57,7 +71,6 @@ export function MessageInput({ disabled, isStreaming, onSend, onStop }: Props) {
     if (!content || isStreaming || disabled) return;
     onSend(content);
     setDraft("");
-    // Refocus after the state update commits (spec §15 — keyboard friendly).
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, [draft, isStreaming, disabled, onSend]);
 
@@ -72,55 +85,72 @@ export function MessageInput({ disabled, isStreaming, onSend, onStop }: Props) {
   );
 
   return (
-    <div className="flex items-end gap-2 border-t border-border-default bg-surface p-3 sm:p-4">
-      <textarea
-        ref={textareaRef}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={handleKeyDown}
-        disabled={disabled}
-        rows={1}
-        aria-label="Nhập câu hỏi"
-        placeholder="Đặt câu hỏi về tài liệu trong workspace… (Enter để gửi, Shift+Enter để xuống dòng)"
-        className={cn(
-          "min-h-[44px] flex-1 resize-none rounded-md border border-border-default bg-base px-3 py-2.5",
-          "text-body-sm text-primary placeholder:text-tertiary",
-          "focus:outline-none focus:ring-2 focus:ring-accent-primary/25",
-          "disabled:cursor-not-allowed disabled:opacity-60",
-        )}
-      />
+    <div className="sticky bottom-0 z-10 border-t border-border-default/80 bg-base/95 px-3 py-3 backdrop-blur-sm sm:px-4">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+        <DocumentContextBar
+          workspaceId={workspaceId}
+          usedDocuments={usedDocuments}
+          workspaceDocuments={workspaceDocuments}
+        />
 
-      {isStreaming ? (
-        <button
-          type="button"
-          onClick={onStop}
-          aria-label="Dừng tạo câu trả lời"
-          title="Dừng tạo câu trả lời"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-elevated text-secondary transition-colors hover:bg-danger-soft hover:text-danger"
-        >
-          <Square className="h-4 w-4" aria-hidden />
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!canSend}
-          aria-label="Gửi câu hỏi"
-          title="Gửi câu hỏi"
+        <div
           className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-white transition-colors",
-            canSend
-              ? "bg-accent-primary hover:bg-accent-primary-hover"
-              : "cursor-not-allowed bg-tertiary/50",
+            "flex items-end gap-2 rounded-xl border border-border-default bg-surface p-2 shadow-sm",
+            "focus-within:border-accent-primary/40 focus-within:ring-2 focus-within:ring-accent-primary/15",
           )}
         >
-          {disabled ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={disabled}
+            rows={1}
+            aria-label="Nhập câu hỏi"
+            placeholder="Đặt câu hỏi về tài liệu trong workspace..."
+            className={cn(
+              "min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2",
+              "text-body-sm text-primary placeholder:text-tertiary",
+              "focus:outline-none",
+              "disabled:cursor-not-allowed disabled:opacity-60",
+            )}
+          />
+
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={onStop}
+              aria-label="Dừng tạo câu trả lời"
+              className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-elevated text-secondary transition-colors hover:bg-danger-soft hover:text-danger"
+            >
+              <Square className="h-4 w-4" aria-hidden />
+            </button>
           ) : (
-            <Send className="h-4 w-4" aria-hidden />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!canSend}
+              aria-label="Gửi câu hỏi"
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white transition-colors",
+                canSend
+                  ? "cursor-pointer bg-accent-primary hover:bg-accent-primary-hover"
+                  : "cursor-not-allowed bg-tertiary/50",
+              )}
+            >
+              {disabled ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Send className="h-4 w-4" aria-hidden />
+              )}
+            </button>
           )}
-        </button>
-      )}
+        </div>
+
+        <p className="px-1 text-[11px] text-tertiary">
+          Enter để gửi · Shift+Enter để xuống dòng
+        </p>
+      </div>
     </div>
   );
 }

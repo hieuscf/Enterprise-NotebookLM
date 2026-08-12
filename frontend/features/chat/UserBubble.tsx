@@ -3,16 +3,16 @@
  * File: UserBubble.tsx
  * Module/Service: Chat Service (Web App)
  * Layer: UI
- * Purpose: Render one user chat message (FR4 §3/§11).
+ * Purpose: Render one user chat message in research-workspace style.
  * Responsibilities:
- *   - Plain-text bubble, right-aligned, preserving user line breaks
+ *   - Plain-text, right-aligned question with clear visual hierarchy
  * Dependencies:
- *   - lib/utils
+ *   - types/chat
  * Public Exports:
  *   - UserBubble
  * Database/Table: N/A
  * Related Modules: features/chat/ChatMessageItem
- * Important Notes: No markdown rendering for user input — shown verbatim.
+ * Important Notes: No markdown for user input — shown verbatim.
  * =============================================================================
  */
 
@@ -25,7 +25,7 @@ type Props = {
 export function UserBubble({ message }: Props) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-lg bg-accent-primary px-4 py-2.5 text-body-sm text-white shadow-sm sm:max-w-[70%]">
+      <div className="max-w-[min(42rem,92%)] rounded-2xl rounded-br-md bg-accent-primary px-4 py-3 text-body-sm leading-relaxed text-white shadow-xs">
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
       </div>
     </div>
