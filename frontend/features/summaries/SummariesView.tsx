@@ -70,7 +70,7 @@ export function SummariesView({ workspaceId, initialDocumentId = null }: Props) 
     <AppShell active="summaries" user={user} workspaceId={workspaceId}>
       <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-8">
         <div>
-          <p className="text-caption font-medium text-accent-primary">FR6 · AI Tools</p>
+          <p className="text-caption font-medium text-accent-primary">FR6 · Công cụ AI</p>
           <h1 className="mt-1 text-h1 text-primary">Tóm tắt</h1>
           <p className="mt-1 text-body-sm text-secondary">
             Chọn tài liệu trong workspace để tạo hoặc xem bản tóm tắt AI.
@@ -150,7 +150,7 @@ export function SummariesView({ workspaceId, initialDocumentId = null }: Props) 
           />
         ) : !docsLoading && documents.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border-default px-4 py-8 text-center text-body-sm text-secondary">
-            Workspace chưa có tài liệu.{" "}
+            Không gian làm việc chưa có tài liệu.{" "}
             <Link
               href={`/workspaces/${workspaceId}/upload`}
               className="font-medium text-accent-primary hover:underline"

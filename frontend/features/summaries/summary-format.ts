@@ -25,7 +25,7 @@ export const SUMMARY_STYLE_OPTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { style: "short", label: "Tóm tắt ngắn" },
-  { style: "detailed", label: "Chi tiết" },
+  { style: "detailed", label: "Tóm tắt chi tiết" },
   { style: "by_topic", label: "Theo chủ đề" },
   { style: "bullet_points", label: "Gạch đầu dòng" },
 ];

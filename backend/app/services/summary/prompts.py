@@ -13,6 +13,7 @@
 # Database/Table: N/A
 # Related Modules: summary_service
 # Important Notes: LLM must return JSON object ``{"summary": "..."}``.
+#   Summary body text must be Vietnamese (Tiếng Việt).
 # =============================================================================
 
 from __future__ import annotations
@@ -21,21 +22,30 @@ from app.models.enums import SummaryType
 from app.repositories.retrieval import ChunkHydrationRow
 from app.repositories.summaries import TopicContextRow
 
+_VI_LANG = (
+    "Write the summary content in Vietnamese (Tiếng Việt). "
+    "Keep proper nouns, product names, and citations as in the source when needed."
+)
+
 STYLE_SYSTEM_PROMPTS: dict[SummaryType, str] = {
     SummaryType.short: (
         "You are an enterprise document summarizer. Produce a concise short "
         "summary (3–6 sentences) covering only the main thesis and key facts. "
+        f"{_VI_LANG} "
         "Respond with a JSON object: {\"summary\": \"...\"}."
     ),
     SummaryType.detailed: (
         "You are an enterprise document summarizer. Produce a detailed summary "
         "that preserves structure, important figures, decisions, and caveats. "
+        f"{_VI_LANG} "
         "Respond with a JSON object: {\"summary\": \"...\"}."
     ),
     SummaryType.by_topic: (
         "You are an enterprise document summarizer. Organize the summary by "
         "topics/themes. Prefer the provided topic hierarchy when present; "
         "otherwise infer coherent topic sections. "
+        f"{_VI_LANG} "
+        "Section titles and content must also be in Vietnamese. "
         "Respond with a JSON object: "
         "{\"sections\": [{\"topic_id\": null, \"title\": \"...\", \"content\": \"...\"}], "
         "\"summary\": \"optional flat markdown for copy\"}. "
@@ -44,6 +54,7 @@ STYLE_SYSTEM_PROMPTS: dict[SummaryType, str] = {
     SummaryType.bullet_points: (
         "You are an enterprise document summarizer. Produce a bullet-point "
         "summary (markdown list) of the most important takeaways. "
+        f"{_VI_LANG} "
         "Respond with a JSON object: {\"summary\": \"...\"}."
     ),
 }
@@ -58,7 +69,10 @@ def build_summary_prompts(
 ) -> tuple[str, str]:
     """Return (system, user) prompts for one summary LLM call."""
     system = STYLE_SYSTEM_PROMPTS[style]
-    body_parts: list[str] = [f"Document title: {document_title or '(untitled)'}"]
+    body_parts: list[str] = [
+        f"Document title: {document_title or '(untitled)'}",
+        "Output language: Vietnamese (Tiếng Việt).",
+    ]
 
     if style == SummaryType.by_topic and topics:
         body_parts.append("Topic hierarchy (from knowledge graph):")

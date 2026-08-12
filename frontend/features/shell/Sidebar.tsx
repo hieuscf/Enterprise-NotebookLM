@@ -17,10 +17,10 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", "chat", "summaries", "extractions", "comparisons", "reports"
- *   (when a workspaceId is in context) and "admin" (entry into the dedicated
- *   Admin Console at /admin) are real routes today. Everything else must stay
- *   visibly disabled — never link to a page that 404s.
+ *   "search", "graph", "chat", "summaries", "extractions", "comparisons",
+ *   "reports" (when a workspaceId is in context) and "admin" (entry into the
+ *   dedicated Admin Console at /admin) are real routes today. Everything else
+ *   must stay visibly disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -60,6 +60,7 @@ export type SidebarActiveKey =
   | "upload"
   | "documents"
   | "search"
+  | "graph"
   | "chat"
   | "summaries"
   | "extractions"
@@ -80,6 +81,7 @@ type NavItem = {
     | "upload"
     | "documents"
     | "search"
+    | "graph"
     | "chat"
     | "summaries"
     | "extractions"
@@ -121,7 +123,13 @@ const NAV_GROUPS: NavGroup[] = [
         badge: "Chọn workspace",
       },
       { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
-      { label: "Knowledge Graph", icon: Network, badge: "Sắp có" },
+      {
+        key: "graph",
+        label: "Knowledge Graph",
+        icon: Network,
+        contextual: "graph",
+        badge: "Chọn workspace",
+      },
     ],
   },
   {
@@ -204,6 +212,8 @@ function resolveContextualHref(
       return `/workspaces/${workspaceId}/documents`;
     case "search":
       return `/workspaces/${workspaceId}/search`;
+    case "graph":
+      return `/workspaces/${workspaceId}/graph`;
     case "chat":
       return `/workspaces/${workspaceId}/chat`;
     case "summaries":

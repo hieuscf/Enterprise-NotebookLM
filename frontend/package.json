@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs && node scripts/test-admin-dashboard.mjs && node scripts/test-admin-users.mjs && node scripts/test-rbac.mjs"
+    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs && node scripts/test-admin-dashboard.mjs && node scripts/test-admin-users.mjs && node scripts/test-rbac.mjs && node scripts/test-graph-ui.mjs"
   },
   "dependencies": {
+    "@xyflow/react": "^12.11.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.26.0",

@@ -7,7 +7,7 @@
 function styleLabel(style) {
   const map = {
     short: "Tóm tắt ngắn",
-    detailed: "Chi tiết",
+    detailed: "Tóm tắt chi tiết",
     by_topic: "Theo chủ đề",
     bullet_points: "Gạch đầu dòng",
   };
@@ -51,7 +51,7 @@ function assert(cond, msg) {
 
 // --- style labels ----------------------------------------------------------
 assert(styleLabel("short") === "Tóm tắt ngắn", "short label");
-assert(styleLabel("detailed") === "Chi tiết", "detailed label");
+assert(styleLabel("detailed") === "Tóm tắt chi tiết", "detailed label");
 assert(styleLabel("by_topic") === "Theo chủ đề", "by_topic label");
 assert(styleLabel("bullet_points") === "Gạch đầu dòng", "bullet_points label");
 

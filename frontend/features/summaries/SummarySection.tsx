@@ -238,7 +238,7 @@ export function SummarySection({
               </button>
             ) : (
               <p className="text-caption text-tertiary">
-                Chỉ editor/admin mới tạo được tóm tắt mới.
+                Chỉ biên tập viên hoặc quản trị viên mới tạo được tóm tắt mới.
               </p>
             )}
           </div>
