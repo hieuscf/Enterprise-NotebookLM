@@ -25,9 +25,9 @@ import { cn } from "@/lib/utils";
 import type { DocumentVersionStatus } from "@/types/documents";
 
 const LABEL: Record<DocumentVersionStatus, string> = {
-  ready: "Sẵn sàng",
-  processing: "Đang xử lý",
-  failed: "Lỗi",
+  ready: "Đã xử lý tài liệu.",
+  processing: "Đang xử lý tài liệu...",
+  failed: "Không thể xử lý tài liệu. Vui lòng thử lại.",
 };
 
 const CLASS: Record<DocumentVersionStatus, string> = {

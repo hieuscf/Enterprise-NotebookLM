@@ -107,15 +107,15 @@ export function PipelineStatusTracker({
         <p className="min-w-0 truncate text-body-sm font-medium text-primary">{fileName}</p>
         {allCompleted ? (
           <span className="shrink-0 rounded-full bg-success/10 px-2.5 py-1 text-caption font-semibold text-success">
-            Sẵn sàng
+            Đã xử lý tài liệu.
           </span>
         ) : failedStage ? (
           <span className="shrink-0 rounded-full bg-danger-soft px-2.5 py-1 text-caption font-semibold text-danger">
-            Xử lý lỗi
+            Không thể xử lý tài liệu.
           </span>
         ) : (
           <span className="shrink-0 rounded-full bg-accent-primary-soft px-2.5 py-1 text-caption font-semibold text-accent-primary">
-            Đang xử lý
+            Đang xử lý tài liệu...
           </span>
         )}
       </div>

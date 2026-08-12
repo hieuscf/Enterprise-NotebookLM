@@ -9,6 +9,7 @@
 #   - Download source bytes, parse, build layout, extract metadata
 #   - Persist Markdown / layout / interim segments artifacts with rollback
 #   - Support idempotent skip when durable outputs already exist
+#   - Configurable LlamaParse → local-OCR fallback on client poll timeout / 5xx
 # Dependencies:
 #   - app.adapters.llamaparse, app.adapters.minio_storage, app.ai.layout,
 #     app.ai.ocr (local parser), app.workers.artifacts, app.core.config
@@ -16,13 +17,14 @@
 #   - DocumentUnderstandingService, DocumentUnderstandingResult
 #   - DocumentParser, LlamaParseDocumentParser, LocalOcrDocumentParser
 #   - PARSER_LLAMAPARSE, PARSER_LOCAL_OCR, SUPPORTED_FILE_TYPES
-#   - build_document_understanding_service
+#   - build_document_understanding_service, should_fallback_to_local_ocr
 # Database/Table: document_versions (parser, markdown_storage_path, layout_metadata)
 # Related Modules: app.workers.stages.document_understanding
 # Important Notes:
 #   - NO LLM Provider (Anthropic) call here — parsers are external API or local OCR.
-#   - Parser selection is explicit via Settings.document_parser; no silent fallback.
-#   - DB updates stay in the Celery stage; this service is fully mockable for tests.
+#   - Parser selection is explicit via Settings.document_parser.
+#   - LlamaParse poll-budget expiry is a client_timeout, not a remote job failure.
+#   - Auth / quota / unsupported-file errors never fall back to local OCR.
 # =============================================================================
 
 from __future__ import annotations
@@ -72,6 +74,12 @@ PARSER_LLAMAPARSE = "llamaparse"
 PARSER_LOCAL_OCR = "local-ocr"
 SUPPORTED_FILE_TYPES = frozenset(FileType)
 
+#: Workspace-facing message when Document Understanding fails terminally.
+USER_PARSE_FAILED = "Không thể xử lý tài liệu. Vui lòng thử lại."
+
+#: HTTP statuses that must never be hidden behind local OCR fallback.
+_NO_FALLBACK_STATUS_CODES = frozenset({401, 402, 403, 429})
+
 
 @dataclass(frozen=True, slots=True)
 class ParseOutput:
@@ -112,7 +120,10 @@ class DocumentParser(Protocol):
 
 
 class LlamaParseDocumentParser:
-    """LlamaParse adapter implementing ``DocumentParser``."""
+    """LlamaParse adapter implementing ``DocumentParser``.
+
+    Raises ``LlamaParseError`` subclasses so the service can apply fallback policy.
+    """
 
     parser_name = PARSER_LLAMAPARSE
 
@@ -136,25 +147,7 @@ class LlamaParseDocumentParser:
             timeout_seconds=self._settings.llamaparse_timeout_seconds,
             max_retries=self._settings.llamaparse_max_retries,
         )
-        try:
-            result = self._client.parse(data=data, filename=filename, file_type=file_type)
-        except LlamaParseCircuitOpenError as exc:
-            raise DataPipelineError("LlamaParse circuit breaker open") from exc
-        except LlamaParseTimeoutError as exc:
-            raise DataPipelineError(
-                f"LlamaParse timed out after {self._settings.llamaparse_max_retries} attempt(s) "
-                f"({self._settings.llamaparse_timeout_seconds}s budget each): {exc}"
-            ) from exc
-        except LlamaParseServiceError as exc:
-            raise DataPipelineError(
-                f"LlamaParse unavailable after {self._settings.llamaparse_max_retries} "
-                f"attempt(s): {exc}"
-            ) from exc
-        except LlamaParseRequestError as exc:
-            raise DataPipelineError(f"LlamaParse rejected the document: {exc}") from exc
-        except LlamaParseError as exc:
-            raise DataPipelineError(f"LlamaParse failed: {exc}") from exc
-
+        result = self._client.parse(data=data, filename=filename, file_type=file_type)
         logger.info(
             "LlamaParse finished",
             job_id=result.job_id,
@@ -174,7 +167,7 @@ class LlamaParseDocumentParser:
 
 
 class LocalOcrDocumentParser:
-    """Offline parser for dev/CI when ``DOCUMENT_PARSER=local``."""
+    """Offline / fallback parser producing LlamaParse-shaped item_pages."""
 
     parser_name = PARSER_LOCAL_OCR
 
@@ -191,11 +184,20 @@ class LocalOcrDocumentParser:
         try:
             result = run_ocr_cleaning(file_type=file_type, data=data)
         except EmptyOcrError as exc:
-            raise DataPipelineError(str(exc)) from exc
+            raise DataPipelineError(
+                str(exc),
+                user_message=USER_PARSE_FAILED,
+            ) from exc
         except (ValueError, OSError) as exc:
-            raise DataPipelineError(f"Local parse failed for {file_type.value}: {exc}") from exc
+            raise DataPipelineError(
+                f"Local parse failed for {file_type.value}: {exc}",
+                user_message=USER_PARSE_FAILED,
+            ) from exc
         except Exception as exc:
-            raise DataPipelineError(f"Local parse error ({file_type.value}): {exc}") from exc
+            raise DataPipelineError(
+                f"Local parse error ({file_type.value}): {exc}",
+                user_message=USER_PARSE_FAILED,
+            ) from exc
 
         item_pages = _segments_to_item_pages(result.segments)
         return ParseOutput(
@@ -215,10 +217,12 @@ class DocumentUnderstandingService:
         storage: MinioStorageAdapter,
         settings: Settings,
         parser: DocumentParser,
+        fallback_parser: DocumentParser | None = None,
     ) -> None:
         self._storage = storage
         self._settings = settings
         self._parser = parser
+        self._fallback_parser = fallback_parser
 
     def execute(
         self,
@@ -260,7 +264,7 @@ class DocumentUnderstandingService:
             )
 
         logger.info(
-            "Start parsing document",
+            "document_understanding_started",
             document_version_id=str(document_version_id),
             parser=self._parser.parser_name,
             file_type=document.file_type.value,
@@ -274,10 +278,11 @@ class DocumentUnderstandingService:
             byte_length=len(raw),
         )
 
-        output = self._parser.parse(
+        output, parse_meta = self._parse_with_policy(
             data=raw,
             storage_path=version.storage_path,
             file_type=document.file_type,
+            document_version_id=document_version_id,
         )
 
         metrics = extract_markdown_metrics(output.markdown)
@@ -289,10 +294,12 @@ class DocumentUnderstandingService:
         if not analysis.blocks:
             raise DataPipelineError(
                 "Document Understanding produced no layout blocks — "
-                "the parsed Markdown has no usable content"
+                "the parsed Markdown has no usable content",
+                user_message=USER_PARSE_FAILED,
+                diagnostics=parse_meta,
             )
 
-        parser = self._parser.parser_name
+        parser = parse_meta["actual_parser"]
         keys = self._persist_outputs(
             document_version_id=document_version_id,
             storage_path=version.storage_path,
@@ -317,10 +324,17 @@ class DocumentUnderstandingService:
             "document_version_id": str(document_version_id),
             "file_type": document.file_type.value,
             "parser": parser,
+            "requested_parser": parse_meta["requested_parser"],
+            "actual_parser": parser,
+            "fallback": parse_meta["fallback"],
+            "fallback_reason": parse_meta.get("fallback_reason"),
             "layout_source": analysis.source,
-            "llamaparse_job_id": output.job_id,
+            "llamaparse_job_id": parse_meta.get("llamaparse_job_id") or output.job_id,
             "llamaparse_tier": output.tier,
-            "llamaparse_attempts": output.attempts if parser == PARSER_LLAMAPARSE else None,
+            "llamaparse_attempts": parse_meta.get("llamaparse_attempts"),
+            "llamaparse_timeout_seconds": parse_meta.get("llamaparse_timeout_seconds"),
+            "client_timeout": parse_meta.get("client_timeout"),
+            "remote_status": parse_meta.get("remote_status"),
             "parse_duration_ms": output.parse_duration_ms,
             "page_count": page_count,
             "section_count": analysis.section_count,
@@ -343,6 +357,7 @@ class DocumentUnderstandingService:
             parser=parser,
             block_count=len(analysis.blocks),
             duration_ms=stage_metadata["duration_ms"],
+            fallback=parse_meta["fallback"],
         )
 
         return DocumentUnderstandingResult(
@@ -359,14 +374,101 @@ class DocumentUnderstandingService:
             logger.warning("Rolling back artifact upload", object_key=key)
             self._storage.delete_object(key)
 
+    def _parse_with_policy(
+        self,
+        *,
+        data: bytes,
+        storage_path: str,
+        file_type: FileType,
+        document_version_id: UUID,
+    ) -> tuple[ParseOutput, dict[str, Any]]:
+        requested = self._parser.parser_name
+        try:
+            output = self._parser.parse(
+                data=data,
+                storage_path=storage_path,
+                file_type=file_type,
+            )
+        except Exception as exc:
+            if not should_fallback_to_local_ocr(exc, fallback_enabled=bool(self._fallback_parser)):
+                raise _map_primary_parser_error(exc, settings=self._settings) from exc
+
+            reason = _fallback_reason(exc)
+            diagnostics = _timeout_diagnostics(exc, settings=self._settings)
+            logger.warning(
+                "llamaparse_fallback_started",
+                document_version_id=str(document_version_id),
+                fallback_parser=PARSER_LOCAL_OCR,
+                reason=reason,
+                **{k: v for k, v in diagnostics.items() if v is not None},
+            )
+            assert self._fallback_parser is not None
+            try:
+                output = self._fallback_parser.parse(
+                    data=data,
+                    storage_path=storage_path,
+                    file_type=file_type,
+                )
+            except DataPipelineError:
+                raise
+            except Exception as fallback_exc:
+                raise DataPipelineError(
+                    f"Local OCR fallback failed after LlamaParse {reason}: {fallback_exc}",
+                    user_message=USER_PARSE_FAILED,
+                    diagnostics={
+                        "requested_parser": requested,
+                        "actual_parser": None,
+                        "fallback": True,
+                        "fallback_reason": reason,
+                        **diagnostics,
+                    },
+                ) from fallback_exc
+
+            logger.info(
+                "llamaparse_fallback_completed",
+                document_version_id=str(document_version_id),
+                parser=PARSER_LOCAL_OCR,
+                duration_ms=output.parse_duration_ms,
+                page_count=output.reported_page_count,
+                segment_count=_count_segments(output.item_pages),
+                reason=reason,
+            )
+            return output, {
+                "requested_parser": requested,
+                "actual_parser": PARSER_LOCAL_OCR,
+                "fallback": True,
+                "fallback_reason": reason,
+                "llamaparse_job_id": diagnostics.get("llamaparse_job_id"),
+                "llamaparse_attempts": diagnostics.get("llamaparse_attempts"),
+                "llamaparse_timeout_seconds": diagnostics.get("llamaparse_timeout_seconds"),
+                "client_timeout": diagnostics.get("client_timeout"),
+                "remote_status": diagnostics.get("remote_status"),
+            }
+
+        return output, {
+            "requested_parser": requested,
+            "actual_parser": requested,
+            "fallback": False,
+            "fallback_reason": None,
+            "llamaparse_job_id": output.job_id,
+            "llamaparse_attempts": (
+                output.attempts if requested == PARSER_LLAMAPARSE else None
+            ),
+            "llamaparse_timeout_seconds": None,
+            "client_timeout": None,
+            "remote_status": None,
+        }
+
     def _validate_inputs(self, *, version: DocumentVersion, document: Document) -> None:
         if not version.storage_path or not version.storage_path.strip():
             raise DataPipelineError(
-                f"document_version {version.id} has no storage_path — cannot parse"
+                f"document_version {version.id} has no storage_path — cannot parse",
+                user_message=USER_PARSE_FAILED,
             )
         if document.file_type not in SUPPORTED_FILE_TYPES:
             raise DataPipelineError(
-                f"Unsupported file type for document understanding: {document.file_type.value}"
+                f"Unsupported file type for document understanding: {document.file_type.value}",
+                user_message=USER_PARSE_FAILED,
             )
 
     def _should_skip_reparse(self, version: DocumentVersion) -> bool:
@@ -397,10 +499,17 @@ class DocumentUnderstandingService:
             "document_version_id": str(document_version_id),
             "file_type": document.file_type.value,
             "parser": parser,
+            "requested_parser": parser,
+            "actual_parser": parser,
+            "fallback": False,
+            "fallback_reason": None,
             "layout_source": layout.get("source"),
             "llamaparse_job_id": layout.get("job_id"),
             "llamaparse_tier": layout.get("tier"),
             "llamaparse_attempts": None,
+            "llamaparse_timeout_seconds": None,
+            "client_timeout": None,
+            "remote_status": None,
             "parse_duration_ms": 0,
             "page_count": resolve_page_count_from_layout(layout, document.file_type),
             "section_count": layout.get("section_count", 0),
@@ -432,14 +541,18 @@ class DocumentUnderstandingService:
             code = getattr(exc, "code", "") or ""
             if code in {"NoSuchKey", "NoSuchBucket", "NotFound"}:
                 raise DataPipelineError(
-                    f"Source file missing in object storage: {storage_path}"
+                    f"Source file missing in object storage: {storage_path}",
+                    user_message=USER_PARSE_FAILED,
                 ) from exc
             raise TransientPipelineError(f"MinIO download failed: {exc}") from exc
         except OSError as exc:
             raise TransientPipelineError(f"MinIO download I/O error: {exc}") from exc
 
         if not data:
-            raise DataPipelineError("Source file in object storage is empty")
+            raise DataPipelineError(
+                "Source file in object storage is empty",
+                user_message=USER_PARSE_FAILED,
+            )
         return data
 
     def _persist_outputs(
@@ -492,6 +605,29 @@ class DocumentUnderstandingService:
         }
 
 
+def should_fallback_to_local_ocr(
+    exc: BaseException,
+    *,
+    fallback_enabled: bool,
+) -> bool:
+    """Return True when LlamaParse failure is eligible for local OCR fallback."""
+    if not fallback_enabled:
+        return False
+    if isinstance(exc, LlamaParseTimeoutError):
+        return True
+    if isinstance(exc, LlamaParseCircuitOpenError):
+        return True
+    if isinstance(exc, LlamaParseServiceError):
+        return True
+    if isinstance(exc, LlamaParseRequestError):
+        # Auth / billing / rate-limit must surface as configuration/quota errors.
+        if exc.status_code in _NO_FALLBACK_STATUS_CODES:
+            return False
+        # Invalid request / unsupported file / FAILED job — do not hide behind OCR.
+        return False
+    return False
+
+
 def build_document_understanding_service(
     *,
     storage: MinioStorageAdapter,
@@ -503,10 +639,17 @@ def build_document_understanding_service(
         settings=settings,
         llamaparse_client=llamaparse_client,
     )
+    fallback: DocumentParser | None = None
+    if (
+        settings.document_parser == "llamaparse"
+        and settings.llamaparse_fallback_to_local_ocr
+    ):
+        fallback = LocalOcrDocumentParser()
     return DocumentUnderstandingService(
         storage=storage,
         settings=settings,
         parser=parser,
+        fallback_parser=fallback,
     )
 
 
@@ -521,7 +664,7 @@ def resolve_document_parser(
         if not api_key:
             raise DataPipelineError(
                 "Document parser configuration error: DOCUMENT_PARSER=llamaparse "
-                "requires LLAMAPARSE_API_KEY"
+                "requires LLAMAPARSE_API_KEY",
             )
         client = llamaparse_client or LlamaParseClient(settings)
         return LlamaParseDocumentParser(client=client, settings=settings)
@@ -542,6 +685,118 @@ def resolve_page_count_from_layout(layout: dict[str, Any], file_type: FileType) 
     if file_type in PAGINATED_FILE_TYPES:
         return max(1, int(page_count))
     return max(1, int(section_count))
+
+
+def _map_primary_parser_error(exc: BaseException, *, settings: Settings) -> DataPipelineError:
+    """Map LlamaParse / local failures to terminal DataPipelineError with user text."""
+    if isinstance(exc, DataPipelineError):
+        return exc
+    if isinstance(exc, LlamaParseCircuitOpenError):
+        return DataPipelineError(
+            "LlamaParse circuit breaker open",
+            user_message=USER_PARSE_FAILED,
+            diagnostics={"fallback": False, "fallback_reason": "circuit_open"},
+        )
+    if isinstance(exc, LlamaParseTimeoutError):
+        diagnostics = _timeout_diagnostics(exc, settings=settings)
+        return DataPipelineError(
+            str(exc),
+            user_message=USER_PARSE_FAILED,
+            diagnostics={
+                "requested_parser": PARSER_LLAMAPARSE,
+                "actual_parser": None,
+                "fallback": False,
+                "fallback_reason": "timeout",
+                **diagnostics,
+            },
+        )
+    if isinstance(exc, LlamaParseServiceError):
+        return DataPipelineError(
+            f"LlamaParse unavailable after HTTP retries "
+            f"(max_retries={settings.llamaparse_max_retries}): {exc}",
+            user_message=USER_PARSE_FAILED,
+            diagnostics={
+                "requested_parser": PARSER_LLAMAPARSE,
+                "fallback": False,
+                "fallback_reason": "service_unavailable",
+                "status_code": exc.status_code,
+            },
+        )
+    if isinstance(exc, LlamaParseRequestError):
+        if exc.status_code in {401, 403}:
+            return DataPipelineError(
+                f"LlamaParse authentication/configuration error: {exc}",
+                diagnostics={
+                    "requested_parser": PARSER_LLAMAPARSE,
+                    "fallback": False,
+                    "fallback_reason": "authentication",
+                    "status_code": exc.status_code,
+                },
+            )
+        if exc.status_code in {402, 429}:
+            return DataPipelineError(
+                f"LlamaParse quota/billing error: {exc}",
+                diagnostics={
+                    "requested_parser": PARSER_LLAMAPARSE,
+                    "fallback": False,
+                    "fallback_reason": "quota",
+                    "status_code": exc.status_code,
+                },
+            )
+        return DataPipelineError(
+            f"LlamaParse rejected the document: {exc}",
+            user_message=USER_PARSE_FAILED,
+            diagnostics={
+                "requested_parser": PARSER_LLAMAPARSE,
+                "fallback": False,
+                "fallback_reason": "unsupported_or_invalid",
+                "status_code": exc.status_code,
+            },
+        )
+    if isinstance(exc, LlamaParseError):
+        return DataPipelineError(
+            f"LlamaParse failed: {exc}",
+            user_message=USER_PARSE_FAILED,
+        )
+    return DataPipelineError(str(exc), user_message=USER_PARSE_FAILED)
+
+
+def _fallback_reason(exc: BaseException) -> str:
+    if isinstance(exc, LlamaParseTimeoutError):
+        return "timeout"
+    if isinstance(exc, LlamaParseCircuitOpenError):
+        return "circuit_open"
+    if isinstance(exc, LlamaParseServiceError):
+        return "service_unavailable"
+    return "unknown"
+
+
+def _timeout_diagnostics(exc: BaseException, *, settings: Settings) -> dict[str, Any]:
+    if isinstance(exc, LlamaParseTimeoutError):
+        return {
+            "llamaparse_job_id": exc.job_id,
+            "llamaparse_attempts": 1,
+            "llamaparse_timeout_seconds": exc.budget_seconds
+            or settings.llamaparse_timeout_seconds,
+            "client_timeout": bool(exc.client_timeout),
+            "remote_status": exc.remote_status,
+        }
+    return {
+        "llamaparse_job_id": None,
+        "llamaparse_attempts": None,
+        "llamaparse_timeout_seconds": settings.llamaparse_timeout_seconds,
+        "client_timeout": isinstance(exc, LlamaParseTimeoutError),
+        "remote_status": None,
+    }
+
+
+def _count_segments(item_pages: list[dict[str, Any]]) -> int:
+    total = 0
+    for page in item_pages:
+        items = page.get("items")
+        if isinstance(items, list):
+            total += len(items)
+    return total
 
 
 def _segments_to_item_pages(segments: list[Any]) -> list[dict[str, Any]]:

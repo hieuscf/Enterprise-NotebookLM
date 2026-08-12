@@ -97,11 +97,19 @@ class PipelineSyncRepository:
         log.metadata_ = metadata
         self._session.flush()
 
-    def fail_stage(self, log: PipelineStageLog, error_message: str) -> None:
+    def fail_stage(
+        self,
+        log: PipelineStageLog,
+        error_message: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         now = datetime.now(UTC)
         log.status = PipelineStatus.failed
         log.completed_at = now
         if log.started_at is not None:
             log.duration_ms = int((now - log.started_at).total_seconds() * 1000)
         log.error_message = error_message[:4000]
+        if metadata is not None:
+            log.metadata_ = metadata
         self._session.flush()

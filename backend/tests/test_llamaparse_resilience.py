@@ -244,9 +244,17 @@ class _PipelineFakeStore:
         log.status = PipelineStatus.completed
         log.metadata_ = metadata
 
-    def fail_stage(self, log: PipelineStageLog, error_message: str) -> None:
+    def fail_stage(
+        self,
+        log: PipelineStageLog,
+        error_message: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         log.status = PipelineStatus.failed
         log.error_message = error_message
+        if metadata is not None:
+            log.metadata_ = metadata
 
 
 def _pipeline_rows() -> tuple[PipelineRun, DocumentVersion, Document]:
@@ -340,11 +348,13 @@ def test_7_pipeline_run_failed_when_circuit_open() -> None:
         execute_pipeline(run.id, stage_handlers=handlers, session_factory=_session_factory)
 
     assert run.status == PipelineStatus.failed
-    assert run.error_message == "LlamaParse circuit breaker open"
+    assert run.error_message == "Không thể xử lý tài liệu. Vui lòng thử lại."
     stage_log = next(
         log for log in store.stage_logs if log.stage == PipelineStage.document_understanding
     )
-    assert stage_log.error_message == "LlamaParse circuit breaker open"
+    assert stage_log.error_message == "Không thể xử lý tài liệu. Vui lòng thử lại."
+    assert stage_log.metadata_ is not None
+    assert stage_log.metadata_.get("fallback_reason") == "circuit_open"
 
 
 def test_8_metrics_increment_trip_fail_fast_and_open_totals() -> None:

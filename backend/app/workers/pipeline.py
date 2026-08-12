@@ -148,8 +148,14 @@ def execute_pipeline(
                     session.commit()
                     raise
                 except DataPipelineError as exc:
-                    pipe.fail_stage(log, str(exc))
-                    pipe.mark_run_failed(run, str(exc))
+                    user_message = getattr(exc, "user_message", None) or str(exc)
+                    diagnostics = getattr(exc, "diagnostics", None) or None
+                    pipe.fail_stage(
+                        log,
+                        user_message,
+                        metadata=diagnostics if diagnostics else None,
+                    )
+                    pipe.mark_run_failed(run, user_message)
                     pipe.set_version_status(version, DocumentVersionStatus.failed)
                     session.commit()
                     raise

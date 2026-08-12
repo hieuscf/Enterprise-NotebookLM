@@ -54,8 +54,10 @@ from app.services.document_understanding import (
     LocalOcrDocumentParser,
     PARSER_LLAMAPARSE,
     PARSER_LOCAL_OCR,
+    USER_PARSE_FAILED,
     build_document_understanding_service,
     resolve_document_parser,
+    should_fallback_to_local_ocr,
 )
 from app.workers.stages.document_understanding import stage_document_understanding
 from app.workers.stages.errors import DataPipelineError, TransientPipelineError
@@ -214,6 +216,7 @@ def _settings(*, api_key: str | None = "llx-test", **overrides: Any) -> Settings
         "llamaparse_timeout_seconds": 5,
         "llamaparse_max_retries": 3,
         "llamaparse_poll_interval_seconds": 0.01,
+        "llamaparse_fallback_to_local_ocr": True,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -278,10 +281,19 @@ def _build_service(
 ) -> DocumentUnderstandingService:
     if settings.document_parser == "local":
         parser = LocalOcrDocumentParser()
+        fallback = None
     else:
         assert client is not None
         parser = LlamaParseDocumentParser(client, settings)
-    return DocumentUnderstandingService(storage=storage, settings=settings, parser=parser)
+        fallback = (
+            LocalOcrDocumentParser() if settings.llamaparse_fallback_to_local_ocr else None
+        )
+    return DocumentUnderstandingService(
+        storage=storage,
+        settings=settings,
+        parser=parser,
+        fallback_parser=fallback,
+    )
 
 
 def _run_stage(
@@ -381,24 +393,30 @@ def test_stage_success_persists_markdown_layout_and_metadata() -> None:
 @pytest.mark.parametrize(
     ("error", "expected_message"),
     [
-        (LlamaParseTimeoutError("budget exhausted"), "LlamaParse timed out"),
+        (LlamaParseTimeoutError("budget exhausted", client_timeout=True), "polling budget expired|budget exhausted"),
         (LlamaParseServiceError("HTTP 503", status_code=503), "LlamaParse unavailable"),
-        (LlamaParseRequestError("HTTP 401", status_code=401), "LlamaParse rejected the document"),
+        (LlamaParseRequestError("HTTP 401", status_code=401), "authentication/configuration"),
         (LlamaParseRequestError("HTTP 422", status_code=422), "LlamaParse rejected the document"),
     ],
 )
-def test_stage_llamaparse_failures_are_terminal(
+def test_stage_llamaparse_failures_are_terminal_when_fallback_disabled(
     error: Exception,
     expected_message: str,
 ) -> None:
-    """Every LlamaParse failure fails the run — never an unbounded Celery retry."""
+    """With fallback disabled, LlamaParse failures fail the run (no Celery retry)."""
     version, document = _rows()
     storage, uploaded = _fake_storage()
     client = MagicMock()
     client.parse.side_effect = error
 
     with pytest.raises(DataPipelineError, match=expected_message):
-        _run_stage(version, document, storage=storage, client=client, settings=_settings())
+        _run_stage(
+            version,
+            document,
+            storage=storage,
+            client=client,
+            settings=_settings(llamaparse_fallback_to_local_ocr=False),
+        )
 
     assert uploaded == {}
     assert version.markdown_storage_path is None
@@ -740,18 +758,30 @@ def test_adapter_maps_transport_timeout_to_timeout_error() -> None:
 
 
 def test_adapter_times_out_when_job_never_completes() -> None:
+    cancel_calls = {"n": 0}
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/beta/files":
             return httpx.Response(200, json={"id": "file-1"})
         if request.url.path == "/api/v2/parse":
             return httpx.Response(200, json={"id": "job-1"})
+        if request.url.path.endswith("/cancel"):
+            cancel_calls["n"] += 1
+            return httpx.Response(200, json={"id": "job-1", "status": "CANCELLED"})
         return httpx.Response(200, json=_result_payload("RUNNING"))
 
     settings = _settings(llamaparse_max_retries=1, llamaparse_timeout_seconds=1)
     client = _StubTransportClient(settings, handler)
 
-    with pytest.raises(LlamaParseTimeoutError, match="still RUNNING"):
+    with pytest.raises(LlamaParseTimeoutError, match="polling budget expired") as exc_info:
         client.parse(data=b"bytes", filename="a.pdf", file_type=FileType.pdf)
+
+    err = exc_info.value
+    assert err.job_id == "job-1"
+    assert err.remote_status == "RUNNING"
+    assert err.client_timeout is True
+    assert err.budget_seconds == 1
+    assert cancel_calls["n"] == 1
 
 
 def test_adapter_treats_failed_job_as_permanent() -> None:
@@ -788,3 +818,213 @@ def test_adapter_rejects_completed_job_without_markdown() -> None:
 def test_adapter_requires_api_key() -> None:
     with pytest.raises(LlamaParseRequestError, match="LLAMAPARSE_API_KEY"):
         LlamaParseClient(_settings(api_key=None))
+
+
+# ---------------------------------------------------------------------------
+# Fallback policy — timeout → local OCR; auth/unsupported stay terminal
+# ---------------------------------------------------------------------------
+
+
+def test_should_fallback_policy() -> None:
+    assert should_fallback_to_local_ocr(
+        LlamaParseTimeoutError("x", client_timeout=True, remote_status="RUNNING"),
+        fallback_enabled=True,
+    )
+    assert should_fallback_to_local_ocr(
+        LlamaParseServiceError("503", status_code=503),
+        fallback_enabled=True,
+    )
+    assert not should_fallback_to_local_ocr(
+        LlamaParseTimeoutError("x"),
+        fallback_enabled=False,
+    )
+    assert not should_fallback_to_local_ocr(
+        LlamaParseRequestError("bad key", status_code=401),
+        fallback_enabled=True,
+    )
+    assert not should_fallback_to_local_ocr(
+        LlamaParseRequestError("unsupported", status_code=422),
+        fallback_enabled=True,
+    )
+    assert not should_fallback_to_local_ocr(
+        LlamaParseRequestError("quota", status_code=402),
+        fallback_enabled=True,
+    )
+
+
+def test_llamaparse_success_uses_llamaparse_parser() -> None:
+    version, document = _rows(FileType.pdf)
+    storage, _ = _fake_storage()
+    client = MagicMock()
+    client.parse.return_value = LlamaParseResult(
+        job_id="job-ok",
+        markdown=MARKDOWN,
+        pages=ITEM_PAGES,
+        page_count=2,
+        tier="cost_effective",
+        attempts=1,
+        duration_ms=100,
+    )
+    meta = _run_stage(version, document, storage=storage, client=client, settings=_settings())
+    assert meta["parser"] == PARSER_LLAMAPARSE
+    assert meta["actual_parser"] == PARSER_LLAMAPARSE
+    assert meta["fallback"] is False
+    assert version.parser == PARSER_LLAMAPARSE
+    client.parse.assert_called_once()
+
+
+def test_timeout_with_fallback_uses_local_ocr_and_layout() -> None:
+    version, document = _rows(FileType.txt)
+    payload = "Giới thiệu\n\nĐoạn nội dung đầu tiên.\n\nĐoạn nội dung thứ hai.\n".encode()
+    storage, uploaded = _fake_storage(payload=payload)
+    client = MagicMock()
+    client.parse.side_effect = LlamaParseTimeoutError(
+        "LlamaParse client polling budget expired while remote job pjb-abc was still RUNNING.",
+        job_id="pjb-abc",
+        remote_status="RUNNING",
+        client_timeout=True,
+        budget_seconds=300,
+    )
+
+    meta = _run_stage(
+        version,
+        document,
+        storage=storage,
+        client=client,
+        settings=_settings(llamaparse_fallback_to_local_ocr=True),
+    )
+
+    assert version.parser == PARSER_LOCAL_OCR
+    assert meta["requested_parser"] == PARSER_LLAMAPARSE
+    assert meta["actual_parser"] == PARSER_LOCAL_OCR
+    assert meta["fallback"] is True
+    assert meta["fallback_reason"] == "timeout"
+    assert meta["llamaparse_job_id"] == "pjb-abc"
+    assert meta["client_timeout"] is True
+    assert meta["remote_status"] == "RUNNING"
+    assert meta["llamaparse_timeout_seconds"] == 300
+    assert meta["block_count"] >= 1
+    assert version.markdown_storage_path in uploaded
+    assert version.layout_metadata["parser"] == PARSER_LOCAL_OCR
+    client.parse.assert_called_once()
+
+
+def test_timeout_with_fallback_disabled_fails_with_diagnostics() -> None:
+    version, document = _rows(FileType.txt)
+    storage, uploaded = _fake_storage(
+        payload="Giới thiệu\n\nNội dung.\n".encode(),
+    )
+    client = MagicMock()
+    client.parse.side_effect = LlamaParseTimeoutError(
+        "LlamaParse client polling budget expired while remote job pjb-xyz was still RUNNING.",
+        job_id="pjb-xyz",
+        remote_status="RUNNING",
+        client_timeout=True,
+        budget_seconds=300,
+    )
+
+    with pytest.raises(DataPipelineError) as exc_info:
+        _run_stage(
+            version,
+            document,
+            storage=storage,
+            client=client,
+            settings=_settings(llamaparse_fallback_to_local_ocr=False),
+        )
+
+    err = exc_info.value
+    assert err.user_message == USER_PARSE_FAILED
+    assert err.diagnostics.get("client_timeout") is True
+    assert err.diagnostics.get("remote_status") == "RUNNING"
+    assert err.diagnostics.get("llamaparse_job_id") == "pjb-xyz"
+    assert "polling budget expired" in str(err)
+    assert uploaded == {}
+
+
+def test_auth_error_does_not_fallback() -> None:
+    version, document = _rows(FileType.txt)
+    storage, uploaded = _fake_storage(payload=b"hello\n\nworld\n")
+    client = MagicMock()
+    client.parse.side_effect = LlamaParseRequestError("invalid api key", status_code=401)
+
+    with pytest.raises(DataPipelineError, match="authentication/configuration"):
+        _run_stage(
+            version,
+            document,
+            storage=storage,
+            client=client,
+            settings=_settings(llamaparse_fallback_to_local_ocr=True),
+        )
+
+    assert uploaded == {}
+    client.parse.assert_called_once()
+
+
+def test_unsupported_file_does_not_fallback() -> None:
+    version, document = _rows(FileType.txt)
+    storage, uploaded = _fake_storage(payload=b"hello\n\nworld\n")
+    client = MagicMock()
+    client.parse.side_effect = LlamaParseRequestError(
+        "unsupported media type",
+        status_code=422,
+    )
+
+    with pytest.raises(DataPipelineError, match="rejected the document"):
+        _run_stage(
+            version,
+            document,
+            storage=storage,
+            client=client,
+            settings=_settings(llamaparse_fallback_to_local_ocr=True),
+        )
+
+    assert uploaded == {}
+
+
+def test_fallback_does_not_resubmit_llamaparse() -> None:
+    """Handled fallback must call LlamaParse exactly once (no duplicate jobs)."""
+    version, document = _rows(FileType.txt)
+    storage, _ = _fake_storage(payload="Section A\n\nBody text here.\n".encode())
+    client = MagicMock()
+    client.parse.side_effect = LlamaParseTimeoutError(
+        "budget",
+        job_id="job-once",
+        remote_status="RUNNING",
+        client_timeout=True,
+        budget_seconds=5,
+    )
+
+    _run_stage(
+        version,
+        document,
+        storage=storage,
+        client=client,
+        settings=_settings(llamaparse_fallback_to_local_ocr=True),
+    )
+    assert client.parse.call_count == 1
+
+
+def test_poll_timeout_single_job_submission_no_duplicate() -> None:
+    """Adapter poll timeout: one upload + one job create; never re-submit parse job."""
+    posts = {"files": 0, "parse": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/beta/files":
+            posts["files"] += 1
+            return httpx.Response(200, json={"id": "file-1"})
+        if request.url.path == "/api/v2/parse":
+            posts["parse"] += 1
+            return httpx.Response(200, json={"id": "job-only"})
+        if request.url.path.endswith("/cancel"):
+            return httpx.Response(200, json={"status": "CANCELLED"})
+        return httpx.Response(200, json=_result_payload("RUNNING"))
+
+    client = _StubTransportClient(
+        _settings(llamaparse_max_retries=3, llamaparse_timeout_seconds=1),
+        handler,
+    )
+    with pytest.raises(LlamaParseTimeoutError):
+        client.parse(data=b"bytes", filename="a.pdf", file_type=FileType.pdf)
+
+    assert posts["files"] == 1
+    assert posts["parse"] == 1

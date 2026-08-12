@@ -17,6 +17,8 @@
 # Important Notes:
 #   - Business logic lives in DocumentUnderstandingService — this module is orchestration only.
 #   - Parser selection is explicit via Settings.document_parser (see config.py).
+#   - LlamaParse client poll-timeout may fall back to local OCR when
+#     LLAMAPARSE_FALLBACK_TO_LOCAL_OCR=true (auth/quota/unsupported never fall back).
 #   - Expunge version/document before session commit; expire_on_commit would otherwise
 #     detach them and cause DetachedInstanceError during long-running parse I/O.
 # =============================================================================

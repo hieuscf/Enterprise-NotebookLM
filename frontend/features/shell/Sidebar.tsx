@@ -17,10 +17,10 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", "chat", "comparisons", "reports" (when a workspaceId is in
- *   context) and "admin" (entry into the dedicated Admin Console at /admin)
- *   are real routes today. Everything else must stay visibly disabled — never
- *   link to a page that 404s.
+ *   "search", "chat", "summaries", "extractions", "comparisons", "reports"
+ *   (when a workspaceId is in context) and "admin" (entry into the dedicated
+ *   Admin Console at /admin) are real routes today. Everything else must stay
+ *   visibly disabled — never link to a page that 404s.
  * =============================================================================
  */
 
@@ -61,6 +61,8 @@ export type SidebarActiveKey =
   | "documents"
   | "search"
   | "chat"
+  | "summaries"
+  | "extractions"
   | "comparisons"
   | "reports"
   | "admin";
@@ -79,6 +81,8 @@ type NavItem = {
     | "documents"
     | "search"
     | "chat"
+    | "summaries"
+    | "extractions"
     | "comparisons"
     | "reports";
 };
@@ -130,8 +134,20 @@ const NAV_GROUPS: NavGroup[] = [
         contextual: "chat",
         badge: "Chọn workspace",
       },
-      { label: "Tóm tắt", icon: ScrollText, badge: "Sắp có" },
-      { label: "Trích xuất", icon: Wand2, badge: "Sắp có" },
+      {
+        key: "summaries",
+        label: "Tóm tắt",
+        icon: ScrollText,
+        contextual: "summaries",
+        badge: "Chọn workspace",
+      },
+      {
+        key: "extractions",
+        label: "Trích xuất",
+        icon: Wand2,
+        contextual: "extractions",
+        badge: "Chọn workspace",
+      },
       {
         key: "comparisons",
         label: "So sánh",
@@ -174,6 +190,34 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
 ];
+
+function resolveContextualHref(
+  contextual: NavItem["contextual"],
+  workspaceId: string,
+): string | undefined {
+  switch (contextual) {
+    case "members":
+      return `/workspaces/${workspaceId}/members`;
+    case "upload":
+      return `/workspaces/${workspaceId}/upload`;
+    case "documents":
+      return `/workspaces/${workspaceId}/documents`;
+    case "search":
+      return `/workspaces/${workspaceId}/search`;
+    case "chat":
+      return `/workspaces/${workspaceId}/chat`;
+    case "summaries":
+      return `/workspaces/${workspaceId}/summaries`;
+    case "extractions":
+      return `/workspaces/${workspaceId}/extractions`;
+    case "comparisons":
+      return `/workspaces/${workspaceId}/comparisons`;
+    case "reports":
+      return `/workspaces/${workspaceId}/reports`;
+    default:
+      return undefined;
+  }
+}
 
 function initialsOf(name: string): string {
   const trimmed = name.trim();
@@ -258,21 +302,7 @@ export function Sidebar({
                   const isActive = item.key === active;
                   const Icon = item.icon;
                   const href = workspaceId
-                    ? item.contextual === "members"
-                      ? `/workspaces/${workspaceId}/members`
-                      : item.contextual === "upload"
-                        ? `/workspaces/${workspaceId}/upload`
-                        : item.contextual === "documents"
-                          ? `/workspaces/${workspaceId}/documents`
-                          : item.contextual === "search"
-                            ? `/workspaces/${workspaceId}/search`
-                            : item.contextual === "chat"
-                              ? `/workspaces/${workspaceId}/chat`
-                              : item.contextual === "comparisons"
-                                ? `/workspaces/${workspaceId}/comparisons`
-                                : item.contextual === "reports"
-                                  ? `/workspaces/${workspaceId}/reports`
-                                  : item.href
+                    ? (resolveContextualHref(item.contextual, workspaceId) ?? item.href)
                     : item.href;
 
                   if (href) {

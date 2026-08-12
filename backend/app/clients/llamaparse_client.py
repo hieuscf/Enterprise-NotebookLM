@@ -44,6 +44,7 @@ from app.clients.retry_policy import (
     is_retryable_http_status,
 )
 from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
 from app.core.resilience import (
     CircuitBreakerConfig,
     CircuitBreakerOpenError,
@@ -55,6 +56,8 @@ from app.models.enums import FileType
 
 LLAMAPARSE_CB_METRICS_PREFIX = "llamaparse_cb"
 LLAMAPARSE_CB_OPEN_MESSAGE = "LlamaParse circuit breaker open"
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -81,7 +84,29 @@ class LlamaParseError(Exception):
 
 
 class LlamaParseTimeoutError(LlamaParseError):
-    """Wall-clock budget exhausted, or a single HTTP call timed out."""
+    """Client polling / HTTP budget exhausted — not necessarily a remote job failure.
+
+    Attributes:
+        job_id: Remote parse job id when known (poll timeout path).
+        remote_status: Last observed remote status (e.g. RUNNING) when known.
+        client_timeout: True when our polling budget expired (vs transport timeout).
+        budget_seconds: Configured client polling budget when applicable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        job_id: str | None = None,
+        remote_status: str | None = None,
+        client_timeout: bool = False,
+        budget_seconds: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.job_id = job_id
+        self.remote_status = remote_status
+        self.client_timeout = client_timeout
+        self.budget_seconds = budget_seconds
 
 
 class LlamaParseRequestError(LlamaParseError):
@@ -263,6 +288,14 @@ class LlamaParseClient:
                 content_type=content_type,
             )
             job_id = self._create_job(client, file_id=file_id)
+            logger.info(
+                "llamaparse_job_submitted",
+                job_id=job_id,
+                document_version_id=(
+                    self._session.document_version_id if self._session else None
+                ),
+                budget_seconds=self._timeout_seconds,
+            )
             payload = self._poll_job(client, job_id=job_id, deadline=deadline)
 
         markdown = _extract_markdown(payload)
@@ -348,11 +381,48 @@ class LlamaParseClient:
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                logger.warning(
+                    "llamaparse_poll_timeout",
+                    job_id=job_id,
+                    attempt=self._session.parse_attempts if self._session else 1,
+                    budget_seconds=self._timeout_seconds,
+                    remote_status=status,
+                    client_timeout=True,
+                )
+                # Best-effort cancel to avoid continued remote billing; never invent
+                # endpoints — POST /api/v2/parse/{id}/cancel is the documented API.
+                self._best_effort_cancel(client, job_id=job_id)
                 raise LlamaParseTimeoutError(
-                    f"LlamaParse job {job_id} still {status} after "
-                    f"{self._timeout_seconds}s budget"
+                    f"LlamaParse client polling budget expired while remote job "
+                    f"{job_id} was still {status}.",
+                    job_id=job_id,
+                    remote_status=status,
+                    client_timeout=True,
+                    budget_seconds=self._timeout_seconds,
                 )
             time.sleep(min(self._poll_interval, remaining))
+
+    def _best_effort_cancel(self, client: httpx.Client, *, job_id: str) -> None:
+        """Cancel a still-RUNNING remote job after client budget expiry (best effort)."""
+        try:
+            response = client.request(
+                "POST",
+                f"{PARSE_ENDPOINT}/{job_id}/cancel",
+            )
+            if response.status_code < 400:
+                logger.info("llamaparse_job_cancel_requested", job_id=job_id)
+                return
+            logger.warning(
+                "llamaparse_job_cancel_failed",
+                job_id=job_id,
+                status_code=response.status_code,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "llamaparse_job_cancel_failed",
+                job_id=job_id,
+                error=str(exc),
+            )
 
     def _send(
         self,

@@ -13,7 +13,8 @@
  * Public Exports:
  *   - ExtractionSection
  * Database/Table: N/A
- * Related Modules: features/documents/DocumentDetailView
+ * Related Modules: features/documents/DocumentDetailView,
+ *   features/extractions/ExtractionsView
  * Important Notes: Mirrors SummarySection UX. Never POSTs on type/format switch.
  *   Visual timeline deferred — table/JSON only.
  * =============================================================================

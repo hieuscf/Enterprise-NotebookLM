@@ -100,11 +100,19 @@ class _FakeStore:
         log.duration_ms = 1
         log.metadata_ = metadata
 
-    def fail_stage(self, log: PipelineStageLog, error_message: str) -> None:
+    def fail_stage(
+        self,
+        log: PipelineStageLog,
+        error_message: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         log.status = PipelineStatus.failed
         log.completed_at = datetime.now(UTC)
         log.duration_ms = 1
         log.error_message = error_message
+        if metadata is not None:
+            log.metadata_ = metadata
 
 
 def _make_run_and_version() -> tuple[PipelineRun, DocumentVersion]:

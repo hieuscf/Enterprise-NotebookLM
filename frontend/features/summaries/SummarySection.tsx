@@ -13,7 +13,8 @@
  * Public Exports:
  *   - SummarySection
  * Database/Table: N/A
- * Related Modules: features/documents/DocumentDetailView
+ * Related Modules: features/documents/DocumentDetailView,
+ *   features/summaries/SummariesView
  * Important Notes: Never POSTs on style switch or remount when a current
  *   completed Summary exists. Export is intentionally not faked.
  * =============================================================================

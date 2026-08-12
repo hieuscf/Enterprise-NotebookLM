@@ -124,7 +124,10 @@ class Settings(BaseSettings):
     document_parser: Literal["llamaparse", "local"] = "llamaparse"
     llamaparse_api_key: str | None = None
     llamaparse_base_url: str = "https://api.cloud.llamaindex.ai"
+    # Client-side wall-clock polling budget per submitted job (not an HTTP-only timeout).
     llamaparse_timeout_seconds: int = 120
+    # Per-HTTP-request retries (upload/create/poll). Poll-budget expiry does NOT
+    # re-submit a new LlamaParse job — see LlamaParseClient._parse_once.
     llamaparse_max_retries: int = 3
     llamaparse_retry_min_wait: float = 1.0
     llamaparse_retry_max_wait: float = 30.0
@@ -138,6 +141,10 @@ class Settings(BaseSettings):
         "premium"
     ] = "cost_effective"
     llamaparse_poll_interval_seconds: float = 2.0
+    # When DOCUMENT_PARSER=llamaparse: on client poll timeout / 5xx / circuit open,
+    # fall back to local OCR instead of failing the whole pipeline.
+    # Auth / quota / unsupported-file errors never fall back.
+    llamaparse_fallback_to_local_ocr: bool = True
 
     # FR2 Step 3 — OCR language detection + optional scanned-PDF image OCR (P3)
     ocr_language_detection_enabled: bool = True

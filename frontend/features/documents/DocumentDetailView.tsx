@@ -10,6 +10,7 @@
  *   - Own useDocumentVersions (list + reload) and useDocumentUploadQueue in
  *     "replace" mode; wire both into DocumentVersionHistory / UploadJobCard
  *   - Own the toast queue for "Đặt làm bản hiện hành" / upload feedback
+ *   - Deep-link to workspace Summaries / Extractions pages for this document
  * Dependencies:
  *   - hooks/useDocumentVersions, useDocumentUploadQueue, useToasts,
  *     useWorkspaceRole, useAuth; lib/api-client.getDocument
@@ -19,17 +20,18 @@
  *   - DocumentDetailView
  * Database/Table: documents, document_versions
  * Related Modules: app/workspaces/[id]/documents/[documentId]/page.tsx,
- *   features/summaries/SummarySection, features/extractions/ExtractionSection
+ *   features/summaries/SummariesView, features/extractions/ExtractionsView
  * Important Notes: A replacement version is already current_version_id in the
  *   backend as soon as the 202 response arrives (see upload_new_version) —
  *   reloading the version list alone is enough to reflect the new
  *   "Đang dùng" badge; no separate getDocument refetch is needed for that.
+ *   Summary / Extraction live on dedicated AI Tools pages (not inline here).
  * =============================================================================
  */
 
 "use client";
 
-import { AlertCircle, ArrowLeft, UploadCloud } from "lucide-react";
+import { AlertCircle, ArrowLeft, ScrollText, UploadCloud, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -39,8 +41,6 @@ import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHist
 import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
-import { ExtractionSection } from "@/features/extractions/ExtractionSection";
-import { SummarySection } from "@/features/summaries/SummarySection";
 import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { useDocumentUploadQueue, type StagedFile } from "@/hooks/useDocumentUploadQueue";
@@ -182,28 +182,31 @@ export function DocumentDetailView({
         </section>
 
         {!docError ? (
-          <SummarySection
-            workspaceId={workspaceId}
-            documentId={documentId}
-            currentVersionId={doc?.current_version_id ?? null}
-            canEdit={isEditor}
-            onCopied={() => pushSuccess("Đã sao chép tóm tắt.")}
-            onCopyFailed={() => pushError("Không sao chép được tóm tắt.")}
-            onCreateError={(message) => pushError(message)}
-          />
-        ) : null}
-
-        {!docError ? (
-          <ExtractionSection
-            workspaceId={workspaceId}
-            documentId={documentId}
-            currentVersionId={doc?.current_version_id ?? null}
-            canEdit={isEditor}
-            onCopied={() => pushSuccess("Đã sao chép kết quả trích xuất.")}
-            onCopyFailed={() => pushError("Không sao chép được kết quả trích xuất.")}
-            onExportError={(message) => pushError(message)}
-            onCreateError={(message) => pushError(message)}
-          />
+          <section
+            aria-label="Công cụ AI cho tài liệu này"
+            className="flex flex-wrap gap-2"
+          >
+            <Link
+              href={`/workspaces/${workspaceId}/summaries?documentId=${documentId}`}
+              className={cn(
+                "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
+                "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
+              )}
+            >
+              <ScrollText className="h-4 w-4" aria-hidden />
+              Tóm tắt
+            </Link>
+            <Link
+              href={`/workspaces/${workspaceId}/extractions?documentId=${documentId}`}
+              className={cn(
+                "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
+                "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
+              )}
+            >
+              <Wand2 className="h-4 w-4" aria-hidden />
+              Trích xuất thông tin
+            </Link>
+          </section>
         ) : null}
 
         <div className="flex flex-col gap-3">
