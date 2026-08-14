@@ -90,7 +90,7 @@ export function AIContextPanel({
   const hasContext = Boolean(snippet || chunk || matchCount > 0);
 
   return (
-    <aside className="flex h-full max-h-[calc(100vh-12rem)] min-h-[20rem] flex-col overflow-hidden rounded-md border border-border-default bg-surface">
+    <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-border-default bg-surface">
       <div
         role="tablist"
         aria-label="Inspector"

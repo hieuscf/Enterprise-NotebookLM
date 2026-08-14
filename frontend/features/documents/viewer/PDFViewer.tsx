@@ -5,7 +5,7 @@
  * Layer: UI
  * Purpose: Render Original PDF via pdf.js (never markdown).
  * Responsibilities:
- *   - Load PDF ArrayBuffer from content URL; render pages; expose jump API
+ *   - Load PDF; measure pages; paint pages as they enter the scroll viewport
  *   - Deterministic citation highlight via bbox / text-layer snippet rects
  * Dependencies:
  *   - pdfjs-dist, HighlightOverlay, pdf-text-highlight
@@ -20,9 +20,11 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -66,14 +68,41 @@ type Props = {
   onVisiblePageChange?: (pageNumber: number) => void;
 };
 
-type PagePaint = {
+type PageSlot = {
   pageNumber: number;
-  canvas: HTMLCanvasElement;
   width: number;
   height: number;
 };
 
-export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
+function userRotation(rotation: number): number {
+  return ((rotation % 360) + 360) % 360;
+}
+
+async function paintPageToCanvas(
+  pdf: import("pdfjs-dist").PDFDocumentProxy,
+  pageNumber: number,
+  canvas: HTMLCanvasElement,
+  scale: number,
+  rotation: number,
+): Promise<{ width: number; height: number } | null> {
+  const page = await pdf.getPage(pageNumber);
+  const viewport = page.getViewport({
+    scale,
+    rotation: (page.rotate + userRotation(rotation)) % 360,
+  });
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({
+    canvasContext: ctx,
+    viewport,
+    canvas,
+  } as Parameters<typeof page.render>[0]).promise;
+  return { width: viewport.width, height: viewport.height };
+}
+
+export const PDFViewer = memo(forwardRef<PDFViewerHandle, Props>(function PDFViewer(
   {
     contentUrl,
     scale,
@@ -86,8 +115,17 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [pages, setPages] = useState<PagePaint[]>([]);
-  const pagesRef = useRef<PagePaint[]>([]);
+  const canvasByPage = useRef(new Map<number, HTMLCanvasElement>());
+  const painted = useRef(new Set<number>());
+  const painting = useRef(new Set<number>());
+  const lastLayout = useRef({ scale, rotation });
+  const onDocumentReadyRef = useRef(onDocumentReady);
+  const onLoadErrorRef = useRef(onLoadError);
+  const onVisiblePageChangeRef = useRef(onVisiblePageChange);
+  onDocumentReadyRef.current = onDocumentReady;
+  onLoadErrorRef.current = onLoadError;
+  onVisiblePageChangeRef.current = onVisiblePageChange;
+  const [slots, setSlots] = useState<PageSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlightState] = useState<{
     pageNumber: number;
@@ -95,12 +133,22 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
     active: boolean;
     settled: boolean;
   } | null>(null);
+  const slotsRef = useRef<PageSlot[]>([]);
+  slotsRef.current = slots;
   const pdfDocRef = useRef<import("pdfjs-dist").PDFDocumentProxy | null>(null);
   const highlightTimer = useRef<number | null>(null);
   const scaleRef = useRef(scale);
   const rotationRef = useRef(rotation);
   scaleRef.current = scale;
   rotationRef.current = rotation;
+
+  const registerCanvas = useCallback(
+    (pageNumber: number, node: HTMLCanvasElement | null) => {
+      if (node) canvasByPage.current.set(pageNumber, node);
+      else canvasByPage.current.delete(pageNumber);
+    },
+    [],
+  );
 
   const clearHighlightTimers = () => {
     if (highlightTimer.current != null) {
@@ -109,46 +157,67 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
     }
   };
 
-  const paintPages = useCallback(
+  const ensurePainted = useCallback(async (pageNumber: number): Promise<boolean> => {
+    if (painted.current.has(pageNumber)) return true;
+    if (painting.current.has(pageNumber)) {
+      const started = Date.now();
+      while (Date.now() - started < 4000) {
+        if (painted.current.has(pageNumber)) return true;
+        if (!painting.current.has(pageNumber)) break;
+        await new Promise((r) => window.setTimeout(r, 40));
+      }
+      return painted.current.has(pageNumber);
+    }
+    const pdf = pdfDocRef.current;
+    const canvas = canvasByPage.current.get(pageNumber);
+    if (!pdf || !canvas) return false;
+    painting.current.add(pageNumber);
+    try {
+      const paintedSize = await paintPageToCanvas(
+        pdf,
+        pageNumber,
+        canvas,
+        scaleRef.current,
+        rotationRef.current,
+      );
+      if (!paintedSize) return false;
+      painted.current.add(pageNumber);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      painting.current.delete(pageNumber);
+    }
+  }, []);
+
+  const measurePages = useCallback(
     async (pdf: import("pdfjs-dist").PDFDocumentProxy) => {
-      const painted: PagePaint[] = [];
       const s = scaleRef.current;
-      // User delta only — must ADD to each page's intrinsic /Rotate metadata.
-      // Passing rotation: 0 forces upright MediaBox and ignores page.rotate,
-      // which makes landscape/scanned PDFs appear sideways.
-      const userDelta = ((rotationRef.current % 360) + 360) % 360;
+      const userDelta = userRotation(rotationRef.current);
+      const next: PageSlot[] = [];
       for (let i = 1; i <= pdf.numPages; i += 1) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({
           scale: s,
           rotation: (page.rotate + userDelta) % 360,
         });
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) continue;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        // pdfjs-dist 4.x RenderParameters
-        await page.render({
-          canvasContext: ctx,
-          viewport,
-          canvas,
-        } as Parameters<typeof page.render>[0]).promise;
-        painted.push({
+        next.push({
           pageNumber: i,
-          canvas,
           width: viewport.width,
           height: viewport.height,
         });
       }
-      pagesRef.current = painted;
-      setPages(painted);
+      painted.current.clear();
+      painting.current.clear();
+      lastLayout.current = { scale: s, rotation: rotationRef.current };
+      setSlots(next);
     },
     [],
   );
 
   useImperativeHandle(ref, () => ({
     jumpToPage(pageNumber: number) {
+      void ensurePainted(pageNumber);
       const el = containerRef.current?.querySelector(
         `[data-pdf-page="${pageNumber}"]`,
       );
@@ -157,42 +226,41 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
     async waitForPage(pageNumber: number, timeoutMs = 4000) {
       const started = Date.now();
       while (Date.now() - started < timeoutMs) {
-        if (pagesRef.current.some((p) => p.pageNumber === pageNumber)) {
-          return true;
+        if (canvasByPage.current.has(pageNumber)) {
+          if (painted.current.has(pageNumber) || (await ensurePainted(pageNumber))) {
+            return true;
+          }
         }
         await new Promise((r) => window.setTimeout(r, 50));
       }
-      return pagesRef.current.some((p) => p.pageNumber === pageNumber);
+      return painted.current.has(pageNumber);
     },
     async setHighlight({ pageNumber, bbox, rects, snippet }) {
       const ready = await (async () => {
         const started = Date.now();
         while (Date.now() - started < 4000) {
-          if (pagesRef.current.some((p) => p.pageNumber === pageNumber)) {
-            return true;
-          }
+          if (canvasByPage.current.has(pageNumber)) break;
           await new Promise((r) => window.setTimeout(r, 50));
         }
-        return pagesRef.current.some((p) => p.pageNumber === pageNumber);
+        return ensurePainted(pageNumber);
       })();
       if (!ready) return false;
 
-      const paint = pagesRef.current.find((p) => p.pageNumber === pageNumber);
-      const pageWidth = paint?.width ?? 1;
-      const pageHeight = paint?.height ?? 1;
+      const slot = slotsRef.current.find((p) => p.pageNumber === pageNumber);
+      const canvas = canvasByPage.current.get(pageNumber);
+      const pageWidth = canvas?.width || slot?.width || 1;
+      const pageHeight = canvas?.height || slot?.height || 1;
 
       let nextRects: HighlightRect[] = Array.isArray(rects)
         ? rects.filter(Boolean)
         : [];
 
-      // Prefer PDF text-layer match for citation sub-spans.
       if (nextRects.length === 0 && snippet?.trim() && pdfDocRef.current) {
         try {
           const page = await pdfDocRef.current.getPage(pageNumber);
-          const userDelta = ((rotationRef.current % 360) + 360) % 360;
           const viewport = page.getViewport({
             scale: scaleRef.current,
-            rotation: (page.rotate + userDelta) % 360,
+            rotation: (page.rotate + userRotation(rotationRef.current)) % 360,
           });
           const textContent = await page.getTextContent();
           nextRects = findSnippetRectsInTextContent(
@@ -229,14 +297,14 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
         if (one) nextRects = [one];
       }
 
-      // No approximate band — navigate without a fake highlight when unsure.
+      const el = containerRef.current?.querySelector(
+        `[data-pdf-page="${pageNumber}"]`,
+      );
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+
       if (nextRects.length === 0) {
         clearHighlightTimers();
         setHighlightState(null);
-        const el = containerRef.current?.querySelector(
-          `[data-pdf-page="${pageNumber}"]`,
-        );
-        el?.scrollIntoView({ behavior: "smooth", block: "center" });
         return false;
       }
 
@@ -252,10 +320,6 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
           prev ? { ...prev, active: false, settled: true } : null,
         );
       }, 8000);
-      const el = containerRef.current?.querySelector(
-        `[data-pdf-page="${pageNumber}"]`,
-      );
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
       return true;
     },
     clearHighlight() {
@@ -263,15 +327,17 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
       setHighlightState(null);
     },
     getPageCount() {
-      return pagesRef.current.length;
+      return slotsRef.current.length;
     },
   }));
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setPages([]);
-    pagesRef.current = [];
+    setSlots([]);
+    painted.current.clear();
+    painting.current.clear();
+    canvasByPage.current.clear();
     fetch(contentUrl, { credentials: "same-origin" })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -286,12 +352,14 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
           return;
         }
         pdfDocRef.current = pdf;
-        await paintPages(pdf);
-        if (!cancelled) onDocumentReady?.(pdf.numPages);
+        await measurePages(pdf);
+        if (!cancelled) onDocumentReadyRef.current?.(pdf.numPages);
       })
       .catch((err) => {
         if (cancelled) return;
-        onLoadError?.(err instanceof Error ? err.message : "Không tải được PDF.");
+        onLoadErrorRef.current?.(
+          err instanceof Error ? err.message : "Không tải được PDF.",
+        );
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -302,28 +370,59 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
       void pdfDocRef.current?.destroy();
       pdfDocRef.current = null;
     };
-  }, [contentUrl, paintPages, onDocumentReady, onLoadError]);
+  }, [contentUrl, measurePages]);
 
-  // Re-paint when zoom/rotation changes (cached PDFDocumentProxy).
   useEffect(() => {
     const pdf = pdfDocRef.current;
     if (!pdf) return;
+    if (
+      lastLayout.current.scale === scale &&
+      lastLayout.current.rotation === rotation
+    ) {
+      return;
+    }
     let cancelled = false;
-    void paintPages(pdf).then(() => {
+    void measurePages(pdf).then(() => {
       if (cancelled) return;
     });
     return () => {
       cancelled = true;
     };
-  }, [scale, rotation, paintPages]);
+  }, [scale, rotation, measurePages]);
 
-  // Track which page is most visible in the scroll viewport.
   useEffect(() => {
-    if (!onVisiblePageChange || pages.length === 0) return;
+    const root = containerRef.current;
+    if (!root || slots.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const pageAttr = (entry.target as HTMLElement).dataset.pdfPage;
+          const pageNumber = pageAttr ? Number(pageAttr) : NaN;
+          if (!Number.isFinite(pageNumber)) continue;
+          if (painted.current.has(pageNumber) || painting.current.has(pageNumber)) {
+            continue;
+          }
+          void ensurePainted(pageNumber);
+        }
+      },
+      { root, rootMargin: "1200px 0px", threshold: 0.01 },
+    );
+
+    for (const el of root.querySelectorAll("[data-pdf-page]")) {
+      observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [slots, ensurePainted]);
+
+  useEffect(() => {
+    if (slots.length === 0) return;
     const root = containerRef.current;
     if (!root) return;
 
     const ratios = new Map<number, number>();
+    let lastReported = 0;
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -340,7 +439,10 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
             bestPage = page;
           }
         }
-        if (bestRatio >= 0) onVisiblePageChange(bestPage);
+        if (bestRatio >= 0 && bestPage !== lastReported) {
+          lastReported = bestPage;
+          onVisiblePageChangeRef.current?.(bestPage);
+        }
       },
       { root, threshold: [0.15, 0.35, 0.55, 0.75] },
     );
@@ -349,15 +451,15 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
       observer.observe(el);
     }
     return () => observer.disconnect();
-  }, [pages, onVisiblePageChange]);
+  }, [slots]);
 
   return (
     <div
       ref={containerRef}
-      className={cn(
-        "max-h-[70vh] space-y-6 overflow-y-auto scroll-smooth rounded-md bg-elevated/30 p-4 sm:p-6",
-        className,
-      )}
+        className={cn(
+          "min-h-0 flex-1 overflow-x-auto overflow-y-auto scroll-smooth rounded-md bg-elevated/30 p-4 sm:p-6",
+          className,
+        )}
     >
       {loading ? (
         <div className="animate-pulse space-y-3" aria-busy>
@@ -366,40 +468,70 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
           ))}
         </div>
       ) : null}
-      {pages.map((page) => (
-        <div
-          key={page.pageNumber}
-          data-pdf-page={page.pageNumber}
-          className="relative mx-auto w-fit bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08),0_8px_24px_rgba(15,23,42,0.06)]"
-        >
-          <canvas
-            ref={(node) => {
-              if (node && page.canvas) {
-                const ctx = node.getContext("2d");
-                if (!ctx) return;
-                node.width = page.canvas.width;
-                node.height = page.canvas.height;
-                ctx.drawImage(page.canvas, 0, 0);
-              }
-            }}
-            className="max-w-full"
-            aria-label={`Page ${page.pageNumber}`}
+      <div className="flex flex-col gap-6">
+        {slots.map((page) => (
+          <PdfPage
+            key={page.pageNumber}
+            page={page}
+            highlight={
+              highlight?.pageNumber === page.pageNumber ? highlight : null
+            }
+            onCanvas={registerCanvas}
           />
-          {highlight?.pageNumber === page.pageNumber
-            ? highlight.rects.map((rect, idx) => (
-                <HighlightOverlay
-                  key={`${page.pageNumber}-${idx}`}
-                  rect={rect}
-                  active={highlight.active}
-                  settled={highlight.settled}
-                />
-              ))
-            : null}
-          <span className="absolute right-2 bottom-2 rounded bg-slate-900/45 px-1.5 py-0.5 text-[10px] text-white">
-            {page.pageNumber}
-          </span>
-        </div>
-      ))}
+        ))}
+      </div>
+    </div>
+  );
+}));
+
+const PdfPage = memo(function PdfPage({
+  page,
+  highlight,
+  onCanvas,
+}: {
+  page: PageSlot;
+  highlight: {
+    pageNumber: number;
+    rects: HighlightRect[];
+    active: boolean;
+    settled: boolean;
+  } | null;
+  onCanvas: (pageNumber: number, node: HTMLCanvasElement | null) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useLayoutEffect(() => {
+    onCanvas(page.pageNumber, canvasRef.current);
+    return () => onCanvas(page.pageNumber, null);
+  }, [onCanvas, page.pageNumber]);
+
+  return (
+    <div
+      data-pdf-page={page.pageNumber}
+      className="relative mx-auto w-full bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08),0_8px_24px_rgba(15,23,42,0.06)]"
+      style={{
+        maxWidth: page.width,
+        aspectRatio: `${page.width} / ${page.height}`,
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 block h-full w-full"
+        aria-label={`Page ${page.pageNumber}`}
+      />
+      {highlight
+        ? highlight.rects.map((rect, idx) => (
+            <HighlightOverlay
+              key={`${page.pageNumber}-${idx}`}
+              rect={rect}
+              active={highlight.active}
+              settled={highlight.settled}
+            />
+          ))
+        : null}
+      <span className="absolute right-2 bottom-2 rounded bg-slate-900/45 px-1.5 py-0.5 text-[10px] text-white">
+        {page.pageNumber}
+      </span>
     </div>
   );
 });

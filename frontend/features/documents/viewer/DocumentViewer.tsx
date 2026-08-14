@@ -377,6 +377,10 @@ export function DocumentViewer({
     setPageCount(count);
   }, []);
 
+  const handlePdfError = useCallback((msg: string) => {
+    setPdfError(msg);
+  }, []);
+
   const jumpToPage = useCallback((page: number) => {
     pdfRef.current?.jumpToPage(page);
     setCurrentPage(page);
@@ -486,8 +490,8 @@ export function DocumentViewer({
   }, [findOpen]);
 
   return (
-    <div className="flex h-full min-h-[32rem] flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <button
           type="button"
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border-default px-2.5 text-caption font-medium text-secondary hover:bg-elevated lg:hidden"
@@ -574,7 +578,7 @@ export function DocumentViewer({
       </div>
 
       {findOpen ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-surface px-3 py-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-border-default bg-surface px-3 py-2">
           <label htmlFor="doc-find" className="sr-only">
             Search this document
           </label>
@@ -655,9 +659,8 @@ export function DocumentViewer({
         {/* Left navigation */}
         <aside
           className={cn(
-            "flex max-h-[70vh] flex-col overflow-hidden rounded-md border border-border-default bg-surface",
+            "flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-border-default bg-surface",
             navOpen ? "flex" : "hidden",
-            "xl:max-h-[calc(100vh-12rem)]",
           )}
         >
           <div
@@ -745,7 +748,7 @@ export function DocumentViewer({
         </aside>
 
         {/* Canvas */}
-        <div className="min-w-0 min-h-[28rem]">
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
           {viewMode === "knowledge" ? (
             canonical ? (
               <KnowledgeView
@@ -820,9 +823,9 @@ export function DocumentViewer({
                 scale={scale}
                 rotation={rotation}
                 onDocumentReady={handlePdfReady}
-                onLoadError={(msg) => setPdfError(msg)}
+                onLoadError={handlePdfError}
                 onVisiblePageChange={setCurrentPage}
-                className="max-h-[calc(100vh-14rem)] min-h-[28rem] border-0 bg-elevated/40"
+                className="min-h-0 flex-1 border-0 bg-elevated/40"
               />
               <ChunkNavigator
                 chunkId={activeChunkId}
@@ -872,7 +875,7 @@ export function DocumentViewer({
         </div>
 
         {/* Right inspector */}
-        <div className={cn(inspectorOpen ? "block" : "hidden", "min-h-0")}>
+        <div className={cn(inspectorOpen ? "flex" : "hidden", "min-h-0 h-full flex-col overflow-hidden")}>
           <AIContextPanel
             workspaceId={workspaceId}
             documentId={documentId}
