@@ -224,6 +224,9 @@ class FakeMessages:
     async def list(self, **kwargs: Any) -> list[Any]:
         return []
 
+    async def list_citations_for_message(self, message_id: uuid.UUID) -> list[Any]:
+        return []
+
 
 class FakeCitations:
     def __init__(self) -> None:
@@ -561,10 +564,12 @@ async def test_case3_and_4_api_json_and_sse(monkeypatch: pytest.MonkeyPatch) -> 
             assert sse_resp.status_code == 200
             assert "text/event-stream" in sse_resp.headers["content-type"]
             text = sse_resp.text
+            assert "event: status" in text
             assert "event: token" in text
             assert "event: citations" in text
             assert "event: done" in text
-            # citations appear after tokens
+            # citations appear after tokens; status may precede tokens
+            assert text.index("event: status") < text.index("event: token")
             assert text.index("event: token") < text.index("event: citations")
             assert text.index("event: citations") < text.index("event: done")
     finally:
@@ -577,3 +582,6 @@ def test_format_sse_shape() -> None:
     frame = format_sse(ChatStreamEvent(event="token", data={"text": "ab"}))
     assert frame.startswith("event: token\n")
     assert '"text": "ab"' in frame
+    status = format_sse(ChatStreamEvent(event="status", data={"stage": "retrieving"}))
+    assert status.startswith("event: status\n")
+    assert '"stage": "retrieving"' in status

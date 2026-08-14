@@ -14,6 +14,7 @@
  * Database/Table: N/A
  * Related Modules: ChatCitationContext, SourcePanel, AnswerContent
  * Important Notes: Never invent citations; missing title → fallback label.
+ *   Invalid/unverified citations are not mapped as source chips (FR5).
  * =============================================================================
  */
 
@@ -67,6 +68,7 @@ export function mapCitations(
   docsById: Map<string, DocumentMetaLookup>,
 ): CitationViewModel[] {
   return [...citations]
+    .filter((c) => Boolean(c.verified))
     .sort((a, b) => a.order_index - b.order_index)
     .map((c) => mapCitation(c, docsById));
 }

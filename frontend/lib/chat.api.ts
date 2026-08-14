@@ -17,8 +17,8 @@
  * Database/Table: N/A (talks to chat_sessions / chat_messages via API)
  * Related Modules: hooks/useChatSessions, useChatMessages, useChatStream
  * Important Notes:
- *   - SSE event order is fixed server-side: token* -> citations -> generation
- *     -> done, or a single error frame. Do not assume any other order.
+ *   - SSE event order: status* -> token* -> citations -> generation -> done,
+ *     or a single error frame. Status may precede the first token.
  *   - Must pass Accept: text/event-stream explicitly — apiFetch defaults to
  *     application/json when the caller does not set an Accept header.
  *   - Uses TextDecoder({stream:true}) so multi-byte UTF-8 (Vietnamese) text
@@ -73,6 +73,7 @@ export async function listChatMessages(
 // ---------------------------------------------------------------------------
 
 export type ChatStreamHandlers = {
+  onStatus?: (stage: string) => void;
   onToken?: (text: string) => void;
   onCitations?: (citations: Citation[]) => void;
   onGeneration?: (generation: MessageGeneration | null, message: ChatMessage) => void;
@@ -82,6 +83,7 @@ export type ChatStreamHandlers = {
 };
 
 type SseFramePayload =
+  | { type: "status"; stage: string }
   | { type: "token"; text: string }
   | { type: "citations"; citations: Citation[] }
   | { type: "generation"; generation: MessageGeneration | null; message: ChatMessage }
@@ -105,6 +107,9 @@ function dispatchFrame(frame: string, handlers: ChatStreamHandlers): void {
   }
 
   switch (payload.type) {
+    case "status":
+      handlers.onStatus?.(payload.stage ?? "");
+      break;
     case "token":
       handlers.onToken?.(payload.text ?? "");
       break;

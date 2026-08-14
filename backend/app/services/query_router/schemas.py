@@ -12,6 +12,7 @@
 # Database/Table: query_cache (view fields)
 # Related Modules: app.services.query_router.router, orchestrator
 # Important Notes: Router never answers — Orchestrator executes 0-LLM branches.
+#   CitationRef.verify is owned by Citation Verification (FR5), not the LLM mapper.
 # =============================================================================
 
 from __future__ import annotations
@@ -76,6 +77,7 @@ class CitationRef:
     document_id: UUID | None
     page_number: int | None = None
     verify: bool = True
+    text_snippet: str | None = None
 
 
 @dataclass(slots=True)

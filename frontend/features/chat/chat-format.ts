@@ -87,15 +87,26 @@ export function citationDisplayIndex(citation: Pick<Citation, "order_index">): n
   return Math.max(1, Number(citation.order_index) + 1);
 }
 
+const CITATION_UUID =
+  "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+const BRACKETED_UUID_LIST = new RegExp(
+  `\\[\\s*${CITATION_UUID}(?:\\s*,\\s*${CITATION_UUID})+\\s*\\]`,
+  "g",
+);
+const BRACKETED_UUID = new RegExp(`\\[\\s*${CITATION_UUID}\\s*\\]`, "g");
+
 /**
- * Defense-in-depth: strip any leftover bracketed UUIDs from answer prose
- * (backend should already rewrite/remove these before persist/stream).
+ * Defense-in-depth: strip leftover bracketed UUIDs (and UUID lists) from
+ * answer prose. Backend should already rewrite/remove these before persist.
  */
 export function stripLeakedCitationUuids(content: string): string {
-  return content.replace(
-    /\[\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*\]/g,
-    "",
-  );
+  return content
+    .replace(BRACKETED_UUID_LIST, "")
+    .replace(BRACKETED_UUID, "")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
 }
 
 /** Local calendar day key YYYY-MM-DD for grouping sessions. */

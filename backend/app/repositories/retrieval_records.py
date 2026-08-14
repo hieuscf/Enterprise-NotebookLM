@@ -5,16 +5,21 @@
 # Purpose: Persist Hybrid Retrieval candidates into ``retrievals`` (pass 1/2).
 # Responsibilities:
 #   - Bulk-insert RetrievalCandidate rows with retrieval_pass
-#   - get_latest_retrieval_pass / list_for_pass (Prompt Construction only)
+#   - list_integrity_for_cited_chunks: workspace/version/document joins WITHOUT
+#     loading DocumentChunk.content (source text comes from retrieved context)
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.retrieval.Retrieval
 # Public Exports:
 #   - RetrievalRecordRepository
-# Database/Table: retrievals
-# Related Modules: ComplexQueryPipeline, Prompt Construction
+# Database/Table: retrievals, document_chunks, document_versions, documents
+# Related Modules: ComplexQueryPipeline, Prompt Construction, Citation Verification
 # Important Notes:
 #   - Never overwrite pass=1 when writing pass=2 — insert only.
 #   - Prompt Construction MUST use list_for_latest_pass — never merge passes.
+#   - Integrity lookup is scoped to message_id + cited chunk_ids; never SELECT
+#     retrievals by id alone; never load full chunk text just to verify.
+#   - Deterministic verification. No LLM call.
+#   - Must validate workspace/message/retrieval membership.
 # =============================================================================
 
 from __future__ import annotations
@@ -25,8 +30,11 @@ from collections.abc import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.documents import Document, DocumentVersion
 from app.models.enums import RetrievalMethod
+from app.models.knowledge import DocumentChunk
 from app.models.retrieval import Retrieval
+from app.services.citation_verification.results import RetrievalEvidence
 from app.services.retrieval.schemas import RetrievalCandidate
 
 _METHOD_MAP: dict[str, RetrievalMethod] = {m.value: m for m in RetrievalMethod}
@@ -107,3 +115,78 @@ class RetrievalRecordRepository:
         if latest is None:
             return []
         return await self.list_for_pass(message_id=message_id, retrieval_pass=latest)
+
+    async def list_integrity_for_cited_chunks(
+        self,
+        *,
+        message_id: uuid.UUID,
+        chunk_ids: Sequence[uuid.UUID],
+    ) -> list[RetrievalEvidence]:
+        """Join cited retrievals to document/workspace — no chunk body.
+
+        Source text for Level 4 must come from retrieved context (in-memory),
+        not a full ``document_chunks.content`` reload of the entire pass.
+        """
+        ids = [cid for cid in chunk_ids if cid is not None]
+        if not ids:
+            return []
+        latest_pass = (
+            select(func.max(Retrieval.retrieval_pass))
+            .where(Retrieval.message_id == message_id)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                Retrieval,
+                DocumentChunk.document_version_id,
+                DocumentChunk.page_number,
+                DocumentVersion.id.label("version_pk"),
+                Document.id.label("document_pk"),
+                Document.workspace_id,
+            )
+            .outerjoin(DocumentChunk, Retrieval.chunk_id == DocumentChunk.id)
+            .outerjoin(
+                DocumentVersion,
+                DocumentChunk.document_version_id == DocumentVersion.id,
+            )
+            .outerjoin(Document, DocumentVersion.document_id == Document.id)
+            .where(
+                Retrieval.message_id == message_id,
+                Retrieval.retrieval_pass == latest_pass,
+                Retrieval.chunk_id.in_(ids),
+            )
+            .order_by(Retrieval.rank.asc())
+        )
+        rows = (await self._session.execute(stmt)).all()
+        evidence: list[RetrievalEvidence] = []
+        for (
+            retrieval,
+            chunk_version_id,
+            page_number,
+            version_pk,
+            document_pk,
+            workspace_id,
+        ) in rows:
+            chunk_id = retrieval.chunk_id
+            integrity_ok = (
+                chunk_id is not None
+                and version_pk is not None
+                and document_pk is not None
+                and workspace_id is not None
+            )
+            evidence.append(
+                RetrievalEvidence(
+                    retrieval_id=retrieval.id,
+                    message_id=retrieval.message_id,
+                    source_text="",  # filled from retrieved context by the merger
+                    workspace_id=workspace_id,
+                    chunk_id=chunk_id,
+                    entity_id=retrieval.entity_id,
+                    document_id=document_pk,
+                    document_version_id=chunk_version_id or version_pk,
+                    page_number=page_number,
+                    retrieval_pass=int(retrieval.retrieval_pass),
+                    source_integrity_ok=integrity_ok,
+                )
+            )
+        return evidence

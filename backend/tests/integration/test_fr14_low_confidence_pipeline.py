@@ -44,6 +44,7 @@ from app.services.event_policy.agents.graph_agent import GraphAgent
 from app.services.event_policy.agents.rewrite_agent import RewriteAgent
 from app.services.event_policy.agents.sql_agent import SqlAgent
 from app.services.query_router.response_models import QueryRouterResult
+from app.services.query_router.schemas import CitationRef
 from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 
 
@@ -144,16 +145,33 @@ class FakeAnswerGenerator:
     async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
         self.calls += 1
         self.queries.append(kwargs["query_text"])
+        retrieval = kwargs.get("retrieval_result")
+        items = list(getattr(retrieval, "items", None) or [])
+        refs: list[CitationRef] = []
+        raw_ids: list[str] = []
+        if items and getattr(items[0], "chunk_id", None) is not None:
+            cand = items[0]
+            raw_ids.append(str(cand.chunk_id))
+            refs.append(
+                CitationRef(
+                    chunk_id=cand.chunk_id,
+                    document_id=cand.document_id,
+                    page_number=cand.page_number,
+                    verify=False,
+                    text_snippet=cand.text_snippet,
+                )
+            )
         return AnswerGenerationResult(
             answer="final answer",
-            citation_refs=[],
+            citation_refs=refs,
+            raw_citation_ids=raw_ids,
             model_used="claude-sonnet-mock",
             prompt_tokens=10,
             completion_tokens=20,
             total_tokens=30,
             cost_usd=Decimal("0.01"),
             latency_ms=50,
-            verify=True,
+            verify=False,
         )
 
 

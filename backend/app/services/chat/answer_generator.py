@@ -5,7 +5,8 @@
 # Purpose: AnswerGeneratorPort — build_prompt → 1 structured LLM → citation map.
 # Responsibilities:
 #   - Model tiering from Settings; structured {answer, citation_ids}
-#   - Map citation_ids against latest-pass retrieval items only
+#   - Map citation_ids against latest-pass retrieval items only (membership
+#     pre-filter). Citation Verification Layer owns verified=True.
 #   - Structured stage logging (llm_request_started / llm_response_received /
 #     llm_structured_output_parsed / chat_answer_llm_failed) — no prompt or
 #     document content in logs, ever
@@ -20,6 +21,7 @@
 #   failures (incl. EmptyCompletionError) are re-raised here — never coerced
 #   into ``answer=""`` — so the caller (ComplexQueryPipeline) can classify and
 #   fall back deterministically without a second LLM call.
+#   Citation Verification is a separate layer — this class only maps ids.
 # =============================================================================
 
 from __future__ import annotations
@@ -229,25 +231,20 @@ class PromptAnswerGenerator:
                     chunk_id=cand.chunk_id,
                     document_id=cand.document_id,
                     page_number=cand.page_number,
-                    verify=True,
+                    verify=False,  # Citation Verification Layer owns this flag
+                    text_snippet=(cand.text_snippet or "").strip() or None,
                 )
             )
             seen_chunk.add(cid)
-        # Never persist/stream raw chunk UUIDs inside answer prose — rewrite
-        # verified [uuid] markers to presentation [n], drop the rest.
-        if answer:
-            from app.services.chat.answer_sanitizer import rewrite_inline_citation_markers
-
-            answer = rewrite_inline_citation_markers(
-                answer,
-                [str(ref.chunk_id) for ref in citation_refs if ref.chunk_id is not None],
-            ) or None
+        # Inline [uuid] → [n] rewrite happens AFTER Citation Verification so
+        # presentation indexes match the verified subset only.
+        raw_citation_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
         logger.info(
             "llm_structured_output_parsed",
             workspace_id=str(workspace_id),
             has_answer=bool(answer),
-            raw_citation_id_count=len(raw_ids),
-            valid_citation_id_count=len(citation_refs),
+            raw_citation_id_count=len(raw_citation_ids),
+            mapped_citation_id_count=len(citation_refs),
         )
 
         total_tokens = int(llm.input_tokens) + int(llm.output_tokens)
@@ -269,6 +266,7 @@ class PromptAnswerGenerator:
             total_tokens=total_tokens,
             cost_usd=Decimal(str(llm.estimated_cost_usd)),
             latency_ms=latency_ms,
-            verify=bool(citation_refs) if answer else False,
+            verify=False,
             expansion_items=expansion_items,
+            raw_citation_ids=raw_citation_ids,
         )

@@ -7,15 +7,20 @@
 #   - Post-rerank confidence; High → Prompt/LLM; Low → agent (+ optional pass=2)
 #   - Persist retrievals / agent_events / message_generations confidence fields
 #   - Enforce one-agent + one-Second-Retrieval limit (no loops)
+#   - Run Citation Verification (FR5) after the answer LLM — deterministic, no LLM
 # Dependencies:
 #   - HybridRetrievalService, confidence_engine, event_policy, agents, repos
+#   - CitationVerificationService
 # Public Exports:
 #   - ComplexQueryPipeline, ComplexPipelineResult, AnswerGeneratorPort
-# Database/Table: retrievals, agent_events, message_generations
-# Related Modules: QueryOrchestrator (complex branch), Prompt Construction
+# Database/Table: retrievals, agent_events, message_generations, citations
+# Related Modules: QueryOrchestrator (complex branch), Prompt Construction,
+#   Citation Verification Layer
 # Important Notes:
 #   - Only for route_type=complex. Does not alter Query Router classification.
 #   - Rewrite Agent Haiku is the sole lightweight-model exception (not answer LLM).
+#   - Deterministic verification. No LLM call.
+#   - Must validate workspace/message/retrieval membership.
 # =============================================================================
 
 from __future__ import annotations
@@ -33,6 +38,13 @@ from app.models.enums import AgentType, ConfidenceLevel, RouteType
 from app.repositories.agent_events import AgentEventRepository
 from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
+from app.services.chat.answer_sanitizer import rewrite_inline_citation_markers
+from app.services.citation_verification.service import (
+    INSUFFICIENT_EVIDENCE_ANSWER,
+    CitationVerificationService,
+    evidence_from_candidates,
+    merge_retrieved_and_persisted_evidence,
+)
 from app.services.event_policy.agents.graph_agent import GraphAgent
 from app.services.event_policy.agents.rewrite_agent import RewriteAgent
 from app.services.event_policy.agents.sql_agent import SqlAgent
@@ -75,6 +87,8 @@ class AnswerGenerationResult:
     # retrieval passed in. These are persisted into ``retrievals`` too so
     # Citation Verification can resolve citation_ids pointing at them.
     expansion_items: list[RetrievalCandidate] = field(default_factory=list)
+    # Raw LLM citation_ids (including unknowns) for Citation Verification.
+    raw_citation_ids: list[str] = field(default_factory=list)
 
 
 class AnswerGeneratorPort(Protocol):
@@ -152,6 +166,7 @@ class ComplexQueryPipeline:
         self._sql = sql_agent
         self._answer_generator = answer_generator
         self._top_k = max(1, int(retrieval_top_k))
+        self._citation_verifier = CitationVerificationService()
 
     async def run(
         self,
@@ -413,17 +428,23 @@ class ComplexQueryPipeline:
                 low_confidence_after_retry=low_after_retry,
             )
         else:
+            verified_answer, verified_refs, verify_flag = await self._verify_llm_citations(
+                workspace_id=workspace_id,
+                message_id=message_id,
+                retrieval_result=active_retrieval,
+                answer_result=answer_result,
+            )
             result = ComplexPipelineResult(
-                answer=answer_result.answer,
-                citation_refs=list(answer_result.citation_refs),
+                answer=verified_answer,
+                citation_refs=verified_refs,
                 metadata={
                     "route_type": RouteType.complex.value,
                     "second_retrieval_executed": second_retrieval_executed,
                     "retrieval_item_count": len(active_retrieval.items),
                     "low_confidence_after_retry": low_after_retry,
                 },
-                verify=bool(answer_result.verify),
-                status=COMPLETED_STATUS if answer_result.answer else PENDING_LLM_STATUS,
+                verify=verify_flag,
+                status=COMPLETED_STATUS if verified_answer else PENDING_LLM_STATUS,
                 confidence_score=confidence.confidence_score,
                 confidence_level=confidence.confidence_level,
                 agent_triggered=agent_triggered,
@@ -539,6 +560,98 @@ class ComplexQueryPipeline:
             )
 
         return event_data, rewrite_llm_calls, sql_answer, sql_direct, active_query
+
+    async def _verify_llm_citations(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        retrieval_result: RetrievalResult,
+        answer_result: AnswerGenerationResult,
+    ) -> tuple[str | None, list[CitationRef], bool]:
+        """Run FR5 Citation Verification on the LLM answer before Chat persist/stream."""
+        original = (answer_result.answer or "").strip() or None
+        if original is None:
+            return None, [], False
+
+        cited_ids = list(answer_result.raw_citation_ids)
+        if not cited_ids:
+            cited_ids = [
+                str(ref.chunk_id)
+                for ref in answer_result.citation_refs
+                if ref.chunk_id is not None
+            ]
+        if not cited_ids and answer_result.model_used is None:
+            # Provider-not-configured / non-LLM answer — not a factual claim.
+            return original, [], False
+
+        evidence = await self._load_verification_evidence(
+            workspace_id=workspace_id,
+            message_id=message_id,
+            retrieval_result=retrieval_result,
+            expansion_items=answer_result.expansion_items,
+            cited_ids=cited_ids,
+        )
+        snippet_map = {
+            str(ref.chunk_id): ref.text_snippet
+            for ref in answer_result.citation_refs
+            if ref.chunk_id is not None and ref.text_snippet
+        }
+        report = self._citation_verifier.verify(
+            workspace_id=workspace_id,
+            message_id=message_id,
+            cited_ids=cited_ids,
+            evidence=evidence,
+            snippet_by_citation_id=snippet_map,
+        )
+        verified_refs = self._citation_verifier.to_citation_refs(report)
+        if not report.has_verified:
+            logger.info(
+                "citation_verification_fallback",
+                workspace_id=str(workspace_id),
+                message_id=str(message_id),
+                invalid_count=report.invalid_count,
+            )
+            return INSUFFICIENT_EVIDENCE_ANSWER, [], False
+
+        rewritten = rewrite_inline_citation_markers(
+            original,
+            [str(ref.chunk_id) for ref in verified_refs if ref.chunk_id is not None],
+        ) or original
+        return rewritten, verified_refs, True
+
+    async def _load_verification_evidence(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        retrieval_result: RetrievalResult,
+        expansion_items: Sequence[RetrievalCandidate],
+        cited_ids: Sequence[str],
+    ) -> list:
+        """Retrieved-context text + lightweight integrity joins for cited chunks only."""
+        candidates = list(retrieval_result.items) + list(expansion_items or [])
+        retrieved = evidence_from_candidates(
+            workspace_id=workspace_id,
+            message_id=message_id,
+            candidates=candidates,
+        )
+        chunk_ids = _parse_chunk_uuids(cited_ids)
+        persisted = []
+        loader = getattr(self._retrieval_records, "list_integrity_for_cited_chunks", None)
+        if loader is not None and chunk_ids:
+            try:
+                persisted = await loader(message_id=message_id, chunk_ids=chunk_ids)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "citation_verification_evidence_load_failed",
+                    error=type(exc).__name__,
+                )
+                persisted = []
+        return merge_retrieved_and_persisted_evidence(
+            retrieved=retrieved,
+            persisted=persisted,
+        )
 
     async def _generate_answer(
         self,
@@ -657,6 +770,22 @@ class ComplexQueryPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("complex_persist_message_generation_failed", error=str(exc))
             return None
+
+
+def _parse_chunk_uuids(cited_ids: Sequence[str]) -> list[UUID]:
+    """Keep only parseable unique chunk UUIDs for the integrity join."""
+    out: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw in cited_ids:
+        try:
+            cid = UUID(str(raw).strip())
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if cid in seen:
+            continue
+        seen.add(cid)
+        out.append(cid)
+    return out
 
 
 def _to_reranked(items: Sequence[RetrievalCandidate]) -> list[RerankedItem]:

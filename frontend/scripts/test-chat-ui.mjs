@@ -153,10 +153,14 @@ function citationDisplayIndex(citation) {
   return Math.max(1, Number(citation.order_index) + 1);
 }
 function stripLeakedCitationUuids(content) {
-  return content.replace(
-    /\[\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\s*\]/g,
-    "",
-  );
+  const uuid =
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+  return content
+    .replace(new RegExp(`\\[\\s*${uuid}(?:\\s*,\\s*${uuid})+\\s*\\]`, "g"), "")
+    .replace(new RegExp(`\\[\\s*${uuid}\\s*\\]`, "g"), "")
+    .replace(/[ \t]+([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 assert(citationDisplayIndex({ order_index: 0 }) === 1, "order_index 0 → display [1]");
 assert(citationDisplayIndex({ order_index: 2 }) === 3, "order_index 2 → display [3]");
@@ -165,6 +169,12 @@ assert(
     "84672b7c",
   ) === false,
   "Frontend strips leftover bracketed UUIDs",
+);
+assert(
+  stripLeakedCitationUuids(
+    "Bên B phải báo cáo. [ed4461c9-c07b-4c33-af2a-ddf3ae376034, 6a15ed42-0217-4c94-8fe2-3fa9dfd4241f]",
+  ) === "Bên B phải báo cáo.",
+  "Frontend strips trailing UUID lists",
 );
 
 // --- formatRelativeTime ---------------------------------------------------

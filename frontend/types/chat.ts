@@ -9,7 +9,7 @@
  * Dependencies:
  *   - docs/Enterprise_notebooklm_openapi.yaml §Chat
  * Public Exports:
- *   - ChatSession, ChatMessage, MessageGeneration
+ *   - ChatSession, ChatMessage, MessageGeneration, ChatPipelineStage
  *   - MessageRole, RouteType, ConfidenceLevel, FinishReason
  * Database/Table: N/A
  * Related Modules: lib/chat.api.ts, features/chat/*, types/citations
@@ -27,6 +27,9 @@ export type MessageRole = "user" | "assistant";
 
 /** Client-side lifecycle for live streaming (history rows omit this → completed). */
 export type ChatMessageStatus = "pending" | "streaming" | "completed" | "failed";
+
+/** Live-only pipeline hint while waiting for the first token (SSE `status`). */
+export type ChatPipelineStage = "retrieving" | "generating" | "verifying";
 
 export type RouteType = "cache_hit" | "metadata" | "factoid" | "complex";
 
@@ -66,4 +69,6 @@ export type ChatMessage = {
   created_at: string;
   /** Live-only; omitted on GET history (treat as completed). */
   status?: ChatMessageStatus;
+  /** Live-only SSE stage while content is still empty. */
+  pipeline_stage?: ChatPipelineStage;
 };

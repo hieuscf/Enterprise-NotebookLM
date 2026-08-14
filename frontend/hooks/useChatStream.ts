@@ -24,11 +24,9 @@
  *     setMessages), not as a second duplicated object.
  *   - Session list refresh is the caller's responsibility via onSettled —
  *     never called per-token, only once the stream finishes (done/error).
- *   - Aborting only stops the client from reading further chunks; the
- *     backend has already computed+persisted the full answer by the time
- *     streaming starts (see message_service.stream_answer_events), so the
- *     partial text is intentionally left as-is rather than silently
- *     replaced with the full answer.
+ *   - Aborting only stops the client from reading further chunks. Status
+ *     frames arrive before tokens; the verified answer is still computed
+ *     fully before the first token (see message_service.stream_answer_events).
  *   - On a genuine failure (SSE error frame or network drop) before any
  *     token arrived, the empty optimistic assistant placeholder is removed
  *     so the UI shows only the error banner + retry, never a confusing
@@ -130,6 +128,7 @@ export function useChatStream(
           citations: [],
           created_at: nowIso,
           status: "pending",
+          pipeline_stage: "retrieving",
         },
       ]);
 
@@ -143,12 +142,22 @@ export function useChatStream(
           sessionId,
           trimmed,
           {
+            onStatus: (stage) => {
+              setMessages((prev) =>
+                patchAssistant(prev, assistantIdRef.current, (m) => ({
+                  ...m,
+                  pipeline_stage: stage as ChatMessage["pipeline_stage"],
+                  status: m.status === "pending" ? "streaming" : m.status,
+                })),
+              );
+            },
             onToken: (text) => {
               setMessages((prev) =>
                 patchAssistant(prev, assistantIdRef.current, (m) => ({
                   ...m,
                   content: m.content + text,
                   status: "streaming",
+                  pipeline_stage: undefined,
                 })),
               );
             },

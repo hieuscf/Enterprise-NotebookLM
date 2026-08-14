@@ -137,7 +137,9 @@ export function ConversationPanel({
             );
           })}
 
-          {waitingForFirstToken ? <ThinkingIndicator /> : null}
+          {waitingForFirstToken ? (
+            <ThinkingIndicator stage={lastMessage?.pipeline_stage} />
+          ) : null}
 
           {streamError ? (
             <div

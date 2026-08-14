@@ -24,14 +24,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.adapters.llm_result import EmptyCompletionError
 from app.core.config import Settings
 from app.models.enums import (
     AgentTriggerReason,
     AgentType,
     ConfidenceLevel,
-    RouteType,
 )
-from app.adapters.llm_result import EmptyCompletionError
 from app.services.chat.complex_query_pipeline import (
     PENDING_LLM_STATUS,
     AnswerGenerationResult,
@@ -41,6 +40,7 @@ from app.services.event_policy.agents.graph_agent import GraphAgentResult
 from app.services.event_policy.agents.rewrite_agent import RewriteAgentResult
 from app.services.event_policy.agents.sql_agent import SqlAgentResult
 from app.services.event_policy.models import AgentEventData
+from app.services.query_router.schemas import CitationRef
 from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 
 
@@ -124,16 +124,33 @@ class FakeAnswerGenerator:
     async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
         self.calls += 1
         self.queries.append(kwargs["query_text"])
+        retrieval = kwargs.get("retrieval_result")
+        items = list(getattr(retrieval, "items", None) or [])
+        refs: list[CitationRef] = []
+        raw_ids: list[str] = []
+        if items and getattr(items[0], "chunk_id", None) is not None:
+            cand = items[0]
+            raw_ids.append(str(cand.chunk_id))
+            refs.append(
+                CitationRef(
+                    chunk_id=cand.chunk_id,
+                    document_id=cand.document_id,
+                    page_number=cand.page_number,
+                    verify=False,
+                    text_snippet=cand.text_snippet,
+                )
+            )
         return AnswerGenerationResult(
             answer="final answer",
-            citation_refs=[],
+            citation_refs=refs,
+            raw_citation_ids=raw_ids,
             model_used="claude-sonnet-mock",
             prompt_tokens=10,
             completion_tokens=20,
             total_tokens=30,
             cost_usd=Decimal("0.01"),
             latency_ms=50,
-            verify=True,
+            verify=False,
         )
 
 
@@ -417,3 +434,133 @@ async def test_case6_provider_empty_completion_never_becomes_fake_success() -> N
     # but honestly reflects failure — never a fake successful model/answer.
     assert len(obs.generations) == 1
     assert obs.generations[0]["model_used"] is None
+
+
+@pytest.mark.asyncio
+async def test_citation_verification_happy_path_marks_verified() -> None:
+    pipe, _, _, _, _ = _pipeline()
+    initial = _result(0.97, 0.55, 0.40)
+    result = await pipe.run(
+        workspace_id=uuid.uuid4(),
+        query_text="Explain the policy",
+        message_id=uuid.uuid4(),
+        initial_retrieval=initial,
+        assistant_message_id=uuid.uuid4(),
+    )
+    assert result.answer == "final answer"
+    assert result.verify is True
+    assert len(result.citation_refs) == 1
+    assert result.citation_refs[0].verify is True
+    assert result.citation_refs[0].chunk_id == initial.items[0].chunk_id
+
+
+@pytest.mark.asyncio
+async def test_citation_verification_unknown_id_falls_back() -> None:
+    from app.services.citation_verification.service import INSUFFICIENT_EVIDENCE_ANSWER
+
+    class BadCitations:
+        calls = 0
+        queries: list[str] = []
+
+        async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
+            self.calls += 1
+            self.queries.append(kwargs["query_text"])
+            return AnswerGenerationResult(
+                answer="Hallucinated claim with a fake source.",
+                citation_refs=[],
+                raw_citation_ids=[str(uuid.uuid4())],
+                model_used="claude-sonnet-mock",
+                verify=False,
+            )
+
+    pipe, _, _, _, _ = _pipeline(answer=BadCitations())  # type: ignore[arg-type]
+    result = await pipe.run(
+        workspace_id=uuid.uuid4(),
+        query_text="Explain the policy",
+        message_id=uuid.uuid4(),
+        initial_retrieval=_result(0.97, 0.55, 0.40),
+        assistant_message_id=uuid.uuid4(),
+    )
+    assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
+    assert result.citation_refs == []
+    assert result.verify is False
+
+
+@pytest.mark.asyncio
+async def test_citation_verification_partial_keeps_valid_only() -> None:
+    class PartialCitations:
+        calls = 0
+        queries: list[str] = []
+
+        async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
+            self.calls += 1
+            retrieval = kwargs["retrieval_result"]
+            good = retrieval.items[0]
+            return AnswerGenerationResult(
+                answer="Grounded answer",
+                citation_refs=[
+                    CitationRef(
+                        chunk_id=good.chunk_id,
+                        document_id=good.document_id,
+                        verify=False,
+                        text_snippet=good.text_snippet,
+                    )
+                ],
+                raw_citation_ids=[str(good.chunk_id), str(uuid.uuid4())],
+                model_used="claude-sonnet-mock",
+                verify=False,
+            )
+
+    pipe, _, _, _, _ = _pipeline(answer=PartialCitations())  # type: ignore[arg-type]
+    initial = _result(0.97, 0.55, 0.40)
+    result = await pipe.run(
+        workspace_id=uuid.uuid4(),
+        query_text="Explain the policy",
+        message_id=uuid.uuid4(),
+        initial_retrieval=initial,
+        assistant_message_id=uuid.uuid4(),
+    )
+    assert result.answer == "Grounded answer"
+    assert result.verify is True
+    assert len(result.citation_refs) == 1
+    assert result.citation_refs[0].chunk_id == initial.items[0].chunk_id
+
+
+@pytest.mark.asyncio
+async def test_citation_verification_snippet_not_in_source_rejected() -> None:
+    from app.services.citation_verification.service import INSUFFICIENT_EVIDENCE_ANSWER
+
+    class BadSnippet:
+        calls = 0
+        queries: list[str] = []
+
+        async def generate(self, **kwargs: Any) -> AnswerGenerationResult:
+            self.calls += 1
+            cand = kwargs["retrieval_result"].items[0]
+            return AnswerGenerationResult(
+                answer="Cost dropped 80%.",
+                citation_refs=[
+                    CitationRef(
+                        chunk_id=cand.chunk_id,
+                        document_id=cand.document_id,
+                        verify=False,
+                        text_snippet="Enterprise NotebookLM reduces cost by 80%",
+                    )
+                ],
+                raw_citation_ids=[str(cand.chunk_id)],
+                model_used="claude-sonnet-mock",
+                verify=False,
+            )
+
+    pipe, _, _, _, _ = _pipeline(answer=BadSnippet())  # type: ignore[arg-type]
+    result = await pipe.run(
+        workspace_id=uuid.uuid4(),
+        query_text="What is the savings?",
+        message_id=uuid.uuid4(),
+        initial_retrieval=_result(0.97),
+        assistant_message_id=uuid.uuid4(),
+    )
+    assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
+    assert result.citation_refs == []
+    assert result.verify is False
+

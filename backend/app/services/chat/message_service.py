@@ -6,18 +6,21 @@
 # Responsibilities:
 #   - generate_answer(): single business entry for JSON + SSE handlers
 #   - 0-LLM routes: assistant + message_generations; complex: FR14 pipeline + LLM
-#   - Session touch / last_message summary; citation mapping (latest pass only)
+#   - Session touch / last_message summary; persist verified citations only
 # Dependencies:
 #   - QueryOrchestrator, ChatSessionRepository, ChatMessageRepository,
 #     CitationRepository, RetrievalRecordRepository, QueryObservabilityRepository
 # Public Exports:
 #   - MessageProcessingService, MessageProcessResult, ChatStreamEvent
 # Database/Table: chat_messages, message_generations, citations, chat_sessions
-# Related Modules: app.api.chat
+# Related Modules: app.api.chat, Citation Verification Layer
 # Important Notes:
 #   - Does not alter Query Router / Confidence / Agent logic.
-#   - SSE emits token chunks after structured generation (citations last).
-#   - Commit before yielding SSE so live UI / remount refetch sees content.
+#   - SSE: status (retrieving/generating) immediately, then tokens after
+#     verification; citations last. Never stream an unverified final answer.
+#   - Commit before yielding tokens so live UI / remount refetch sees content.
+#   - Deterministic verification. No LLM call.
+#   - Must validate workspace/message/retrieval membership.
 # =============================================================================
 
 from __future__ import annotations
@@ -74,7 +77,7 @@ class MessageProcessResult:
 class ChatStreamEvent:
     """One SSE payload unit."""
 
-    event: Literal["token", "citations", "generation", "done", "error"]
+    event: Literal["status", "token", "citations", "generation", "done", "error"]
     data: dict[str, Any] = field(default_factory=dict)
 
 
@@ -267,7 +270,11 @@ class MessageProcessingService:
         user_id: UUID,
         content: str,
     ) -> AsyncIterator[ChatStreamEvent]:
-        """SSE adapter over generate_answer — tokens then citations/generation/done."""
+        """SSE adapter — status first, then tokens after verification."""
+        # Flush progress before the (slow) retrieve + LLM + verify path so
+        # the client is not stuck on a blank bubble until the first token.
+        yield ChatStreamEvent(event="status", data={"stage": "retrieving"})
+        yield ChatStreamEvent(event="status", data={"stage": "generating"})
         try:
             result = await self.generate_answer(
                 workspace_id=workspace_id,
@@ -275,8 +282,8 @@ class MessageProcessingService:
                 user_id=user_id,
                 content=content,
             )
-            # Persist before the first SSE byte so a client remount/refetch
-            # during/after the stream cannot load the empty placeholder row.
+            # Persist before tokens so a client remount/refetch cannot load
+            # the empty placeholder row.
             await self._session.commit()
         except ChatServiceError as exc:
             yield ChatStreamEvent(
@@ -355,11 +362,16 @@ class MessageProcessingService:
             return []
         # Latest pass only — never merge pass1 + pass2.
         latest_rows = await self._retrieval_records.list_for_latest_pass(user_message_id)
-        # Prefer snippets from in-memory refs via chunk lookup on latest rows only.
         snippet_by_chunk: dict[UUID, str] = {}
+        for ref in citation_refs:
+            if ref.verify and ref.chunk_id is not None and (ref.text_snippet or "").strip():
+                snippet_by_chunk[ref.chunk_id] = (ref.text_snippet or "").strip()
+        verified_refs = [ref for ref in citation_refs if ref.verify]
+        if not verified_refs:
+            return []
         return await self._citations.insert_mapped(
             message_id=assistant_message_id,
-            citation_refs=citation_refs,
+            citation_refs=verified_refs,
             latest_pass_rows=latest_rows,
             snippet_by_chunk_id=snippet_by_chunk,
         )
