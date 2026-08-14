@@ -1,0 +1,128 @@
+===== PAGE 1 =====
+TÀI LIỆU MẪU PHỤC VỤ KIỂM THỬ HỆ THỐNG — HỢP ĐỒNG HƯ CẤU
+Trang 1
+CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+Độc lập - Tự do - Hạnh phúc
+HỢP ĐỒNG CUNG CẤP DỊCH VỤ PHẦN MỀM
+Số: 08/2026/HĐDV-A
+Hôm nay, ngày 15 tháng 08 năm 2026, tại Thành phố Hồ Chí Minh, chúng tôi gồm có:
+BÊN A — BÊN THUÊ DỊCH VỤ: CÔNG TY TNHH THƯƠNG MẠI MINH ANH
+Mã số doanh nghiệp: 0312345678
+Địa chỉ: 120 Nguyễn Văn Trỗi, Phường 8, Quận Phú Nhuận, TP. Hồ Chí Minh
+Đại diện: Bà Nguyễn Minh Anh — Chức vụ: Tổng Giám đốc
+BÊN B — BÊN CUNG CẤP DỊCH VỤ: CÔNG TY CỔ PHẦN CÔNG NGHỆ HẢI ĐĂNG
+Mã số doanh nghiệp: 0318765432
+Địa chỉ: 25 Đường số 6, Khu đô thị Sala, TP. Thủ Đức, TP. Hồ Chí Minh
+Đại diện: Ông Trần Quốc Hải — Chức vụ: Tổng Giám đốc
+Sau khi bàn bạc trên tinh thần thiện chí, hai bên thống nhất ký Hợp đồng với các điều khoản sau:
+ĐIỀU 1. PHẠM VI CÔNG VIỆC
+1.1. Bên B cung cấp cho Bên A dịch vụ triển khai, cấu hình và hỗ trợ vận hành nền tảng quản lý tài
+liệu doanh nghiệp, bao gồm: (i) cấu hình môi trường; (ii) nhập dữ liệu mẫu; (iii) hướng dẫn sử dụng;
+và (iv) hỗ trợ kỹ thuật từ xa.
+1.2. Chi tiết tính năng và tiêu chí nghiệm thu được quy định tại Phụ lục 01. Mọi công việc ngoài phạm
+vi phải được hai bên xác nhận bằng văn bản.
+1.3. Bên B có trách nhiệm bảo đảm dịch vụ phù hợp với thông số kỹ thuật đã được hai bên thống
+nhất.
+ĐIỀU 2. THỜI HẠN THỰC HIỆN
+2.1. Thời hạn thực hiện là 06 tháng kể từ ngày ký Hợp đồng. Việc gia hạn phải được hai bên xác nhận
+bằng phụ lục.
+2.2. Thời gian triển khai ban đầu dự kiến 30 ngày kể từ ngày Bên B nhận đủ thông tin và khoản thanh
+toán đầu tiên.
+ĐIỀU 3. GIÁ TRỊ HỢP ĐỒNG VÀ THANH TOÁN
+3.1. Tổng giá trị Hợp đồng là 480.000.000 đồng (Bốn trăm tám mươi triệu đồng), chưa bao gồm VAT.
+3.2. Bên A thanh toán: 40% trong vòng 05 ngày làm việc từ ngày ký; 40% sau khi nghiệm thu giai
+đoạn triển khai; 20% trong vòng 10 ngày kể từ ngày nghiệm thu cuối cùng.
+3.3. Phí dịch vụ hỗ trợ ngoài giờ, nếu có, chỉ phát sinh khi Bên A yêu cầu và được Bên A phê duyệt
+trước bằng văn bản.
+ĐIỀU 4. NGHIỆM THU
+4.1. Bên A kiểm tra kết quả trong vòng 07 ngày làm việc kể từ ngày nhận thông báo hoàn thành.
+Nếu có lỗi, Bên A lập danh sách lỗi và gửi Bên B để khắc phục.
+4.2. Các lỗi mức nghiêm trọng phải được khắc phục trước khi nghiệm thu. Lỗi không ảnh hưởng đáng
+kể đến việc sử dụng không làm trì hoãn nghiệm thu và được ghi nhận để khắc phục trong thời hạn
+bảo hành.
+4.3. Nếu Bên A không có ý kiến bằng văn bản trong thời hạn kiểm tra nêu trên, kết quả được xem là
+đã được nghiệm thu.
+ĐIỀU 5. BẢO MẬT VÀ DỮ LIỆU
+
+===== PAGE 2 =====
+TÀI LIỆU MẪU PHỤC VỤ KIỂM THỬ HỆ THỐNG — HỢP ĐỒNG HƯ CẤU
+Trang 2
+5.1. Mỗi bên phải bảo mật thông tin kinh doanh, kỹ thuật, tài chính và dữ liệu nhận được từ bên kia
+trong quá trình thực hiện Hợp đồng.
+5.2. Nghĩa vụ bảo mật không áp dụng đối với thông tin đã công khai hợp pháp hoặc phải cung cấp
+theo yêu cầu của cơ quan nhà nước có thẩm quyền.
+5.3. Bên B chỉ được sử dụng dữ liệu của Bên A cho mục đích thực hiện Hợp đồng và phải áp dụng
+biện pháp bảo vệ phù hợp.
+5.4. Nghĩa vụ bảo mật tiếp tục có hiệu lực trong 03 năm sau khi Hợp đồng chấm dứt.
+ĐIỀU 6. SỞ HỮU TRÍ TUỆ
+6.1. Dữ liệu, tài liệu và nội dung do Bên A cung cấp thuộc quyền của Bên A.
+6.2. Các công cụ, thư viện, nền tảng, mẫu biểu và thành phần phần mềm có trước ngày ký Hợp đồng
+thuộc quyền của Bên B hoặc bên cấp phép tương ứng.
+6.3. Đối với phần cấu hình được tạo riêng cho Bên A và đã được thanh toán đầy đủ, Bên A được
+quyền sử dụng nội bộ không độc quyền trong thời hạn Hợp đồng và các tài liệu bàn giao liên quan.
+ĐIỀU 7. BẢO HÀNH VÀ HỖ TRỢ
+7.1. Bên B bảo hành kết quả triển khai trong 90 ngày kể từ ngày nghiệm thu cuối cùng.
+7.2. Thời gian phản hồi sự cố mức nghiêm trọng không quá 04 giờ làm việc kể từ khi nhận thông báo
+hợp lệ.
+7.3. Bảo hành không bao gồm lỗi phát sinh từ việc Bên A tự ý thay đổi cấu hình hoặc sử dụng hệ
+thống trái hướng dẫn.
+ĐIỀU 8. TRÁCH NHIỆM VÀ GIỚI HẠN BỒI THƯỜNG
+8.1. Bên vi phạm phải bồi thường thiệt hại trực tiếp, thực tế và hợp lý phát sinh do lỗi của mình.
+8.2. Tổng trách nhiệm bồi thường của mỗi bên theo Hợp đồng không vượt quá 100% tổng giá trị Hợp
+đồng, trừ trường hợp thiệt hại phát sinh do hành vi cố ý hoặc vi phạm nghĩa vụ bảo mật.
+ĐIỀU 9. CHẤM DỨT HỢP ĐỒNG
+9.1. Mỗi bên có quyền chấm dứt Hợp đồng nếu bên kia vi phạm nghĩa vụ trọng yếu và không khắc
+phục trong vòng 15 ngày kể từ ngày nhận thông báo.
+9.2. Bên A có quyền chấm dứt vì nhu cầu kinh doanh bằng thông báo trước 30 ngày; khi đó Bên A
+thanh toán phần dịch vụ đã thực hiện và các chi phí hợp lý đã cam kết.
+ĐIỀU 10. BẤT KHẢ KHÁNG
+10.1. Sự kiện bất khả kháng là sự kiện xảy ra ngoài khả năng kiểm soát hợp lý của bên bị ảnh hưởng
+và làm cho việc thực hiện nghĩa vụ trở nên không thể thực hiện trong thời gian tương ứng.
+10.2. Bên bị ảnh hưởng phải thông báo cho bên kia trong thời hạn 05 ngày làm việc kể từ khi xảy ra
+sự kiện và chủ động giảm thiểu ảnh hưởng.
+ĐIỀU 11. LUẬT ÁP DỤNG VÀ GIẢI QUYẾT TRANH CHẤP
+11.1. Hợp đồng được điều chỉnh bởi pháp luật Việt Nam.
+11.2. Mọi tranh chấp trước hết được giải quyết bằng thương lượng trong 30 ngày. Nếu không giải
+quyết được, tranh chấp được đưa ra Tòa án có thẩm quyền tại Thành phố Hồ Chí Minh.
+ĐIỀU 12. ĐIỀU KHOẢN CHUNG
+12.1. Mọi sửa đổi, bổ sung Hợp đồng phải được lập thành văn bản và có chữ ký của đại diện hợp
+pháp hai bên, trừ các trường hợp Hợp đồng quy định khác.
+12.2. Nếu một điều khoản bị tuyên vô hiệu, các điều khoản còn lại vẫn giữ nguyên hiệu lực.
+12.3. Hợp đồng được lập thành 02 bản có giá trị pháp lý như nhau, mỗi bên giữ 01 bản.
+12.4. Hợp đồng có hiệu lực kể từ ngày ký.
+
+===== PAGE 3 =====
+TÀI LIỆU MẪU PHỤC VỤ KIỂM THỬ HỆ THỐNG — HỢP ĐỒNG HƯ CẤU
+Trang 3
+ĐẠI DIỆN BÊN A
+ĐẠI DIỆN BÊN B
+CÔNG TY TNHH THƯƠNG MẠI MINH ANH
+CÔNG TY CỔ PHẦN CÔNG NGHỆ HẢI ĐĂNG
+Nguyễn Minh Anh
+Trần Quốc Hải
+
+===== PAGE 4 =====
+TÀI LIỆU MẪU PHỤC VỤ KIỂM THỬ HỆ THỐNG — HỢP ĐỒNG HƯ CẤU
+Trang 4
+PHỤ LỤC 01 — TIÊU CHÍ NGHIỆM THU
+STT
+Hạng mục
+Tiêu chí
+1
+Cấu hình hệ thống
+Hoàn thành cấu hình theo danh sách yêu cầu đã duyệt
+2
+Nhập dữ liệu mẫu
+Nhập thành công tối thiểu 100 tài liệu mẫu
+3
+Tài khoản người dùng
+Tạo và phân quyền tối thiểu 20 tài khoản kiểm thử
+4
+Hướng dẫn
+01 buổi đào tạo trực tuyến, có tài liệu hướng dẫn
+5
+Báo cáo lỗi
+Không còn lỗi mức nghiêm trọng tại thời điểm nghiệm thu
+Ghi chú kiểm thử: Phiên bản B được cố ý thay đổi một số điều khoản so với Phiên bản A để phục vụ kiểm thử
+chức năng đối chiếu điều khoản và phát hiện rủi ro. Các bên, số liệu và tình huống trong tài liệu đều là hư cấu.
+
