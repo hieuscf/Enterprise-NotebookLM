@@ -2,22 +2,24 @@
 # File: orchestrator.py
 # Module/Service: Query Router Execution / Query Orchestrator
 # Layer: Service
-# Purpose: Sole internal API for Chat Service — always execute complex directly.
+# Purpose: Sole internal API for Chat Service — execute the FR11 branch.
 # Responsibilities:
-#   - handle_query → QueryRouter.route (always complex) → ComplexQueryPipeline
+#   - handle_query → QueryRouter.route → cache / metadata / factoid / complex
+#   - Metadata/factoid miss or low-confidence → ComplexQueryPipeline fallback
+#   - Write-back verified factoid/complex answers to query_cache
 # Dependencies:
-#   - QueryRouter, MetadataBranch, FactoidBranch, logging_service, ComplexQueryPipeline
+#   - QueryRouter, MetadataBranch, FactoidBranch, logging_service,
+#     ComplexQueryPipeline, QueryCacheService
 # Public Exports:
 #   - QueryOrchestrator, COMPLEX_STATUS
-# Database/Table: query_logs (via logging_service); FR14 tables via ComplexQueryPipeline
-# Related Modules: Chat Service (downstream writes message_generations);
-#   ComplexQueryPipeline (FR14) — mandatory for every chat query
+# Database/Table: query_logs (via logging_service); query_cache write-back;
+#   FR14 tables via ComplexQueryPipeline
+# Related Modules: Chat Service (downstream writes message_generations)
 # Important Notes:
-#   - Mandatory product rule: every chat query executes complex directly —
-#     no cache check, no metadata / factoid short-circuit.
-#   - Metadata / factoid branches are retained for DI/compat but not executed.
+#   - 0-LLM branches: cache_hit / metadata / factoid (no ComplexQueryPipeline).
 #   - Never return before log_query_routing completes (best-effort).
 #   - Do not call QueryRouter elsewhere from Chat — use handle_query only.
+#   - Cache write-back is best-effort and never blocks the answer.
 # =============================================================================
 
 from __future__ import annotations
@@ -26,15 +28,17 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.enums import RouteType
+from app.services.query_router.cache import QueryCacheService, citation_refs_from_stored
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.interfaces.query_log_repository import QueryLogRepository
 from app.services.query_router.logging_models import QueryRoutingLogContext
 from app.services.query_router.logging_service import QueryRoutingLogger
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.router import QueryRouter
-from app.services.query_router.schemas import QueryExecutionResult
+from app.services.query_router.schemas import CitationRef, QueryExecutionResult, RouteDecision
 
 if TYPE_CHECKING:
     from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
@@ -42,10 +46,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 COMPLEX_STATUS = "pending_llm_pipeline"
+_CACHEABLE_COMPLEX_STATUSES = frozenset({"completed", "sql_agent_direct"})
 
 
 class QueryOrchestrator:
-    """Execute chat queries: always run ComplexQueryPipeline directly."""
+    """Execute chat queries according to the Query Router decision (FR11)."""
 
     def __init__(
         self,
@@ -56,6 +61,8 @@ class QueryOrchestrator:
         query_log_repository: QueryLogRepository,
         session_id: UUID | None = None,
         complex_pipeline: ComplexQueryPipeline | None = None,
+        cache: QueryCacheService | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._router = router
         self._metadata = metadata_branch
@@ -63,6 +70,8 @@ class QueryOrchestrator:
         self._logger = QueryRoutingLogger(query_log_repository)
         self._session_id = session_id
         self._complex_pipeline = complex_pipeline
+        self._cache = cache
+        self._settings = settings
 
     async def handle_query(
         self,
@@ -77,7 +86,7 @@ class QueryOrchestrator:
         assistant_message_id: UUID | None = None,
         chat_history: list[Any] | None = None,
     ) -> QueryExecutionResult:
-        """Always execute complex directly; always attempt query_logs write.
+        """Route then execute; always attempt query_logs write.
 
         Args:
             workspace_id: Tenant scope (caller must enforce RBAC).
@@ -92,14 +101,186 @@ class QueryOrchestrator:
 
         Returns:
             Unified ``QueryExecutionResult`` including logging metadata for Chat.
-            ``route_type`` is always ``complex``; no cache is ever consulted.
         """
-        # Monotonic clock — Query Router wall time (not wall-clock datetime).
         started = time.perf_counter()
         decision = await self._router.route(workspace_id, user_id, query_text)
 
-        final_route = RouteType.complex
+        if decision.route_type is RouteType.cache_hit and decision.cache_entry is not None:
+            result = self._from_cache(decision)
+        elif decision.route_type is RouteType.metadata:
+            result = await self._run_metadata(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                query_text=query_text,
+                decision=decision,
+                message_id=message_id,
+                assistant_message_id=assistant_message_id,
+                chat_history=chat_history,
+                llm_calls_count=llm_calls_count,
+                model_used=model_used,
+            )
+        elif decision.route_type is RouteType.factoid:
+            result = await self._run_factoid(
+                workspace_id=workspace_id,
+                query_text=query_text,
+                decision=decision,
+                message_id=message_id,
+                assistant_message_id=assistant_message_id,
+                chat_history=chat_history,
+                llm_calls_count=llm_calls_count,
+                model_used=model_used,
+            )
+        else:
+            result = await self._run_complex(
+                workspace_id=workspace_id,
+                query_text=query_text,
+                decision=decision,
+                message_id=message_id,
+                assistant_message_id=assistant_message_id,
+                chat_history=chat_history,
+                llm_calls_count=llm_calls_count,
+                model_used=model_used,
+            )
 
+        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+        result.latency_ms = latency_ms
+
+        log_result = await self._logger.log_query_routing(
+            QueryRoutingLogContext(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                query_text=query_text,
+                route_type=result.route_type,
+                latency_ms=latency_ms,
+                llm_calls_count=result.llm_calls_count,
+                cache_id=result.cache_id,
+                message_id=message_id,
+                model_used=result.model_used,
+                session_id=session_id or self._session_id,
+            )
+        )
+        result.query_log_id = log_result.query_log_id
+        return result
+
+    def _from_cache(self, decision: RouteDecision) -> QueryExecutionResult:
+        entry = decision.cache_entry
+        assert entry is not None
+        refs = citation_refs_from_stored(entry.citation_refs)
+        return QueryExecutionResult(
+            route_type=RouteType.cache_hit,
+            answer=entry.answer,
+            citation_refs=refs,
+            metadata={
+                "cache_hit": True,
+                "match_type": entry.match_type,
+                "similarity": entry.similarity,
+            },
+            verify=True,
+            latency_ms=0,
+            status="completed",
+            cache_id=entry.id,
+            llm_calls_count=0,
+            model_used=None,
+        )
+
+    async def _run_metadata(
+        self,
+        *,
+        workspace_id: UUID,
+        user_id: UUID,
+        query_text: str,
+        decision: RouteDecision,
+        message_id: UUID | None,
+        assistant_message_id: UUID | None,
+        chat_history: list[Any] | None,
+        llm_calls_count: int | None,
+        model_used: str | None,
+    ) -> QueryExecutionResult:
+        try:
+            branch = await self._metadata.execute(
+                workspace_id=workspace_id,
+                user_id=user_id,
+                query_text=query_text,
+                decision=decision,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "metadata_branch_failed",
+                workspace_id=str(workspace_id),
+                error=type(exc).__name__,
+            )
+            branch = None
+        if branch is not None and branch.route_type is RouteType.metadata:
+            return self._from_zero_llm_branch(branch, route_type=RouteType.metadata)
+        return await self._run_complex(
+            workspace_id=workspace_id,
+            query_text=query_text,
+            decision=decision,
+            message_id=message_id,
+            assistant_message_id=assistant_message_id,
+            chat_history=chat_history,
+            llm_calls_count=llm_calls_count,
+            model_used=model_used,
+        )
+
+    async def _run_factoid(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        decision: RouteDecision,
+        message_id: UUID | None,
+        assistant_message_id: UUID | None,
+        chat_history: list[Any] | None,
+        llm_calls_count: int | None,
+        model_used: str | None,
+    ) -> QueryExecutionResult:
+        try:
+            branch = await self._factoid.execute(
+                workspace_id=workspace_id,
+                decision=decision,
+                query_text=query_text,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "factoid_branch_failed",
+                workspace_id=str(workspace_id),
+                error=type(exc).__name__,
+            )
+            branch = None
+        if branch is not None and branch.route_type is RouteType.factoid:
+            result = self._from_zero_llm_branch(branch, route_type=RouteType.factoid)
+            await self._maybe_write_cache(
+                workspace_id=workspace_id,
+                query_text=query_text,
+                answer=result.answer,
+                citation_refs=result.citation_refs,
+                verify=result.verify,
+            )
+            return result
+        return await self._run_complex(
+            workspace_id=workspace_id,
+            query_text=query_text,
+            decision=decision,
+            message_id=message_id,
+            assistant_message_id=assistant_message_id,
+            chat_history=chat_history,
+            llm_calls_count=llm_calls_count,
+            model_used=model_used,
+        )
+
+    async def _run_complex(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        decision: RouteDecision,
+        message_id: UUID | None,
+        assistant_message_id: UUID | None,
+        chat_history: list[Any] | None,
+        llm_calls_count: int | None,
+        model_used: str | None,
+    ) -> QueryExecutionResult:
         if self._complex_pipeline is not None and message_id is not None:
             pipeline_result = await self._complex_pipeline.run(
                 workspace_id=workspace_id,
@@ -109,70 +290,112 @@ class QueryOrchestrator:
                 assistant_message_id=assistant_message_id,
                 chat_history=chat_history,
             )
-            answer = pipeline_result.answer
-            citation_refs = pipeline_result.citation_refs
-            metadata = {
-                **pipeline_result.metadata,
-                "confidence_level": (
-                    pipeline_result.confidence_level.value
-                    if pipeline_result.confidence_level
-                    else None
-                ),
-                "confidence_score": pipeline_result.confidence_score,
-                "agent_triggered": pipeline_result.agent_triggered,
-                "retrieval_pass_final": pipeline_result.retrieval_pass_final,
-            }
-            verify = pipeline_result.verify
-            status = pipeline_result.status
-            # Includes Rewrite lightweight call (exception) + main answer LLM.
-            effective_llm_calls = int(pipeline_result.llm_calls_count)
-            effective_model = pipeline_result.model_used
-            message_generation_id = pipeline_result.message_generation_id
-        else:
-            answer = None
-            citation_refs = []
-            metadata = {
-                "route_type": RouteType.complex.value,
-                "status": COMPLEX_STATUS,
-            }
-            if decision.retrieval_result is not None:
-                metadata["retrieval_item_count"] = len(decision.retrieval_result.items)
-            verify = False
-            status = COMPLEX_STATUS
-            effective_llm_calls = (
-                int(llm_calls_count) if llm_calls_count is not None else 0
-            )
-            effective_model = model_used
-            message_generation_id = None
-
-        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
-
-        log_result = await self._logger.log_query_routing(
-            QueryRoutingLogContext(
-                workspace_id=workspace_id,
-                user_id=user_id,
-                query_text=query_text,
-                route_type=final_route,
-                latency_ms=latency_ms,
-                llm_calls_count=effective_llm_calls,
+            result = QueryExecutionResult(
+                route_type=RouteType.complex,
+                answer=pipeline_result.answer,
+                citation_refs=pipeline_result.citation_refs,
+                metadata={
+                    **pipeline_result.metadata,
+                    "confidence_level": (
+                        pipeline_result.confidence_level.value
+                        if pipeline_result.confidence_level
+                        else None
+                    ),
+                    "confidence_score": pipeline_result.confidence_score,
+                    "agent_triggered": pipeline_result.agent_triggered,
+                    "retrieval_pass_final": pipeline_result.retrieval_pass_final,
+                },
+                verify=pipeline_result.verify,
+                latency_ms=0,
+                status=pipeline_result.status,
                 cache_id=None,
-                message_id=message_id,
-                model_used=effective_model,
-                session_id=session_id or self._session_id,
+                llm_calls_count=int(pipeline_result.llm_calls_count),
+                model_used=pipeline_result.model_used,
+                message_generation_id=pipeline_result.message_generation_id,
             )
+            if (
+                result.verify
+                and (result.answer or "").strip()
+                and result.status in _CACHEABLE_COMPLEX_STATUSES
+            ):
+                await self._maybe_write_cache(
+                    workspace_id=workspace_id,
+                    query_text=query_text,
+                    answer=result.answer,
+                    citation_refs=result.citation_refs,
+                    verify=result.verify,
+                )
+            return result
+
+        metadata: dict[str, Any] = {
+            "route_type": RouteType.complex.value,
+            "status": COMPLEX_STATUS,
+        }
+        if decision.retrieval_result is not None:
+            metadata["retrieval_item_count"] = len(decision.retrieval_result.items)
+        return QueryExecutionResult(
+            route_type=RouteType.complex,
+            answer=None,
+            citation_refs=[],
+            metadata=metadata,
+            verify=False,
+            latency_ms=0,
+            status=COMPLEX_STATUS,
+            cache_id=None,
+            llm_calls_count=int(llm_calls_count) if llm_calls_count is not None else 0,
+            model_used=model_used,
+            message_generation_id=None,
         )
 
+    def _from_zero_llm_branch(
+        self,
+        branch: Any,
+        *,
+        route_type: RouteType,
+    ) -> QueryExecutionResult:
+        refs = list(getattr(branch, "citation_refs", None) or [])
+        meta = dict(getattr(branch, "metadata", None) or {})
+        status = getattr(branch, "status", None) or "completed"
         return QueryExecutionResult(
-            route_type=final_route,
-            answer=answer,
-            citation_refs=citation_refs,
-            metadata=metadata,
-            verify=verify,
-            latency_ms=latency_ms,
+            route_type=route_type,
+            answer=getattr(branch, "answer", None),
+            citation_refs=refs,
+            metadata=meta,
+            verify=bool(getattr(branch, "verify", False)),
+            latency_ms=0,
             status=status,
             cache_id=None,
-            llm_calls_count=effective_llm_calls,
-            model_used=effective_model,
-            query_log_id=log_result.query_log_id,
-            message_generation_id=message_generation_id,
+            llm_calls_count=0,
+            model_used=None,
         )
+
+    async def _maybe_write_cache(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        answer: str | None,
+        citation_refs: list[CitationRef],
+        verify: bool,
+    ) -> None:
+        if self._cache is None or not verify or not (answer or "").strip():
+            return
+        ttl = 86_400
+        if self._settings is not None:
+            ttl = int(self._settings.query_cache_default_ttl_seconds)
+        if ttl <= 0:
+            return
+        try:
+            await self._cache.save_query_cache(
+                workspace_id=workspace_id,
+                query_text=query_text,
+                answer=answer or "",
+                citation_refs=citation_refs,
+                ttl_seconds=ttl,
+            )
+        except Exception as exc:  # noqa: BLE001 — never block the user answer
+            logger.warning(
+                "query_cache_writeback_failed",
+                workspace_id=str(workspace_id),
+                error=type(exc).__name__,
+            )

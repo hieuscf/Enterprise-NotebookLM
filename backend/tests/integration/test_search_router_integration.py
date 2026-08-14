@@ -40,9 +40,10 @@ from app.models.enums import FileType, RoleName, RouteType
 from app.models.query import QueryCache, SearchHistory
 from app.repositories.retrieval import ChunkHydrationRow, MetadataDocumentRow
 from app.repositories.workspace_members import WorkspaceMemberRepository
-from app.services.query_router.cache import build_normalized_query
+from app.services.query_router.cache import QueryCacheService, build_normalized_query
 from app.services.query_router.cache_writer import QueryCacheWriter
 from app.services.query_router.classifier import build_rule_based_classifier
+from app.services.query_router.embedding_provider import HashingNgramEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
 from app.services.query_router.metadata_branch import MetadataBranch
@@ -199,6 +200,10 @@ class SeededQdrant:
                 "payload": {"kind": "chunk"},
             }
         ]
+
+    def upsert_chunk_vector(self, **kwargs: Any) -> None:
+        del kwargs
+        return None
 
 
 class SeededElasticsearch:
@@ -646,13 +651,18 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
     )
     cache_repo = FakeCacheRepo()
     observability = FakeObservability()
-    # Router no longer checks query_cache at all — cache_repo/cache_writer
-    # below are only used to exercise the (chat-independent) cache write +
-    # cleanup lifecycle in tests.
+    cache = QueryCacheService(
+        settings=settings,
+        rules=rules,
+        repo=cache_repo,  # type: ignore[arg-type]
+        qdrant=qdrant,  # type: ignore[arg-type]
+        embedding=HashingNgramEmbeddingProvider(dimension=settings.embedding_dimension),
+    )
     router = QueryRouter(
         rules=rules,
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
+        cache=cache,
     )
     orch = QueryOrchestrator(
         router=router,
@@ -666,6 +676,8 @@ def build_stack(world: SeedWorld | None = None) -> IntegrationStack:
             settings=settings,
         ),
         query_log_repository=observability,  # type: ignore[arg-type]
+        cache=cache,
+        settings=settings,
     )
     writer = QueryCacheWriter(repo=cache_repo, settings=settings)  # type: ignore[arg-type]
     return IntegrationStack(
@@ -808,12 +820,12 @@ async def test_search_api_and_history_e2e(
 
 
 # ---------------------------------------------------------------------------
-# 2–4. Orchestrator routes directly to complex + logging + no LLM
+# 2–4. Orchestrator 4-branch routing + logging + no LLM
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_direct_complex_logging_no_llm(
+async def test_orchestrator_four_branch_logging_no_llm(
     stack: IntegrationStack,
 ) -> None:
     world = stack.world
@@ -823,7 +835,6 @@ async def test_orchestrator_direct_complex_logging_no_llm(
     llm_spy = MagicMock(side_effect=AssertionError("LLM must not be called"))
 
     with patch(LLM_TARGETS[0], llm_spy):
-        # Former metadata query → complex directly (no cache check)
         meta_msg = uuid.uuid4()
         meta = await orch.handle_query(
             world.workspace_id,
@@ -831,12 +842,12 @@ async def test_orchestrator_direct_complex_logging_no_llm(
             "Có bao nhiêu tài liệu?",
             message_id=meta_msg,
         )
-        assert meta.route_type == RouteType.complex
-        assert meta.status == COMPLEX_STATUS
+        assert meta.route_type == RouteType.metadata
+        assert meta.verify is True
+        assert meta.answer
         assert meta.cache_id is None
-        assert meta.answer is None
+        assert meta.llm_calls_count == 0
 
-        # Former factoid query → complex
         fact_msg = uuid.uuid4()
         fact = await orch.handle_query(
             world.workspace_id,
@@ -844,11 +855,12 @@ async def test_orchestrator_direct_complex_logging_no_llm(
             "AI là gì?",
             message_id=fact_msg,
         )
-        assert fact.route_type == RouteType.complex
-        assert fact.status == COMPLEX_STATUS
+        assert fact.route_type == RouteType.factoid
+        assert fact.verify is True
+        assert fact.answer
         assert fact.cache_id is None
+        assert fact.llm_calls_count == 0
 
-        # Explicit complex query
         complex_msg = uuid.uuid4()
         complex_result = await orch.handle_query(
             world.workspace_id,
@@ -860,21 +872,22 @@ async def test_orchestrator_direct_complex_logging_no_llm(
         assert complex_result.status == COMPLEX_STATUS
         assert complex_result.answer is None
 
-    # Unified logging: exactly one query_logs row per handle_query (3 calls).
     route_logs = obs.query_logs
     assert len(route_logs) == 3
     assert len(obs.generations) == 0
-    assert {row["route_type"] for row in route_logs} == {RouteType.complex}
+    assert {row["route_type"] for row in route_logs} == {
+        RouteType.metadata,
+        RouteType.factoid,
+        RouteType.complex,
+    }
     assert all(row["llm_calls_count"] == 0 for row in route_logs)
     assert all(row["model_used"] is None for row in route_logs)
-    assert all(row["cache_id"] is None for row in route_logs)
 
     llm_spy.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_every_query_is_complex_no_cache_check(stack: IntegrationStack) -> None:
-    """Former factoid/metadata paths go straight to complex — no cache lookup."""
+async def test_factoid_query_is_extractive_no_llm(stack: IntegrationStack) -> None:
     world = stack.world
 
     with patch(LLM_TARGETS[0], MagicMock(side_effect=AssertionError("LLM forbidden"))):
@@ -884,16 +897,15 @@ async def test_every_query_is_complex_no_cache_check(stack: IntegrationStack) ->
             "What is RAG?",
             message_id=uuid.uuid4(),
         )
-    assert result.route_type == RouteType.complex
-    assert result.cache_id is None
-    assert "cache_hit" not in result.metadata
-    assert result.status == COMPLEX_STATUS
+    assert result.route_type == RouteType.factoid
+    assert result.verify is True
+    assert result.answer
+    assert result.llm_calls_count == 0
 
 
 @pytest.mark.asyncio
-async def test_cached_answer_is_never_read_by_router(stack: IntegrationStack) -> None:
-    """A previously written cache entry must NOT short-circuit or be surfaced —
-    the router no longer reads query_cache at all."""
+async def test_cached_answer_is_served_by_router(stack: IntegrationStack) -> None:
+    """A previously written cache entry short-circuits to cache_hit (0 LLM)."""
     world = stack.world
     query = "Cached definition of AI"
     await stack.cache_writer.write_cache(
@@ -911,16 +923,16 @@ async def test_cached_answer_is_never_read_by_router(stack: IntegrationStack) ->
             query,
             message_id=uuid.uuid4(),
         )
-    assert result.route_type == RouteType.complex
-    assert result.cache_id is None
-    assert "cache_hit" not in result.metadata
-    assert result.answer is None  # complex pending without injected pipeline
+    assert result.route_type == RouteType.cache_hit
+    assert result.cache_id is not None
+    assert result.metadata.get("cache_hit") is True
+    assert result.answer == "cached answer body"
+    assert result.llm_calls_count == 0
 
 
 @pytest.mark.asyncio
 async def test_cache_write_and_cleanup_lifecycle(stack: IntegrationStack) -> None:
-    """Cache subsystem (write + TTL cleanup) still works standalone — it is
-    just no longer consulted by the chat routing path."""
+    """Cache subsystem (write + TTL cleanup) still works standalone."""
     world = stack.world
 
     written = await stack.cache_writer.write_cache(

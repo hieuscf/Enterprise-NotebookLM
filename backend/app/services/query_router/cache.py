@@ -11,6 +11,7 @@
 # Public Exports:
 #   - normalize_query, hash_query, build_normalized_query
 #   - QueryCacheService, check_exact_cache, check_similarity_cache, save_query_cache
+#   - serialize_citation_refs, citation_refs_from_stored
 # Database/Table: query_cache; Qdrant kind=query_cache
 # Related Modules: router, cache_writer, embedding_provider
 # Important Notes:
@@ -87,30 +88,76 @@ def serialize_citation_refs(
     out: list[dict[str, Any]] = []
     for item in citation_refs:
         if isinstance(item, CitationRef):
-            out.append(
-                {
-                    "chunk_id": str(item.chunk_id) if item.chunk_id else None,
-                    "document_id": str(item.document_id) if item.document_id else None,
-                    "page_number": item.page_number,
-                    "verify": bool(item.verify),
-                }
-            )
+            payload: dict[str, Any] = {
+                "chunk_id": str(item.chunk_id) if item.chunk_id else None,
+                "document_id": str(item.document_id) if item.document_id else None,
+                "page_number": item.page_number,
+                "verify": bool(item.verify),
+            }
+            if item.text_snippet:
+                payload["text_snippet"] = item.text_snippet
+            out.append(payload)
             continue
         if isinstance(item, Mapping):
             chunk_id = item.get("chunk_id")
             document_id = item.get("document_id")
             page_number = item.get("page_number")
             verify = item.get("verify", True)
-            out.append(
-                {
-                    "chunk_id": str(chunk_id) if chunk_id is not None else None,
-                    "document_id": str(document_id) if document_id is not None else None,
-                    "page_number": int(page_number) if page_number is not None else None,
-                    "verify": bool(verify),
-                }
-            )
+            snippet = item.get("text_snippet")
+            payload = {
+                "chunk_id": str(chunk_id) if chunk_id is not None else None,
+                "document_id": str(document_id) if document_id is not None else None,
+                "page_number": int(page_number) if page_number is not None else None,
+                "verify": bool(verify),
+            }
+            if snippet:
+                payload["text_snippet"] = str(snippet)
+            out.append(payload)
             continue
         raise TypeError(f"Unsupported citation_refs element type: {type(item)!r}")
+    return out
+
+
+def citation_refs_from_stored(
+    raw: Sequence[Any] | Mapping[str, Any] | None,
+) -> list[CitationRef]:
+    """Rebuild ``CitationRef`` list from ``query_cache.citation_refs`` JSONB."""
+    if raw is None:
+        return []
+    items: Sequence[Any]
+    if isinstance(raw, Mapping):
+        items = [raw]
+    else:
+        items = raw
+    out: list[CitationRef] = []
+    for item in items:
+        if isinstance(item, CitationRef):
+            out.append(item)
+            continue
+        if not isinstance(item, Mapping):
+            continue
+        chunk_raw = item.get("chunk_id")
+        doc_raw = item.get("document_id")
+        page_raw = item.get("page_number")
+        snippet = item.get("text_snippet")
+        try:
+            chunk_id = UUID(str(chunk_raw)) if chunk_raw else None
+        except (ValueError, TypeError):
+            chunk_id = None
+        try:
+            document_id = UUID(str(doc_raw)) if doc_raw else None
+        except (ValueError, TypeError):
+            document_id = None
+        page_number = int(page_raw) if page_raw is not None else None
+        out.append(
+            CitationRef(
+                chunk_id=chunk_id,
+                document_id=document_id,
+                page_number=page_number,
+                verify=bool(item.get("verify", True)),
+                text_snippet=str(snippet) if snippet else None,
+            )
+        )
     return out
 
 

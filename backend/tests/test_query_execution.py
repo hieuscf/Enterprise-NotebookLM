@@ -2,8 +2,8 @@
 # File: test_query_execution.py
 # Module/Service: Query Router Execution (Part 4)
 # Layer: Service
-# Purpose: Unit tests for metadata/factoid branches (legacy, retained for DI/
-#          compat) + orchestrator direct-to-complex execution, logging.
+# Purpose: Unit tests for metadata/factoid branches + orchestrator 4-branch
+#          execution and query_logs.
 # Responsibilities:
 #   - Whitelist metadata intents; extractive factoid; complex stub;
 #     unified query_logs only (message_generations = Chat Service); 0 LLM
@@ -13,7 +13,7 @@
 #   - N/A
 # Database/Table: N/A (fakes)
 # Related Modules: QueryOrchestrator, MetadataBranch, FactoidBranch
-# Important Notes: QueryRouter no longer checks query_cache; no live LLM/DB.
+# Important Notes: QueryRouter checks query_cache then classifies; no live LLM/DB.
 # =============================================================================
 
 from __future__ import annotations
@@ -485,11 +485,11 @@ async def test_factoid_extractive_answer_and_citation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_former_factoid_query_goes_complex() -> None:
+async def test_factoid_query_is_extractive() -> None:
     workspace_id = uuid.uuid4()
     hybrid = AsyncMock()
     hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.99))
-    orch, _, hybrid_out, _ = _build_orchestrator(hybrid=hybrid)
+    orch, obs, hybrid_out, _ = _build_orchestrator(hybrid=hybrid)
     with patch(
         "app.adapters.anthropic_client.extract_structured_json",
         MagicMock(side_effect=AssertionError("LLM must not be called")),
@@ -500,29 +500,57 @@ async def test_former_factoid_query_goes_complex() -> None:
             "What is RAG?",
             message_id=uuid.uuid4(),
         )
-    assert result.route_type == RouteType.complex
-    assert result.status == COMPLEX_STATUS
+    assert result.route_type == RouteType.factoid
+    assert result.verify is True
+    assert result.answer
     assert result.cache_id is None
-    # Router no longer checks cache or hybrid-probes; ComplexQueryPipeline
-    # owns retrieval when wired.
+    assert result.llm_calls_count == 0
     hybrid_out.retrieve.assert_not_awaited()
+    assert len(obs.query_logs) == 1
+    assert obs.query_logs[0]["route_type"] == RouteType.factoid
 
 
 # ---------------------------------------------------------------------------
-# Direct-to-complex (no cache check at all)
+# Cache hit
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_repeated_query_is_never_served_from_cache() -> None:
-    """Identical questions never short-circuit — always run complex fresh."""
+async def test_repeated_query_is_served_from_cache() -> None:
+    """Identical questions short-circuit on exact cache hit — 0 LLM."""
     workspace_id = uuid.uuid4()
     query = "What is the leave policy?"
-    meta = AsyncMock()
-    fact = AsyncMock()
+    from app.services.query_router.schemas import CacheEntryView
+
+    entry = CacheEntryView(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        query_hash="h",
+        query_text=query,
+        answer="Leave policy is 12 days.",
+        citation_refs=[],
+        similarity_threshold=0.9,
+        hit_count=1,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        match_type="exact",
+        similarity=1.0,
+    )
+
+    class _Cache:
+        async def check_exact(self, **kwargs: Any) -> CacheEntryView:
+            return entry
+
+        async def check_semantic(self, **kwargs: Any) -> tuple[None, list[float], None]:
+            return None, [], None
+
+        async def save_query_cache(self, **kwargs: Any) -> None:
+            return None
 
     router, hybrid_out = _build_router()
+    router._cache = _Cache()  # type: ignore[method-assign]
     obs = FakeObservability()
+    meta = AsyncMock()
+    fact = AsyncMock()
     orch = QueryOrchestrator(
         router=router,
         metadata_branch=meta,
@@ -541,20 +569,19 @@ async def test_repeated_query_is_never_served_from_cache() -> None:
         )
 
     for result in (first, second):
-        assert result.route_type == RouteType.complex
-        assert result.status == COMPLEX_STATUS
-        assert result.cache_id is None
-        assert "cache_hit" not in result.metadata
-        assert result.answer is None
+        assert result.route_type == RouteType.cache_hit
+        assert result.answer == "Leave policy is 12 days."
+        assert result.cache_id == entry.id
+        assert result.metadata.get("cache_hit") is True
+        assert result.llm_calls_count == 0
+        assert result.model_used is None
     hybrid_out.retrieve.assert_not_awaited()
     meta.execute.assert_not_awaited()
     fact.execute.assert_not_awaited()
     assert len(obs.query_logs) == 2
-    assert all(row["cache_id"] is None for row in obs.query_logs)
+    assert all(row["cache_id"] == entry.id for row in obs.query_logs)
+    assert all(row["route_type"] == RouteType.cache_hit for row in obs.query_logs)
     assert len(obs.generations) == 0
-    assert first.message_generation_id is None
-    assert first.llm_calls_count == 0
-    assert first.model_used is None
 
 
 # ---------------------------------------------------------------------------
@@ -619,15 +646,23 @@ async def test_handle_query_logs_one_row_each(query: str) -> None:
             message_id=message_id,
         )
 
-    assert result.route_type == RouteType.complex
+    if query in METADATA_SAMPLES:
+        expected = RouteType.metadata
+    elif query in FACTOID_SAMPLES:
+        expected = RouteType.factoid
+    else:
+        expected = RouteType.complex
+
+    assert result.route_type == expected
     assert len(obs.query_logs) == 1
     assert len(obs.generations) == 0
-    assert obs.query_logs[0]["route_type"] == RouteType.complex
+    assert obs.query_logs[0]["route_type"] == expected
     assert obs.query_logs[0]["llm_calls_count"] == 0
     assert obs.query_logs[0]["message_id"] == message_id
     assert result.query_log_id == obs.query_logs[0]["id"]
-    assert result.message_generation_id is None
-    assert result.llm_calls_count == 0
+    if expected is RouteType.complex:
+        assert result.message_generation_id is None
+        assert result.llm_calls_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -636,26 +671,29 @@ async def test_handle_query_logs_one_row_each(query: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_llm_on_direct_complex_paths() -> None:
+async def test_no_llm_on_zero_llm_and_complex_stub_paths() -> None:
     workspace_id = uuid.uuid4()
     cases = [
-        "Có bao nhiêu tài liệu?",
-        "What is RAG?",
-        "Analyze multi-hop relationships between entities and summarize risks",
+        ("Có bao nhiêu tài liệu?", RouteType.metadata),
+        ("What is RAG?", RouteType.factoid),
+        (
+            "Analyze multi-hop relationships between entities and summarize risks",
+            RouteType.complex,
+        ),
     ]
     with patch(
         "app.adapters.anthropic_client.extract_structured_json",
         MagicMock(side_effect=AssertionError("LLM must not be called")),
     ) as llm_spy:
-        for query in cases:
+        for query, expected in cases:
             hybrid = AsyncMock()
             hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.5))
             orch, _, _, _ = _build_orchestrator(hybrid=hybrid)
             result = await orch.handle_query(
                 workspace_id, uuid.uuid4(), query, message_id=uuid.uuid4()
             )
-            assert result.route_type == RouteType.complex
-            assert result.cache_id is None
+            assert result.route_type == expected
+            assert result.llm_calls_count == 0
         llm_spy.assert_not_called()
 
 @pytest.mark.asyncio

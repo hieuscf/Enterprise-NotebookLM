@@ -12,6 +12,7 @@
 # Database/Table: N/A
 # Related Modules: app.services.query_router.orchestrator, ComplexQueryPipeline
 # Important Notes: RBAC must be enforced by the calling route (workspace member).
+#   Wires QueryCacheService so Chat uses cache_hit / metadata / factoid / complex.
 # =============================================================================
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.repositories.agent_events import AgentEventRepository
 from app.repositories.metadata_query import PostgresMetadataRepository
+from app.repositories.query_cache import QueryCacheRepository
 from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
@@ -37,7 +39,9 @@ from app.services.chat.context_assembly import RetrievalRepositoryContextPort
 from app.services.event_policy.agents.graph_agent import GraphAgent
 from app.services.event_policy.agents.rewrite_agent import RewriteAgent
 from app.services.event_policy.agents.sql_agent import SqlAgent
+from app.services.query_router.cache import QueryCacheService
 from app.services.query_router.classifier import build_rule_based_classifier
+from app.services.query_router.embedding_provider import SettingsEmbeddingProvider
 from app.services.query_router.factoid_branch import FactoidBranch
 from app.services.query_router.handlers.metadata_handler import MetadataHandler
 from app.services.query_router.lightweight_retriever import LightweightVectorRetriever
@@ -78,10 +82,18 @@ def get_query_orchestrator(
         ),
         reranker=Reranker(settings),
     )
+    cache = QueryCacheService(
+        settings=settings,
+        rules=rules,
+        repo=QueryCacheRepository(session),
+        qdrant=get_qdrant_store(),
+        embedding=SettingsEmbeddingProvider(settings),
+    )
     router = QueryRouter(
         rules=rules,
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
+        cache=cache,
     )
     observability = QueryObservabilityRepository(session)
     metadata_handler = MetadataHandler(
@@ -115,4 +127,6 @@ def get_query_orchestrator(
         ),
         query_log_repository=observability,
         complex_pipeline=complex_pipeline,
+        cache=cache,
+        settings=settings,
     )

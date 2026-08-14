@@ -2,9 +2,10 @@
 # File: test_query_router.py
 # Module/Service: Query Router (FR11)
 # Layer: Service
-# Purpose: Unit tests for direct-to-complex routing (no cache check).
+# Purpose: Unit tests for cache + metadata / factoid / complex classification.
 # Responsibilities:
-#   - Every query → route_type=complex immediately; no cache lookup; no LLM
+#   - Cache hit short-circuits; classifier routes the other three branches
+#   - 0 LLM; hybrid retrieval is not owned by the router
 # Dependencies:
 #   - pytest, AsyncMock, app.services.query_router.*
 # Public Exports:
@@ -17,6 +18,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -34,7 +36,9 @@ from app.services.query_router.classifier import (
     RuleBasedClassifier,
     build_rule_based_classifier,
 )
+from app.services.query_router.models import ClassificationResult
 from app.services.query_router.router import QueryRouter
+from app.services.query_router.schemas import CacheEntryView
 from app.services.retrieval.schemas import RetrievalCandidate, RetrievalResult
 
 # ---------------------------------------------------------------------------
@@ -86,10 +90,44 @@ def _retrieval(workspace_id: uuid.UUID, score: float, text: str = "snippet") -> 
     )
 
 
+class FakeCacheService:
+    def __init__(self, entry: CacheEntryView | None = None) -> None:
+        self.entry = entry
+        self.exact_calls = 0
+        self.semantic_calls = 0
+
+    async def check_exact(self, **kwargs: Any) -> CacheEntryView | None:
+        self.exact_calls += 1
+        return self.entry
+
+    async def check_semantic(
+        self, **kwargs: Any
+    ) -> tuple[CacheEntryView | None, list[float], float | None]:
+        self.semantic_calls += 1
+        return None, [], None
+
+
+def _cache_entry(workspace_id: uuid.UUID, answer: str = "cached") -> CacheEntryView:
+    return CacheEntryView(
+        id=uuid.uuid4(),
+        workspace_id=workspace_id,
+        query_hash="h",
+        query_text="cached query",
+        answer=answer,
+        citation_refs=[],
+        similarity_threshold=0.9,
+        hit_count=1,
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        match_type="exact",
+        similarity=1.0,
+    )
+
+
 def _build_router(
     *,
     settings: Settings | None = None,
     hybrid: AsyncMock | None = None,
+    cache: FakeCacheService | None = None,
 ) -> tuple[QueryRouter, AsyncMock]:
     settings = settings or _settings()
     rules = _rules(settings)
@@ -102,6 +140,7 @@ def _build_router(
         rules=rules,
         classifier=build_rule_based_classifier(settings),
         hybrid=hybrid,
+        cache=cache,  # type: ignore[arg-type]
     )
     return router, hybrid
 
@@ -119,11 +158,10 @@ def test_normalize_and_hash_stable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Every query — regardless of former metadata/factoid/complex classification —
-# now routes directly to complex, with no cache lookup at all.
+# Classification — metadata / factoid / complex
 # ---------------------------------------------------------------------------
 
-FORMER_METADATA_SAMPLES = [
+METADATA_SAMPLES = [
     "Có bao nhiêu tài liệu?",
     "Danh sách PDF",
     "Liệt kê tài liệu",
@@ -132,7 +170,7 @@ FORMER_METADATA_SAMPLES = [
     "Thống kê số lượng tài liệu theo loại",
 ]
 
-FORMER_FACTOID_SAMPLES = [
+FACTOID_SAMPLES = [
     "AI là gì?",
     "Tác giả là ai?",
     "Khi nào ban hành?",
@@ -148,55 +186,85 @@ COMPLEX_SAMPLES = [
     "Analyze multi-hop relationships between entities and summarize risks",
 ]
 
-ALL_SAMPLES = FORMER_METADATA_SAMPLES + FORMER_FACTOID_SAMPLES + COMPLEX_SAMPLES
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", METADATA_SAMPLES)
+async def test_metadata_queries_route_to_metadata(query: str) -> None:
+    workspace_id = uuid.uuid4()
+    router, hybrid = _build_router()
+    decision = await router.route(workspace_id, uuid.uuid4(), query)
+    assert decision.route_type == RouteType.metadata
+    assert decision.cache_entry is None
+    hybrid.retrieve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("query", ALL_SAMPLES)
-async def test_every_query_routes_directly_to_complex(query: str) -> None:
+@pytest.mark.parametrize("query", FACTOID_SAMPLES)
+async def test_factoid_queries_route_to_factoid(query: str) -> None:
     workspace_id = uuid.uuid4()
-    hybrid = AsyncMock()
-    hybrid.retrieve = AsyncMock(return_value=_retrieval(workspace_id, 0.95))
-    router, hybrid_out = _build_router(hybrid=hybrid)
+    router, hybrid = _build_router()
+    decision = await router.route(workspace_id, uuid.uuid4(), query)
+    assert decision.route_type == RouteType.factoid
+    assert decision.cache_entry is None
+    hybrid.retrieve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", COMPLEX_SAMPLES)
+async def test_complex_queries_route_to_complex(query: str) -> None:
+    workspace_id = uuid.uuid4()
+    router, hybrid = _build_router()
     decision = await router.route(workspace_id, uuid.uuid4(), query)
     assert decision.route_type == RouteType.complex
-    assert decision.reason == "direct_complex"
-    assert decision.cache_entry is None
-    # ComplexQueryPipeline owns hybrid retrieval — router must not probe.
-    hybrid_out.retrieve.assert_not_awaited()
-    assert decision.retrieval_result is None
+    assert decision.reason != "direct_complex"
+    hybrid.retrieve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_classifier_not_used_for_routing() -> None:
+async def test_classifier_is_used_for_routing() -> None:
     workspace_id = uuid.uuid4()
     router, _ = _build_router()
     with patch.object(
         RuleBasedClassifier, "classify_detailed", autospec=True
     ) as classify_spy:
+        classify_spy.return_value = ClassificationResult(
+            route_type=RouteType.metadata,
+            reason="metadata_rule=count_documents",
+            confidence=1.0,
+        )
         decision = await router.route(
             workspace_id, uuid.uuid4(), "Có bao nhiêu tài liệu?"
         )
-        assert decision.route_type == RouteType.complex
-        classify_spy.assert_not_called()
+        assert decision.route_type == RouteType.metadata
+        classify_spy.assert_called()
 
 
 @pytest.mark.asyncio
-async def test_repeated_query_never_hits_cache() -> None:
-    """No query_cache lookup happens anymore — identical queries always go direct."""
+async def test_exact_cache_hit_short_circuits_classifier() -> None:
     workspace_id = uuid.uuid4()
-    user_id = uuid.uuid4()
-    query = "What is the leave policy?"
-    router, hybrid = _build_router()
-
-    first = await router.route(workspace_id, user_id, query)
-    second = await router.route(workspace_id, user_id, query)
-
-    for decision in (first, second):
-        assert decision.route_type == RouteType.complex
-        assert decision.reason == "direct_complex"
-        assert decision.cache_entry is None
+    entry = _cache_entry(workspace_id, answer="from cache")
+    cache = FakeCacheService(entry=entry)
+    router, hybrid = _build_router(cache=cache)
+    with patch.object(RuleBasedClassifier, "classify_detailed", autospec=True) as spy:
+        decision = await router.route(workspace_id, uuid.uuid4(), "What is RAG?")
+    assert decision.route_type == RouteType.cache_hit
+    assert decision.reason == "exact_cache"
+    assert decision.cache_entry is entry
+    assert cache.exact_calls == 1
+    spy.assert_not_called()
     hybrid.retrieve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_falls_through_to_classifier() -> None:
+    workspace_id = uuid.uuid4()
+    cache = FakeCacheService(entry=None)
+    router, _ = _build_router(cache=cache)
+    decision = await router.route(workspace_id, uuid.uuid4(), "Có bao nhiêu tài liệu?")
+    assert decision.route_type == RouteType.metadata
+    assert cache.exact_calls == 1
+    assert cache.semantic_calls == 1
+    assert decision.cache_entry is None
 
 
 # ---------------------------------------------------------------------------

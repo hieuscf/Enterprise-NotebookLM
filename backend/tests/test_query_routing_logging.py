@@ -262,7 +262,7 @@ async def test_orchestrator_survives_log_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_never_uses_cache_entry() -> None:
+async def test_orchestrator_serves_cache_entry() -> None:
     from datetime import UTC, datetime, timedelta
 
     cache_id = uuid.uuid4()
@@ -279,27 +279,25 @@ async def test_orchestrator_never_uses_cache_entry() -> None:
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         match_type="exact",
     )
-    # Even if some router stub attaches a cache_entry, orchestrator ignores it
-    # entirely — cache_id is always None, no cache_* metadata is produced.
-    orch, repo = _build_orch(route=RouteType.complex, cache_entry=entry)
+    orch, repo = _build_orch(route=RouteType.cache_hit, cache_entry=entry)
     result = await orch.handle_query(workspace_id, uuid.uuid4(), "cached?")
 
-    assert result.route_type == RouteType.complex
-    assert result.cache_id is None
-    assert "cache_hit" not in result.metadata
+    assert result.route_type == RouteType.cache_hit
+    assert result.cache_id == cache_id
+    assert result.answer == "yes"
+    assert result.metadata.get("cache_hit") is True
     assert result.llm_calls_count == 0
     assert result.model_used is None
-    assert result.message_generation_id is None
-    assert result.status == COMPLEX_STATUS
+    assert result.status == "completed"
     assert len(repo.rows) == 1
-    assert repo.rows[0]["route_type"] == RouteType.complex
-    assert repo.rows[0]["cache_id"] is None
+    assert repo.rows[0]["route_type"] == RouteType.cache_hit
+    assert repo.rows[0]["cache_id"] == cache_id
     assert repo.rows[0]["llm_calls_count"] == 0
     assert repo.rows[0]["model_used"] is None
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_forces_complex_even_if_router_says_metadata() -> None:
+async def test_orchestrator_executes_metadata_branch() -> None:
     meta_result = QueryRouterResult(
         route_type=RouteType.metadata,
         answer="3 documents",
@@ -310,21 +308,21 @@ async def test_orchestrator_forces_complex_even_if_router_says_metadata() -> Non
     orch, repo = _build_orch(route=RouteType.metadata, meta_result=meta_result)
     result = await orch.handle_query(uuid.uuid4(), uuid.uuid4(), "How many docs?")
 
-    assert result.route_type == RouteType.complex
-    assert result.status == COMPLEX_STATUS
-    assert result.answer is None
+    assert result.route_type == RouteType.metadata
+    assert result.answer == "3 documents"
+    assert result.verify is True
     assert result.llm_calls_count == 0
     assert result.model_used is None
     assert result.cache_id is None
     assert len(repo.rows) == 1
-    assert repo.rows[0]["route_type"] == RouteType.complex
+    assert repo.rows[0]["route_type"] == RouteType.metadata
     assert repo.rows[0]["cache_id"] is None
     assert repo.rows[0]["llm_calls_count"] == 0
     assert repo.rows[0]["model_used"] is None
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_forces_complex_even_if_router_says_factoid() -> None:
+async def test_orchestrator_executes_factoid_branch() -> None:
     chunk_id = uuid.uuid4()
     fact_result = QueryRouterResult(
         route_type=RouteType.factoid,
@@ -338,13 +336,14 @@ async def test_orchestrator_forces_complex_even_if_router_says_factoid() -> None
     orch, repo = _build_orch(route=RouteType.factoid, fact_result=fact_result)
     result = await orch.handle_query(uuid.uuid4(), uuid.uuid4(), "What is RAG?")
 
-    assert result.route_type == RouteType.complex
-    assert result.status == COMPLEX_STATUS
-    assert result.answer is None
+    assert result.route_type == RouteType.factoid
+    assert result.answer == "RAG is retrieval-augmented generation."
+    assert result.verify is True
     assert result.llm_calls_count == 0
     assert result.cache_id is None
+    assert len(result.citation_refs) == 1
     assert len(repo.rows) == 1
-    assert repo.rows[0]["route_type"] == RouteType.complex
+    assert repo.rows[0]["route_type"] == RouteType.factoid
     assert repo.rows[0]["cache_id"] is None
     assert repo.rows[0]["llm_calls_count"] == 0
 
