@@ -12,7 +12,7 @@
  *   - ContentLocation, Citation
  * Database/Table: N/A
  * Related Modules: lib/content-location, features/citation
- * Important Notes: location may be null for legacy chunks.
+ * Important Notes: chunk_id + location enable deterministic Document Viewer deep-links.
  * =============================================================================
  */
 
@@ -23,6 +23,10 @@ export type Citation = {
   message_id: string;
   retrieval_id: string;
   document_id: string;
+  /** Source chunk via retrievals — preferred deep-link key. */
+  chunk_id?: string | null;
+  /** Exact version used when the answer was generated. */
+  document_version_id?: string | null;
   text_snippet: string;
   verified: boolean;
   order_index: number;
@@ -31,4 +35,5 @@ export type Citation = {
     section_index?: number | null;
     section_title?: string | null;
   } | null;
+  locator?: import("@/types/canonical").CitationLocator | null;
 };

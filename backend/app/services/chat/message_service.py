@@ -42,7 +42,6 @@ from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.schemas.chat import (
     ChatMessageResponse,
-    CitationResponse,
     MessageGenerationResponse,
 )
 from app.services.chat.session_service import ChatServiceError
@@ -183,6 +182,31 @@ class MessageProcessingService:
             assistant_message_id=assistant_msg.id,
             citation_refs=execution.citation_refs,
         )
+        # Re-load with chunk/location joins — Citation ORM rows alone lack locator.
+        enriched_citations = await self._messages.list_citations_for_message(
+            assistant_msg.id
+        )
+        if not enriched_citations and citation_rows:
+            # Fallback when joins miss (should be rare): keep document_id from refs.
+            from app.repositories.chat_messages import CitationWithDocument
+
+            enriched_citations = [
+                CitationWithDocument(
+                    citation=c,
+                    document_id=_doc_id_from_ref(execution.citation_refs, idx),
+                    chunk_id=(
+                        execution.citation_refs[idx].chunk_id
+                        if 0 <= idx < len(execution.citation_refs)
+                        else None
+                    ),
+                    page_number=(
+                        execution.citation_refs[idx].page_number
+                        if 0 <= idx < len(execution.citation_refs)
+                        else None
+                    ),
+                )
+                for idx, c in enumerate(citation_rows)
+            ]
 
         generation = await self._ensure_generation(
             assistant_message_id=assistant_msg.id,
@@ -197,6 +221,20 @@ class MessageProcessingService:
             message_count=count,
         )
 
+        from app.adapters.minio_storage import get_minio_storage
+        from app.services.chat.session_service import _citation_response
+        from app.services.documents import DocumentIngestionService
+
+        locator_map = {}
+        try:
+            docs = DocumentIngestionService(self._session, get_minio_storage())
+            locator_map = await docs.resolve_locators_for_citations(
+                workspace_id,
+                enriched_citations,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("citation_locator_enrich_failed", error=str(exc))
+
         assistant_resp = ChatMessageResponse(
             id=assistant_msg.id,
             session_id=session_id,
@@ -204,16 +242,8 @@ class MessageProcessingService:
             content=answer_text,
             generation=_generation_response(generation, execution),
             citations=[
-                CitationResponse(
-                    id=c.id,
-                    message_id=c.message_id,
-                    retrieval_id=c.retrieval_id,
-                    document_id=_doc_id_from_ref(execution.citation_refs, idx),
-                    text_snippet=c.text_snippet,
-                    verified=bool(c.verified),
-                    order_index=c.order_index,
-                )
-                for idx, c in enumerate(citation_rows)
+                _citation_response(row, locator=locator_map.get(row.citation.id))
+                for row in enriched_citations
             ],
             created_at=assistant_msg.created_at,
         )

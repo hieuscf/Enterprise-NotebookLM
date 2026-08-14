@@ -75,7 +75,7 @@ export function bboxToHighlightRect(
   };
 }
 
-/** Approximate band near top of page when bbox is missing. */
+/** Approximate band — DEPRECATED for citations; kept for non-citation callers. */
 export function approximatePageHighlight(): HighlightRect {
   return { left: 4, top: 8, width: 92, height: 18 };
 }

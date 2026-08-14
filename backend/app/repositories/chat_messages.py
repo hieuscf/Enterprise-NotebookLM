@@ -38,8 +38,16 @@ from app.models.retrieval import Citation, Retrieval
 
 @dataclass(frozen=True, slots=True)
 class CitationWithDocument:
+    """Citation row + locator fields resolved via retrieval → chunk|entity joins."""
+
     citation: Citation
     document_id: uuid.UUID | None
+    chunk_id: uuid.UUID | None = None
+    document_version_id: uuid.UUID | None = None
+    page_number: int | None = None
+    section_index: int | None = None
+    section: str | None = None
+    chunk_content: str | None = None
 
 
 @dataclass(slots=True)
@@ -168,10 +176,17 @@ class ChatMessageRepository:
         ).scalars().all()
         return {row.message_id: row for row in rows}
 
+    async def list_citations_for_message(
+        self, message_id: uuid.UUID
+    ) -> list[CitationWithDocument]:
+        """Locator-enriched citations for one assistant message (post-persist)."""
+        by_message = await self._load_citations([message_id])
+        return by_message.get(message_id, [])
+
     async def _load_citations(
         self, message_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, list[CitationWithDocument]]:
-        """Load citations ordered by order_index; resolve document_id via joins."""
+        """Load citations ordered by order_index; resolve document + chunk locator."""
         chunk_version = aliased(DocumentVersion)
         entity_version = aliased(DocumentVersion)
 
@@ -179,9 +194,22 @@ class ChatMessageRepository:
             chunk_version.document_id,
             entity_version.document_id,
         )
+        version_id_expr = func.coalesce(
+            DocumentChunk.document_version_id,
+            Entity.source_version_id,
+        )
 
         stmt = (
-            select(Citation, document_id_expr)
+            select(
+                Citation,
+                document_id_expr,
+                Retrieval.chunk_id,
+                version_id_expr,
+                DocumentChunk.page_number,
+                DocumentChunk.section_index,
+                DocumentChunk.section,
+                DocumentChunk.content,
+            )
             .join(Retrieval, Citation.retrieval_id == Retrieval.id)
             .outerjoin(DocumentChunk, Retrieval.chunk_id == DocumentChunk.id)
             .outerjoin(
@@ -199,8 +227,26 @@ class ChatMessageRepository:
         rows = (await self._session.execute(stmt)).all()
 
         by_message: dict[uuid.UUID, list[CitationWithDocument]] = {}
-        for citation, document_id in rows:
+        for (
+            citation,
+            document_id,
+            chunk_id,
+            document_version_id,
+            page_number,
+            section_index,
+            section,
+            chunk_content,
+        ) in rows:
             by_message.setdefault(citation.message_id, []).append(
-                CitationWithDocument(citation=citation, document_id=document_id)
+                CitationWithDocument(
+                    citation=citation,
+                    document_id=document_id,
+                    chunk_id=chunk_id,
+                    document_version_id=document_version_id,
+                    page_number=page_number,
+                    section_index=section_index,
+                    section=section,
+                    chunk_content=chunk_content,
+                )
             )
         return by_message

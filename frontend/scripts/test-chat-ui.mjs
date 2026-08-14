@@ -14,8 +14,15 @@ function sessionTitleLabel(session) {
 function buildChatCitationHref(workspaceId, citation) {
   if (!citation.document_id) return null;
   const params = new URLSearchParams();
+  params.set("view", "knowledge");
+  if (citation.chunkId) {
+    params.set("chunk", citation.chunkId);
+  }
   if (citation.page != null && citation.page > 0) {
     params.set("page", String(citation.page));
+  }
+  if (citation.versionId) {
+    params.set("version", citation.versionId);
   }
   if (citation.citationId) {
     params.set("citation", citation.citationId);
@@ -79,7 +86,7 @@ assert(
 // --- buildChatCitationHref ----------------------------------------------
 assert(
   buildChatCitationHref("ws-1", { document_id: "doc-1" }) ===
-    "/workspaces/ws-1/documents/doc-1",
+    "/workspaces/ws-1/documents/doc-1?view=knowledge",
   "Citation with document_id → document deep-link",
 );
 assert(
@@ -87,8 +94,19 @@ assert(
     document_id: "doc-1",
     page: 18,
     citationId: "c1",
-  }) === "/workspaces/ws-1/documents/doc-1?page=18&citation=c1",
+  }) === "/workspaces/ws-1/documents/doc-1?view=knowledge&page=18&citation=c1",
   "Citation with page + citationId → deep-link query",
+);
+assert(
+  buildChatCitationHref("ws-1", {
+    document_id: "doc-1",
+    chunkId: "chunk-9",
+    page: 1,
+    citationId: "c1",
+    versionId: "ver-1",
+  }) ===
+    "/workspaces/ws-1/documents/doc-1?view=knowledge&chunk=chunk-9&page=1&version=ver-1&citation=c1",
+  "Citation with chunk + version → Search-style deep-link",
 );
 assert(
   buildChatCitationHref("ws-1", { document_id: null }) === null,

@@ -71,16 +71,16 @@ export function AppShell({ active, user, workspaceId, children }: Props) {
             {workspaceId ? (
               <Link
                 href={`/workspaces/${workspaceId}/search`}
-                className="flex h-10 w-full items-center rounded-md border border-border-default bg-base pl-9 pr-3 text-body-sm text-tertiary hover:border-accent-primary/40 hover:text-secondary"
+                className="flex h-10 w-full items-center rounded-md border border-border-default bg-base pl-9 pr-3 text-body-sm text-tertiary transition-colors hover:border-accent-primary/40 hover:bg-surface hover:text-secondary"
               >
-                Tìm kiếm tài liệu trong workspace…
+                Tìm kiếm trong Workspace…
               </Link>
             ) : (
               <input
                 type="search"
                 disabled
                 title="Chọn workspace để tìm kiếm"
-                placeholder="Tìm kiếm tài liệu… (chọn workspace)"
+                placeholder="Tìm kiếm trong Workspace… (chọn workspace)"
                 className="h-10 w-full cursor-not-allowed rounded-md border border-border-default bg-elevated/60 pl-9 pr-3 text-body-sm text-tertiary placeholder:text-tertiary"
               />
             )}

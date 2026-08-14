@@ -90,13 +90,18 @@ export function CitationChip({ workspaceId, citation, compact = true }: Props) {
       documentId: citation.documentId,
       textSnippet: citation.textSnippet,
       page: citation.page ?? null,
+      chunkId: citation.chunkId ?? null,
+      versionId: citation.documentVersionId ?? null,
       verified: citation.verified,
       documentTitle: citation.documentTitle,
+      locator: citation.locator ?? null,
     });
     const href = buildChatCitationHref(workspaceId, {
       document_id: citation.documentId,
       page: citation.page,
       citationId: citation.id,
+      chunkId: citation.chunkId,
+      versionId: citation.documentVersionId,
     });
     if (href) router.push(href);
   }, [citation, router, workspaceId]);

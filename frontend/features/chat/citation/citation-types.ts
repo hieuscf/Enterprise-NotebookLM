@@ -16,6 +16,7 @@
  * =============================================================================
  */
 
+import type { CitationLocator } from "@/types/canonical";
 import type { ContentLocation } from "@/lib/content-location";
 import type { FileType } from "@/types/documents";
 
@@ -25,13 +26,15 @@ export type CitationViewModel = {
   messageId: string;
   retrievalId: string;
   documentId: string;
-  documentVersionId?: string;
+  chunkId?: string | null;
+  documentVersionId?: string | null;
   documentTitle: string;
   fileType?: FileType | string;
   page?: number | null;
   sectionIndex?: number | null;
   sectionTitle?: string | null;
   location?: ContentLocation | null;
+  locator?: CitationLocator | null;
   textSnippet: string;
   verified: boolean;
   orderIndex: number;

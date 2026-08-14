@@ -27,6 +27,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.canonical import CitationLocator
+from app.schemas.content_location import ContentLocation
+
 
 class AgentEventResponse(BaseModel):
     """Public AgentEvent DTO — excludes sensitive JSON payloads."""
@@ -91,7 +94,7 @@ class MessageGenerationResponse(BaseModel):
 
 
 class CitationResponse(BaseModel):
-    """OpenAPI Citation — document_id resolved via retrieval joins."""
+    """OpenAPI Citation — document/chunk/location resolved via retrieval joins."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -99,9 +102,13 @@ class CitationResponse(BaseModel):
     message_id: uuid.UUID
     retrieval_id: uuid.UUID
     document_id: uuid.UUID | None = None
+    chunk_id: uuid.UUID | None = None
+    document_version_id: uuid.UUID | None = None
     text_snippet: str
     verified: bool
     order_index: int
+    location: ContentLocation | None = None
+    locator: CitationLocator | None = None
 
 
 class ChatMessageResponse(BaseModel):

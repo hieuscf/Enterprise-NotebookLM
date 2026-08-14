@@ -115,6 +115,9 @@ class LayoutBlock:
         bbox: Bounding box as [x, y, w, h] when the parser provided it.
         row_count: Table rows (tables only).
         col_count: Table columns (tables only).
+        id: Stable block id within the document_version (``b0000``…).
+        markdown_start: Inclusive char offset into Canonical Markdown.
+        markdown_end: Exclusive char offset into Canonical Markdown.
     """
 
     order_index: int
@@ -127,10 +130,16 @@ class LayoutBlock:
     bbox: list[float] | None = None
     row_count: int | None = None
     col_count: int | None = None
+    id: str | None = None
+    markdown_start: int | None = None
+    markdown_end: int | None = None
 
     def as_summary(self) -> dict[str, Any]:
         """Positional summary without text — for the layout_metadata column."""
+        from app.ai.canonical_locator import make_block_id
+
         payload: dict[str, Any] = {
+            "id": self.id or make_block_id(self.order_index),
             "order_index": self.order_index,
             "block_type": self.block_type,
             "depth": self.depth,
@@ -143,6 +152,8 @@ class LayoutBlock:
             "bbox": self.bbox,
             "row_count": self.row_count,
             "col_count": self.col_count,
+            "markdown_start": self.markdown_start,
+            "markdown_end": self.markdown_end,
         }
         payload.update({k: v for k, v in optional.items() if v is not None})
         return payload
@@ -283,6 +294,8 @@ def build_layout_analysis(
         blocks = _blocks_from_markdown(markdown)
         source = "markdown"
 
+    blocks = _with_ids_and_markdown_spans(markdown, blocks)
+
     page_numbers = {b.page_number for b in blocks if b.page_number is not None}
     page_count = reported_page_count or (max(page_numbers) if page_numbers else 0)
     top_level = _top_level_section_count(blocks)
@@ -294,6 +307,52 @@ def build_layout_analysis(
         section_count=top_level,
         source=source,
     )
+
+
+def _with_ids_and_markdown_spans(
+    markdown: str,
+    blocks: list[LayoutBlock],
+) -> list[LayoutBlock]:
+    """Stamp stable ``id`` + markdown char spans onto each layout block."""
+    from app.ai.canonical_locator import attach_markdown_spans, make_block_id
+
+    as_dicts = [
+        {
+            "order_index": b.order_index,
+            "block_type": b.block_type,
+            "text": b.text,
+            "page_number": b.page_number,
+            "heading_level": b.heading_level,
+            "heading_path": b.heading_path,
+            "depth": b.depth,
+            "bbox": b.bbox,
+            "row_count": b.row_count,
+            "col_count": b.col_count,
+            "id": b.id or make_block_id(b.order_index),
+        }
+        for b in blocks
+    ]
+    enriched = attach_markdown_spans(markdown, as_dicts)
+    out: list[LayoutBlock] = []
+    for raw in enriched:
+        out.append(
+            LayoutBlock(
+                order_index=int(raw["order_index"]),
+                block_type=str(raw["block_type"]),
+                text=str(raw.get("text") or ""),
+                page_number=raw.get("page_number"),
+                heading_level=raw.get("heading_level"),
+                heading_path=raw.get("heading_path"),
+                depth=int(raw.get("depth") or 0),
+                bbox=raw.get("bbox"),
+                row_count=raw.get("row_count"),
+                col_count=raw.get("col_count"),
+                id=str(raw.get("id") or make_block_id(int(raw["order_index"]))),
+                markdown_start=raw.get("markdown_start"),
+                markdown_end=raw.get("markdown_end"),
+            )
+        )
+    return out
 
 
 def _blocks_from_items(item_pages: list[dict[str, Any]]) -> list[LayoutBlock]:
@@ -471,6 +530,7 @@ def _build_heading_tree(blocks: list[LayoutBlock]) -> list[dict[str, Any]]:
             "level": level,
             "title": block.text,
             "order_index": block.order_index,
+            "block_id": block.id,
             "page_number": block.page_number,
             "heading_path": block.heading_path,
             "children": [],

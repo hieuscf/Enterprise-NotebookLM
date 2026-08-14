@@ -52,6 +52,7 @@ export type DocumentChunk = {
   bounding_box?: number[] | null;
   start_offset?: number | null;
   end_offset?: number | null;
+  block_ids?: string[];
 };
 
 export type DocumentChunkListResponse = {

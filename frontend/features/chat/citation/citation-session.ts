@@ -23,8 +23,11 @@ export type CitationFocusPayload = {
   documentId: string;
   textSnippet: string;
   page?: number | null;
+  chunkId?: string | null;
+  versionId?: string | null;
   verified?: boolean;
   documentTitle?: string;
+  locator?: import("@/types/canonical").CitationLocator | null;
   savedAt: number;
 };
 

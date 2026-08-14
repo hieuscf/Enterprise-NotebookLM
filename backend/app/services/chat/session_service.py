@@ -28,6 +28,7 @@ from app.models.chat import ChatSession, MessageGeneration
 from app.models.enums import MessageRole, RoleName
 from app.repositories.chat_messages import ChatMessageRepository, CitationWithDocument
 from app.repositories.chat_sessions import ChatSessionRepository
+from app.schemas.canonical import CitationLocator
 from app.schemas.chat import (
     ChatMessageResponse,
     ChatSessionResponse,
@@ -272,16 +273,37 @@ def _generation_response(gen: MessageGeneration) -> MessageGenerationResponse:
     )
 
 
-def _citation_response(row: CitationWithDocument) -> CitationResponse:
+def _citation_response(
+    row: CitationWithDocument,
+    *,
+    locator: CitationLocator | None = None,
+) -> CitationResponse:
     c = row.citation
+    location = None
+    if (
+        row.page_number is not None
+        or row.section_index is not None
+        or (row.section or "").strip()
+    ):
+        from app.schemas.content_location import content_location_from_chunk
+
+        location = content_location_from_chunk(
+            page_number=row.page_number,
+            section_index=row.section_index,
+            section=row.section,
+        )
     return CitationResponse(
         id=c.id,
         message_id=c.message_id,
         retrieval_id=c.retrieval_id,
         document_id=row.document_id,
+        chunk_id=row.chunk_id,
+        document_version_id=row.document_version_id,
         text_snippet=c.text_snippet,
         verified=bool(c.verified),
         order_index=c.order_index,
+        location=location,
+        locator=locator,
     )
 
 

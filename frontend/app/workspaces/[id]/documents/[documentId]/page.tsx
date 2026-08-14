@@ -20,7 +20,13 @@ import { DocumentDetailView } from "@/features/documents/DocumentDetailView";
 
 type PageProps = {
   params: Promise<{ id: string; documentId: string }>;
-  searchParams: Promise<{ chunk?: string; page?: string; citation?: string }>;
+  searchParams: Promise<{
+    chunk?: string;
+    page?: string;
+    citation?: string;
+    version?: string;
+    view?: string;
+  }>;
 };
 
 export default async function DocumentDetailPage({ params, searchParams }: PageProps) {
@@ -28,9 +34,13 @@ export default async function DocumentDetailPage({ params, searchParams }: PageP
   const sp = await searchParams;
   const focusChunkId = sp.chunk?.trim() || null;
   const focusCitationId = sp.citation?.trim() || null;
+  const focusVersionId = sp.version?.trim() || null;
   const pageRaw = sp.page?.trim();
   const focusPage =
     pageRaw && /^\d+$/.test(pageRaw) ? Number.parseInt(pageRaw, 10) : null;
+  const viewRaw = sp.view?.trim().toLowerCase();
+  const initialView =
+    viewRaw === "original" ? "original" : "knowledge";
 
   return (
     <DocumentDetailView
@@ -39,6 +49,8 @@ export default async function DocumentDetailPage({ params, searchParams }: PageP
       focusChunkId={focusChunkId}
       focusPage={focusPage}
       focusCitationId={focusCitationId}
+      focusVersionId={focusVersionId}
+      initialView={initialView}
     />
   );
 }

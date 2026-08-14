@@ -537,6 +537,18 @@ export async function getDocument(
   return apiJson<Document>(`/workspaces/${workspaceId}/documents/${documentId}`);
 }
 
+/** DELETE /workspaces/{id}/documents/{documentId} — removes document + versions (204). */
+export async function deleteDocument(
+  workspaceId: string,
+  documentId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `/workspaces/${workspaceId}/documents/${documentId}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) throw await parseApiError(response);
+}
+
 export async function listDocumentChunks(
   workspaceId: string,
   documentId: string,
@@ -548,6 +560,21 @@ export async function listDocumentChunks(
       : "";
   return apiJson<DocumentChunkListResponse>(
     `/workspaces/${workspaceId}/documents/${documentId}/chunks${qs}`,
+  );
+}
+
+/** Canonical Knowledge Document (Markdown + blocks) for Knowledge View. */
+export async function getCanonicalDocument(
+  workspaceId: string,
+  documentId: string,
+  versionId?: string | null,
+): Promise<import("@/types/canonical").CanonicalDocument> {
+  const qs =
+    versionId && versionId.trim()
+      ? `?versionId=${encodeURIComponent(versionId)}`
+      : "";
+  return apiJson(
+    `/workspaces/${workspaceId}/documents/${documentId}/canonical${qs}`,
   );
 }
 

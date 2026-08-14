@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import tempfile
 import uuid
@@ -32,6 +33,11 @@ from typing import Any, BinaryIO, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.minio_storage import MinioStorageAdapter
+from app.ai.canonical_locator import (
+    make_block_id,
+    normalize_layout_blocks,
+    resolve_canonical_locator,
+)
 from app.core.logging import get_logger
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import DocumentVersionStatus, FileType, PreviewStatus
@@ -39,6 +45,11 @@ from app.models.pipeline import PipelineRun
 from app.repositories.documents import DocumentRepository
 from app.repositories.pipeline import PipelineRepository
 from app.repositories.retrieval import ChunkHydrationRow, RetrievalRepository
+from app.schemas.canonical import (
+    CanonicalBlock,
+    CanonicalDocumentResponse,
+    CitationLocator,
+)
 from app.schemas.documents import DocumentChunkListResponse, DocumentChunkResponse
 from app.services.preview_generator import PREVIEW_PDF_ARTIFACT
 
@@ -237,9 +248,9 @@ class DocumentIngestionService:
         if target is not None:
             version = await self._docs.get_version(workspace_id, document_id, target)
             if version is not None and isinstance(version.layout_metadata, dict):
-                raw_blocks = version.layout_metadata.get("blocks") or []
-                if isinstance(raw_blocks, list):
-                    layout_blocks = [b for b in raw_blocks if isinstance(b, dict)]
+                # Summaries only for bbox — do NOT load markdown / re-span here
+                # (that path is O(chunks × markdown) and stalls the Document Viewer).
+                layout_blocks = self._layout_block_summaries(version)
                 raw_tree = version.layout_metadata.get("heading_tree") or []
                 if isinstance(raw_tree, list):
                     heading_tree = [n for n in raw_tree if isinstance(n, dict)]
@@ -283,6 +294,178 @@ class DocumentIngestionService:
             heading_tree=heading_tree,
             items=items,
         )
+
+    async def get_canonical_document(
+        self,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        *,
+        version_id: uuid.UUID | None = None,
+    ) -> CanonicalDocumentResponse:
+        """Load Canonical Knowledge Document (Markdown + structured blocks)."""
+        doc = await self.get_document(workspace_id, document_id)
+        target = version_id or doc.current_version_id
+        if target is None:
+            raise DocumentIngestionError(
+                "version_missing",
+                "Document has no current version",
+                status_code=404,
+            )
+        version = await self.get_version(workspace_id, document_id, target)
+        markdown = await asyncio.to_thread(self._load_markdown_text, version)
+        if markdown is None:
+            raise DocumentIngestionError(
+                "canonical_unavailable",
+                "Canonical Markdown is not available for this version",
+                status_code=409,
+            )
+        layout_blocks = await asyncio.to_thread(self._layout_blocks_for_bbox, version)
+        if not layout_blocks:
+            layout_blocks = self._layout_block_summaries(version)
+        has_text = any(
+            str(b.get("text") or b.get("content") or "").strip() for b in layout_blocks
+        )
+        # Request path: never full re-span when block text already exists — that
+        # walk is O(blocks × markdown) and freezes Knowledge View on large docs.
+        # Spans are filled only when already persisted; FE falls back to snippet match.
+        if layout_blocks and not has_text and not _blocks_have_spans(layout_blocks):
+            layout_blocks = normalize_layout_blocks(markdown, layout_blocks)
+        else:
+            layout_blocks = [
+                {
+                    **b,
+                    "id": str(b.get("id") or make_block_id(int(b.get("order_index") or i))),
+                }
+                for i, b in enumerate(layout_blocks)
+            ]
+
+        heading_tree: list[dict[str, Any]] = []
+        if isinstance(version.layout_metadata, dict):
+            raw_tree = version.layout_metadata.get("heading_tree") or []
+            if isinstance(raw_tree, list):
+                heading_tree = [n for n in raw_tree if isinstance(n, dict)]
+
+        allowed_types = {"heading", "paragraph", "table", "list", "figure"}
+        blocks_out: list[CanonicalBlock] = []
+        for raw in layout_blocks:
+            btype = str(raw.get("block_type") or "paragraph")
+            if btype not in allowed_types:
+                btype = "paragraph"
+            content = str(raw.get("text") or raw.get("content") or "")
+            start = raw.get("markdown_start")
+            end = raw.get("markdown_end")
+            if not content and isinstance(start, int) and isinstance(end, int):
+                content = markdown[start:end]
+            blocks_out.append(
+                CanonicalBlock(
+                    id=str(raw.get("id") or make_block_id(int(raw.get("order_index") or 0))),
+                    order_index=int(raw.get("order_index") or 0),
+                    block_type=btype,  # type: ignore[arg-type]
+                    content=content,
+                    heading_path=raw.get("heading_path"),
+                    heading_level=raw.get("heading_level"),
+                    depth=int(raw.get("depth") or 0),
+                    markdown_start=start if isinstance(start, int) else None,
+                    markdown_end=end if isinstance(end, int) else None,
+                    page_number=raw.get("page_number"),
+                    section_index=raw.get("section_index"),
+                    bbox=raw.get("bbox") if isinstance(raw.get("bbox"), list) else None,
+                )
+            )
+        if not any(b.content.strip() for b in blocks_out) and markdown.strip():
+            blocks_out = [
+                CanonicalBlock(
+                    id="b0000",
+                    order_index=0,
+                    block_type="paragraph",
+                    content=markdown,
+                    markdown_start=0,
+                    markdown_end=len(markdown),
+                )
+            ]
+
+        return CanonicalDocumentResponse(
+            document_id=doc.id,
+            document_version_id=version.id,
+            document_title=doc.title,
+            file_type=doc.file_type.value,  # type: ignore[arg-type]
+            markdown=markdown,
+            blocks=blocks_out,
+            heading_tree=heading_tree,
+            has_original=bool(version.storage_path),
+            preview_status=version.preview_status.value,  # type: ignore[arg-type]
+        )
+
+    def build_citation_locator(
+        self,
+        *,
+        version: DocumentVersion,
+        text_snippet: str,
+        chunk_content: str | None = None,
+    ) -> CitationLocator | None:
+        """Resolve Knowledge View locator for one citation (no LLM)."""
+        markdown = self._load_markdown_text(version)
+        if not markdown:
+            return None
+        blocks = self._layout_blocks_for_bbox(version)
+        result = resolve_canonical_locator(
+            markdown=markdown,
+            blocks=blocks,
+            text_snippet=text_snippet,
+            chunk_content=chunk_content,
+        )
+        return CitationLocator.model_validate(result.as_dict())
+
+    async def resolve_locators_for_citations(
+        self,
+        workspace_id: uuid.UUID,
+        rows: list[Any],
+    ) -> dict[uuid.UUID, CitationLocator]:
+        """Batch-resolve locators keyed by citation id (one MinIO load per version)."""
+        del workspace_id  # reserved for future ACL checks on version scope
+        from app.repositories.chat_messages import CitationWithDocument
+
+        out: dict[uuid.UUID, CitationLocator] = {}
+        by_version: dict[uuid.UUID, list[CitationWithDocument]] = {}
+        for row in rows:
+            if not isinstance(row, CitationWithDocument):
+                continue
+            if row.document_version_id is None:
+                continue
+            by_version.setdefault(row.document_version_id, []).append(row)
+
+        for version_id, group in by_version.items():
+            version = await self._docs.get_version_by_id(version_id)
+            if version is None:
+                continue
+            markdown = await asyncio.to_thread(self._load_markdown_text, version)
+            if not markdown:
+                continue
+            blocks = await asyncio.to_thread(self._layout_blocks_for_bbox, version)
+            for row in group:
+                result = resolve_canonical_locator(
+                    markdown=markdown,
+                    blocks=blocks,
+                    text_snippet=row.citation.text_snippet,
+                    chunk_content=getattr(row, "chunk_content", None),
+                )
+                out[row.citation.id] = CitationLocator.model_validate(result.as_dict())
+        return out
+
+    def _load_markdown_text(self, version: DocumentVersion) -> str | None:
+        key = version.markdown_storage_path
+        if not key or not str(key).strip():
+            return None
+        try:
+            raw = self._storage.download_bytes(str(key).strip())
+            return raw.decode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "markdown_load_failed",
+                version_id=str(version.id),
+                error=str(exc),
+            )
+            return None
 
     async def get_document_content(
         self,
@@ -570,6 +753,50 @@ class DocumentIngestionService:
         run_pipeline.delay(str(pipeline_run_id))
         logger.info("pipeline_enqueued", pipeline_run_id=str(pipeline_run_id))
 
+    def _layout_block_summaries(self, version: DocumentVersion) -> list[dict[str, Any]]:
+        """Compact blocks from ``layout_metadata`` (no MinIO round-trip)."""
+        meta = version.layout_metadata if isinstance(version.layout_metadata, dict) else {}
+        raw_blocks = meta.get("blocks") or []
+        if isinstance(raw_blocks, list):
+            return [b for b in raw_blocks if isinstance(b, dict)]
+        return []
+
+    def _layout_blocks_for_bbox(self, version: DocumentVersion) -> list[dict[str, Any]]:
+        """Prefer MinIO layout artifact (blocks include text); fall back to summaries."""
+        import json
+
+        meta = version.layout_metadata if isinstance(version.layout_metadata, dict) else {}
+        artifact_key = meta.get("layout_artifact_key")
+        if isinstance(artifact_key, str) and artifact_key.strip():
+            try:
+                raw = self._storage.download_bytes(artifact_key.strip())
+                artifact = json.loads(raw.decode("utf-8"))
+                blocks = artifact.get("blocks") if isinstance(artifact, dict) else None
+                if isinstance(blocks, list):
+                    typed = [b for b in blocks if isinstance(b, dict)]
+                    if typed:
+                        return typed
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "layout_artifact_load_failed",
+                    version_id=str(version.id),
+                    error=str(exc),
+                )
+        return self._layout_block_summaries(version)
+
+
+def _blocks_have_spans(blocks: list[dict[str, Any]]) -> bool:
+    """True when most blocks already carry markdown offsets (skip re-scan)."""
+    if not blocks:
+        return False
+    with_spans = 0
+    for block in blocks:
+        start = block.get("markdown_start")
+        end = block.get("markdown_end")
+        if isinstance(start, int) and isinstance(end, int) and end >= start:
+            with_spans += 1
+    return with_spans >= max(1, int(len(blocks) * 0.8))
+
 
 def _viewer_kind_from_preview(version: DocumentVersion) -> str:
     if (
@@ -585,23 +812,29 @@ def _match_bbox(
     layout_blocks: list[dict[str, Any]],
     row: ChunkHydrationRow,
 ) -> list[float] | None:
-    """Best-effort bbox from layout blocks on the same page with text overlap."""
+    """Best-effort bbox from layout blocks on the same page with text overlap.
+
+    Prefers the *tightest* overlapping block (smallest area) so citation
+    highlights do not inflate to a full-page paragraph container.
+    """
     if not layout_blocks:
         return None
     snippet = (row.content or "").strip()
     if len(snippet) < 12:
         return None
-    needle = snippet[:80].lower()
+    needle = snippet[:120].lower()
     page = row.page_number
     best: list[float] | None = None
-    best_score = 0
+    best_area: float | None = None
     for block in layout_blocks:
         if page is not None and block.get("page_number") not in (None, page):
             continue
         text = str(block.get("text") or block.get("content") or "").lower()
         if not text:
             continue
-        if needle not in text and text[:40] not in needle:
+        # Require real overlap: chunk needle in block OR block start in chunk.
+        chunk_lower = snippet.lower()
+        if needle not in text and text[:40] not in chunk_lower:
             continue
         bbox = block.get("bbox")
         if not isinstance(bbox, list) or len(bbox) < 4:
@@ -610,8 +843,10 @@ def _match_bbox(
             coords = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
         except (TypeError, ValueError):
             continue
-        score = len(text)
-        if score > best_score:
-            best_score = score
+        area = abs(coords[2] * coords[3])
+        if area <= 0:
+            continue
+        if best_area is None or area < best_area:
+            best_area = area
             best = coords
     return best

@@ -6,10 +6,13 @@
  * Purpose: Render Original PDF via pdf.js (never markdown).
  * Responsibilities:
  *   - Load PDF ArrayBuffer from content URL; render pages; expose jump API
+ *   - Deterministic citation highlight via bbox / text-layer snippet rects
  * Dependencies:
- *   - pdfjs-dist, HighlightOverlay
+ *   - pdfjs-dist, HighlightOverlay, pdf-text-highlight
  * Public Exports:
  *   - PDFViewer, PDFViewerHandle
+ * Important Notes: Never paint approximate full-page bands for citations —
+ *   navigate only when locator confidence is insufficient.
  * =============================================================================
  */
 
@@ -25,22 +28,30 @@ import {
 } from "react";
 
 import {
-  approximatePageHighlight,
   bboxToHighlightRect,
   HighlightOverlay,
   type HighlightRect,
 } from "@/features/documents/viewer/HighlightOverlay";
+import { findSnippetRectsInTextContent } from "@/features/documents/viewer/pdf-text-highlight";
 import { cn } from "@/lib/utils";
 
 export type PDFViewerHandle = {
   jumpToPage: (pageNumber: number) => void;
+  /**
+   * Apply citation highlight after the page is in view.
+   * Priority: explicit rects → text snippet (PDF text layer) → bbox → none.
+   * `approximate: true` is ignored (never invent a wide band).
+   */
   setHighlight: (args: {
     pageNumber: number;
     bbox?: number[] | null;
+    rects?: HighlightRect[] | null;
+    snippet?: string | null;
     approximate?: boolean;
-  }) => void;
+  }) => Promise<boolean>;
   clearHighlight: () => void;
   getPageCount: () => number;
+  waitForPage: (pageNumber: number, timeoutMs?: number) => Promise<boolean>;
 };
 
 type Props = {
@@ -51,6 +62,8 @@ type Props = {
   className?: string;
   onDocumentReady?: (pageCount: number) => void;
   onLoadError?: (message: string) => void;
+  /** Fired when the most-visible page changes while scrolling. */
+  onVisiblePageChange?: (pageNumber: number) => void;
 };
 
 type PagePaint = {
@@ -61,7 +74,15 @@ type PagePaint = {
 };
 
 export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
-  { contentUrl, scale, rotation, className, onDocumentReady, onLoadError },
+  {
+    contentUrl,
+    scale,
+    rotation,
+    className,
+    onDocumentReady,
+    onLoadError,
+    onVisiblePageChange,
+  },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,7 +91,7 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
   const [loading, setLoading] = useState(true);
   const [highlight, setHighlightState] = useState<{
     pageNumber: number;
-    rect: HighlightRect;
+    rects: HighlightRect[];
     active: boolean;
     settled: boolean;
   } | null>(null);
@@ -92,10 +113,16 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
     async (pdf: import("pdfjs-dist").PDFDocumentProxy) => {
       const painted: PagePaint[] = [];
       const s = scaleRef.current;
-      const r = rotationRef.current;
+      // User delta only — must ADD to each page's intrinsic /Rotate metadata.
+      // Passing rotation: 0 forces upright MediaBox and ignores page.rotate,
+      // which makes landscape/scanned PDFs appear sideways.
+      const userDelta = ((rotationRef.current % 360) + 360) % 360;
       for (let i = 1; i <= pdf.numPages; i += 1) {
         const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: s, rotation: r });
+        const viewport = page.getViewport({
+          scale: s,
+          rotation: (page.rotate + userDelta) % 360,
+        });
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         if (!ctx) continue;
@@ -127,23 +154,109 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
       );
       el?.scrollIntoView({ behavior: "smooth", block: "start" });
     },
-    setHighlight({ pageNumber, bbox, approximate }) {
+    async waitForPage(pageNumber: number, timeoutMs = 4000) {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        if (pagesRef.current.some((p) => p.pageNumber === pageNumber)) {
+          return true;
+        }
+        await new Promise((r) => window.setTimeout(r, 50));
+      }
+      return pagesRef.current.some((p) => p.pageNumber === pageNumber);
+    },
+    async setHighlight({ pageNumber, bbox, rects, snippet }) {
+      const ready = await (async () => {
+        const started = Date.now();
+        while (Date.now() - started < 4000) {
+          if (pagesRef.current.some((p) => p.pageNumber === pageNumber)) {
+            return true;
+          }
+          await new Promise((r) => window.setTimeout(r, 50));
+        }
+        return pagesRef.current.some((p) => p.pageNumber === pageNumber);
+      })();
+      if (!ready) return false;
+
       const paint = pagesRef.current.find((p) => p.pageNumber === pageNumber);
-      const rect =
-        bboxToHighlightRect(bbox, paint?.width ?? 1, paint?.height ?? 1) ||
-        (approximate || !bbox ? approximatePageHighlight() : null);
-      if (!rect) return;
+      const pageWidth = paint?.width ?? 1;
+      const pageHeight = paint?.height ?? 1;
+
+      let nextRects: HighlightRect[] = Array.isArray(rects)
+        ? rects.filter(Boolean)
+        : [];
+
+      // Prefer PDF text-layer match for citation sub-spans.
+      if (nextRects.length === 0 && snippet?.trim() && pdfDocRef.current) {
+        try {
+          const page = await pdfDocRef.current.getPage(pageNumber);
+          const userDelta = ((rotationRef.current % 360) + 360) % 360;
+          const viewport = page.getViewport({
+            scale: scaleRef.current,
+            rotation: (page.rotate + userDelta) % 360,
+          });
+          const textContent = await page.getTextContent();
+          nextRects = findSnippetRectsInTextContent(
+            {
+              items: textContent.items.map((item) => {
+                if (!item || typeof item !== "object" || !("str" in item)) {
+                  return { str: "" };
+                }
+                const ti = item as {
+                  str?: string;
+                  transform?: number[] | Float32Array;
+                  width?: number;
+                  height?: number;
+                };
+                return {
+                  str: ti.str,
+                  transform: ti.transform,
+                  width: ti.width,
+                  height: ti.height,
+                };
+              }),
+            },
+            snippet,
+            viewport.width,
+            viewport.height,
+          );
+        } catch {
+          nextRects = [];
+        }
+      }
+
+      if (nextRects.length === 0 && bbox) {
+        const one = bboxToHighlightRect(bbox, pageWidth, pageHeight);
+        if (one) nextRects = [one];
+      }
+
+      // No approximate band — navigate without a fake highlight when unsure.
+      if (nextRects.length === 0) {
+        clearHighlightTimers();
+        setHighlightState(null);
+        const el = containerRef.current?.querySelector(
+          `[data-pdf-page="${pageNumber}"]`,
+        );
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        return false;
+      }
+
       clearHighlightTimers();
-      setHighlightState({ pageNumber, rect, active: true, settled: false });
+      setHighlightState({
+        pageNumber,
+        rects: nextRects,
+        active: true,
+        settled: false,
+      });
       highlightTimer.current = window.setTimeout(() => {
         setHighlightState((prev) =>
           prev ? { ...prev, active: false, settled: true } : null,
         );
-      }, 7000);
+      }, 8000);
       const el = containerRef.current?.querySelector(
         `[data-pdf-page="${pageNumber}"]`,
       );
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return true;
     },
     clearHighlight() {
       clearHighlightTimers();
@@ -204,18 +317,52 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
     };
   }, [scale, rotation, paintPages]);
 
+  // Track which page is most visible in the scroll viewport.
+  useEffect(() => {
+    if (!onVisiblePageChange || pages.length === 0) return;
+    const root = containerRef.current;
+    if (!root) return;
+
+    const ratios = new Map<number, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const pageAttr = (entry.target as HTMLElement).dataset.pdfPage;
+          const pageNumber = pageAttr ? Number(pageAttr) : NaN;
+          if (!Number.isFinite(pageNumber)) continue;
+          ratios.set(pageNumber, entry.intersectionRatio);
+        }
+        let bestPage = 1;
+        let bestRatio = -1;
+        for (const [page, ratio] of ratios) {
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
+            bestPage = page;
+          }
+        }
+        if (bestRatio >= 0) onVisiblePageChange(bestPage);
+      },
+      { root, threshold: [0.15, 0.35, 0.55, 0.75] },
+    );
+
+    for (const el of root.querySelectorAll("[data-pdf-page]")) {
+      observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, [pages, onVisiblePageChange]);
+
   return (
     <div
       ref={containerRef}
       className={cn(
-        "max-h-[70vh] space-y-4 overflow-y-auto scroll-smooth rounded-lg border border-border-default bg-elevated/30 p-3",
+        "max-h-[70vh] space-y-6 overflow-y-auto scroll-smooth rounded-md bg-elevated/30 p-4 sm:p-6",
         className,
       )}
     >
       {loading ? (
         <div className="animate-pulse space-y-3" aria-busy>
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-64 rounded-md bg-elevated" />
+            <div key={i} className="mx-auto h-72 max-w-2xl rounded-sm bg-elevated" />
           ))}
         </div>
       ) : null}
@@ -223,7 +370,7 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
         <div
           key={page.pageNumber}
           data-pdf-page={page.pageNumber}
-          className="relative mx-auto w-fit shadow-sm"
+          className="relative mx-auto w-fit bg-white shadow-[0_1px_3px_rgba(15,23,42,0.08),0_8px_24px_rgba(15,23,42,0.06)]"
         >
           <canvas
             ref={(node) => {
@@ -236,16 +383,19 @@ export const PDFViewer = forwardRef<PDFViewerHandle, Props>(function PDFViewer(
               }
             }}
             className="max-w-full"
-            aria-label={`Trang ${page.pageNumber}`}
+            aria-label={`Page ${page.pageNumber}`}
           />
-          {highlight?.pageNumber === page.pageNumber ? (
-            <HighlightOverlay
-              rect={highlight.rect}
-              active={highlight.active}
-              settled={highlight.settled}
-            />
-          ) : null}
-          <span className="absolute bottom-2 right-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white">
+          {highlight?.pageNumber === page.pageNumber
+            ? highlight.rects.map((rect, idx) => (
+                <HighlightOverlay
+                  key={`${page.pageNumber}-${idx}`}
+                  rect={rect}
+                  active={highlight.active}
+                  settled={highlight.settled}
+                />
+              ))
+            : null}
+          <span className="absolute right-2 bottom-2 rounded bg-slate-900/45 px-1.5 py-0.5 text-[10px] text-white">
             {page.pageNumber}
           </span>
         </div>

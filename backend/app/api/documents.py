@@ -34,6 +34,7 @@ from app.dependencies.rbac import WorkspaceAccess
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import FileType
 from app.models.pipeline import PipelineRun, PipelineStageLog
+from app.schemas.canonical import CanonicalDocumentResponse
 from app.schemas.common import ErrorResponse
 from app.schemas.documents import (
     DocumentChunkListResponse,
@@ -235,6 +236,40 @@ async def list_document_chunks(
     del workspaceId
     try:
         return await service.list_document_chunks(
+            access.workspace_id,
+            documentId,
+            version_id=versionId,
+        )
+    except DocumentIngestionError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/{workspaceId}/documents/{documentId}/canonical",
+    response_model=CanonicalDocumentResponse,
+    summary="Canonical Knowledge Document (Markdown + blocks)",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def get_canonical_document(
+    workspaceId: uuid.UUID,
+    documentId: uuid.UUID,
+    versionId: uuid.UUID | None = Query(
+        None,
+        description="Optional version override; default = current_version_id",
+    ),
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    service: DocumentIngestionService = Depends(get_document_service),
+) -> CanonicalDocumentResponse:
+    """Return Canonical Markdown + structured blocks for Knowledge View."""
+    del workspaceId
+    try:
+        return await service.get_canonical_document(
             access.workspace_id,
             documentId,
             version_id=versionId,

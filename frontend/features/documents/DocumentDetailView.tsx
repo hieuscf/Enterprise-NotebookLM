@@ -3,68 +3,72 @@
  * File: DocumentDetailView.tsx
  * Module/Service: Document Ingestion Service (Web App)
  * Layer: UI
- * Purpose: Document detail page — header + version history + inline "upload
- *          new version" (replace mode) (FR2 Part 2, TASKS.md 1.4).
+ * Purpose: Premium document reader shell — compact context bar + viewer canvas.
  * Responsibilities:
- *   - Load GET .../documents/{documentId} once for title/file_type/created_at
- *   - Own useDocumentVersions (list + reload) and useDocumentUploadQueue in
- *     "replace" mode; wire both into DocumentVersionHistory / UploadJobCard
- *   - Own the toast queue for "Đặt làm bản hiện hành" / upload feedback
- *   - Deep-link to workspace Summaries / Extractions pages for this document
+ *   - Load document meta; wire versions, upload-replace, delete, AI tool links
+ *   - Keep document canvas as visual focus (versions in drawer)
  * Dependencies:
- *   - hooks/useDocumentVersions, useDocumentUploadQueue, useToasts,
- *     useWorkspaceRole, useAuth; lib/api-client.getDocument
- *   - features/documents/DocumentVersionHistory, DocumentUploadDropzone,
- *     UploadJobCard, FileTypeIcon
+ *   - DocumentViewer, DocumentActionsMenu, VersionHistoryDrawer, ConfirmDialog
  * Public Exports:
  *   - DocumentDetailView
  * Database/Table: documents, document_versions
- * Related Modules: app/workspaces/[id]/documents/[documentId]/page.tsx,
- *   features/summaries/SummariesView, features/extractions/ExtractionsView
- * Important Notes: A replacement version is already current_version_id in the
- *   backend as soon as the 202 response arrives (see upload_new_version) —
- *   reloading the version list alone is enough to reflect the new
- *   "Đang dùng" badge; no separate getDocument refetch is needed for that.
- *   Summary / Extraction live on dedicated AI Tools pages (not inline here).
+ * Related Modules: app/workspaces/[id]/documents/[documentId]/page.tsx
+ * Important Notes: DELETE uses OpenAPI contract; backend remains RBAC authority.
  * =============================================================================
  */
 
 "use client";
 
-import { AlertCircle, ArrowLeft, ScrollText, UploadCloud, Wand2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Network, ScrollText, Wand2 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ToastStack } from "@/components/ui/toast";
 import { loadCitationFocus } from "@/features/chat/citation/citation-session";
-import { DocumentUploadDropzone } from "@/features/documents/DocumentUploadDropzone";
-import { DocumentVersionHistory } from "@/features/documents/DocumentVersionHistory";
-import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
+import { DocumentActionsMenu } from "@/features/documents/DocumentActionsMenu";
+import { DocumentExtentLabel } from "@/features/documents/DocumentExtentLabel";
+import { DocumentStatusIndicator } from "@/features/documents/DocumentStatusIndicator";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
+import { UploadVersionDialog } from "@/features/documents/UploadVersionDialog";
+import { VersionHistoryDrawer } from "@/features/documents/VersionHistoryDrawer";
+import { DocumentViewer } from "@/features/documents/viewer/DocumentViewer";
 import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { useDocumentUploadQueue, type StagedFile } from "@/hooks/useDocumentUploadQueue";
 import { useDocumentVersions } from "@/hooks/useDocumentVersions";
 import { useToasts } from "@/hooks/useToasts";
 import { useWorkspaceRole } from "@/hooks/useWorkspaceRole";
-import { ApiClientError, getDocument } from "@/lib/api-client";
+import {
+  ApiClientError,
+  deleteDocument,
+  documentContentUrl,
+  getDocument,
+} from "@/lib/api-client";
+import { canDeleteDocuments, canUploadDocuments } from "@/lib/rbac";
+import { formatBytes } from "@/lib/upload-constraints";
 import { cn } from "@/lib/utils";
-import type { Document } from "@/types/documents";
+import type { Document, DocumentVersion } from "@/types/documents";
 
 type Props = {
   workspaceId: string;
   documentId: string;
-  /** Deep-link from Search (?chunk=). */
   focusChunkId?: string | null;
   focusPage?: number | null;
-  /** Deep-link from Chat citation (?citation=) — snippet loaded from sessionStorage. */
   focusCitationId?: string | null;
+  focusVersionId?: string | null;
+  initialView?: "knowledge" | "original";
 };
 
 function formatDate(iso: string): string {
   try {
-    return new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium" }).format(new Date(iso));
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(iso));
   } catch {
     return iso;
   }
@@ -76,30 +80,60 @@ export function DocumentDetailView({
   focusChunkId = null,
   focusPage = null,
   focusCitationId = null,
+  focusVersionId = null,
+  initialView = "knowledge",
 }: Props) {
+  const router = useRouter();
   const { user } = useAuth();
   const { isEditor } = useWorkspaceRole(workspaceId);
+  const canUpload = canUploadDocuments(user, workspaceId) || isEditor;
+  const canDelete = canDeleteDocuments(user, workspaceId);
   const { toasts, pushSuccess, pushError, dismiss } = useToasts();
 
   const [doc, setDoc] = useState<Document | null>(null);
   const [docError, setDocError] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(true);
   const [focusSnippet, setFocusSnippet] = useState<string | null>(null);
+  const [focusLocator, setFocusLocator] = useState<
+    import("@/types/canonical").CitationLocator | null
+  >(null);
   const [resolvedPage, setResolvedPage] = useState<number | null>(focusPage);
+  const [resolvedChunkId, setResolvedChunkId] = useState<string | null>(
+    focusChunkId,
+  );
+  const [resolvedVersionId, setResolvedVersionId] = useState<string | null>(
+    focusVersionId,
+  );
+
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
+    setResolvedChunkId(focusChunkId);
+    setResolvedVersionId(focusVersionId);
     if (!focusCitationId) {
       setFocusSnippet(null);
+      setFocusLocator(null);
       setResolvedPage(focusPage);
       return;
     }
     const payload = loadCitationFocus(workspaceId, focusCitationId);
     setFocusSnippet(payload?.textSnippet ?? null);
+    setFocusLocator(payload?.locator ?? null);
     setResolvedPage(
       focusPage ??
         (payload?.page != null && payload.page > 0 ? payload.page : null),
     );
-  }, [workspaceId, focusCitationId, focusPage]);
+    if (!focusChunkId && payload?.chunkId) {
+      setResolvedChunkId(payload.chunkId);
+    }
+    if (!focusVersionId && payload?.versionId) {
+      setResolvedVersionId(payload.versionId);
+    }
+  }, [workspaceId, focusCitationId, focusPage, focusChunkId, focusVersionId]);
 
   useEffect(() => {
     let active = true;
@@ -111,7 +145,9 @@ export function DocumentDetailView({
       .catch((err) => {
         if (!active) return;
         setDocError(
-          err instanceof ApiClientError ? err.message : "Không tải được thông tin tài liệu.",
+          err instanceof ApiClientError
+            ? err.message
+            : "Unable to load document.",
         );
       })
       .finally(() => {
@@ -129,170 +165,278 @@ export function DocumentDetailView({
     reload: reloadVersions,
   } = useDocumentVersions(workspaceId, documentId);
 
-  const [showReplaceUpload, setShowReplaceUpload] = useState(false);
-  const { jobs, addJobs, removeJob, cancelJob } = useDocumentUploadQueue(workspaceId, {
-    onUploaded: () => {
-      reloadVersions();
-      pushSuccess("Đã tải lên version mới — pipeline đang xử lý.");
+  const currentVersion: DocumentVersion | null = useMemo(
+    () => versions.find((v) => v.is_current) ?? versions[0] ?? null,
+    [versions],
+  );
+
+  const { jobs, addJobs, removeJob, cancelJob } = useDocumentUploadQueue(
+    workspaceId,
+    {
+      onUploaded: () => {
+        reloadVersions();
+        pushSuccess("New version uploaded — processing pipeline started.");
+      },
+      onFailed: (job) =>
+        pushError(job.errorMessage ?? "Failed to upload new version."),
     },
-    onFailed: (job) => pushError(job.errorMessage ?? "Tải lên version mới thất bại."),
+  );
+
+  const downloadUrl = documentContentUrl(workspaceId, documentId, {
+    download: true,
   });
 
   function handleReplaceSubmit(staged: StagedFile[]) {
     addJobs(staged, { mode: "replace", documentId });
-    setShowReplaceUpload(false);
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteDocument(workspaceId, documentId);
+      pushSuccess("Document deleted.");
+      router.replace(`/workspaces/${workspaceId}/documents`);
+      router.refresh();
+    } catch (err) {
+      setDeleteError(
+        err instanceof ApiClientError
+          ? err.status === 403
+            ? "You do not have permission to delete this document."
+            : err.message
+          : "Unable to delete document.",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      pushSuccess("Document link copied.");
+    } catch {
+      pushError("Unable to copy link.");
+    }
   }
 
   return (
     <AppShell active="documents" user={user} workspaceId={workspaceId}>
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href={`/workspaces/${workspaceId}/documents`}
-            className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-secondary hover:text-accent-primary"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Quay lại danh sách tài liệu
-          </Link>
-          {focusChunkId ? (
-            <Link
-              href={`/workspaces/${workspaceId}/search`}
-              className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-accent-primary hover:underline"
-            >
-              Quay lại tìm kiếm
-            </Link>
-          ) : null}
-          {focusCitationId ? (
-            <Link
-              href={`/workspaces/${workspaceId}/chat`}
-              className="inline-flex w-fit items-center gap-1.5 text-body-sm font-medium text-accent-primary hover:underline"
-            >
-              Quay lại chat
-            </Link>
-          ) : null}
-        </div>
-
-        {docError ? (
-          <p
-            role="alert"
-            className="flex items-center gap-2 rounded-md bg-danger-soft px-3 py-2 text-body-sm text-danger"
-          >
-            <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
-            {docError}
-          </p>
-        ) : (
-          <div className="flex items-start gap-3">
-            {doc ? <FileTypeIcon fileType={doc.file_type} className="h-12 w-12" /> : null}
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate text-h1 text-primary">
-                {docLoading ? "Đang tải…" : doc?.title ?? "Tài liệu"}
-              </h1>
-              {doc ? (
-                <p className="mt-1 text-body-sm text-secondary">
-                  {doc.file_type.toUpperCase()} · Tạo ngày {formatDate(doc.created_at)}
-                </p>
+      <div className="flex min-h-[calc(100vh-4rem)] flex-col">
+        {/* Compact document context bar */}
+        <div className="shrink-0 border-b border-border-default bg-surface px-4 py-3 sm:px-6">
+          <div className="mx-auto flex max-w-[1600px] flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Link
+                href={`/workspaces/${workspaceId}/documents`}
+                className="inline-flex items-center gap-1.5 text-caption font-medium text-secondary hover:text-accent-primary"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+                Documents
+              </Link>
+              {focusChunkId ? (
+                <Link
+                  href={`/workspaces/${workspaceId}/search`}
+                  className="text-caption font-medium text-accent-primary hover:underline"
+                >
+                  Back to search
+                </Link>
+              ) : null}
+              {focusCitationId ? (
+                <Link
+                  href={`/workspaces/${workspaceId}/chat`}
+                  className="text-caption font-medium text-accent-primary hover:underline"
+                >
+                  Back to chat
+                </Link>
               ) : null}
             </div>
+
+            {docError ? (
+              <p
+                role="alert"
+                className="flex items-center gap-2 text-body-sm text-danger"
+              >
+                <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+                {docError}
+              </p>
+            ) : (
+              <div className="flex items-start gap-3">
+                {doc ? (
+                  <FileTypeIcon fileType={doc.file_type} className="h-10 w-10" />
+                ) : (
+                  <div className="h-10 w-10 animate-pulse rounded-md bg-elevated" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h1 className="truncate text-h3 font-semibold text-primary sm:text-h2">
+                        {docLoading ? "Loading…" : doc?.title ?? "Document"}
+                      </h1>
+                      {doc ? (
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-caption text-tertiary">
+                          <span className="uppercase">{doc.file_type}</span>
+                          <span aria-hidden>·</span>
+                          <span>{formatDate(doc.updated_at || doc.created_at)}</span>
+                          {currentVersion ? (
+                            <>
+                              <span aria-hidden>·</span>
+                              <DocumentExtentLabel
+                                fileType={doc.file_type}
+                                pageCount={currentVersion.page_count}
+                              />
+                              {currentVersion.file_size_bytes != null ? (
+                                <>
+                                  <span aria-hidden>·</span>
+                                  <span>
+                                    {formatBytes(currentVersion.file_size_bytes)}
+                                  </span>
+                                </>
+                              ) : null}
+                              <span aria-hidden>·</span>
+                              <span>v{currentVersion.version_number}</span>
+                            </>
+                          ) : null}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {currentVersion ? (
+                        <DocumentStatusIndicator status={currentVersion.status} />
+                      ) : null}
+                      <DocumentActionsMenu
+                        canUploadVersion={canUpload}
+                        canDelete={canDelete}
+                        onOpenOriginal={() =>
+                          window.open(downloadUrl, "_blank", "noopener,noreferrer")
+                        }
+                        onDownload={() =>
+                          window.open(downloadUrl, "_blank", "noopener,noreferrer")
+                        }
+                        onPrint={() => window.print()}
+                        onUploadVersion={() => setUploadOpen(true)}
+                        onVersionHistory={() => setHistoryOpen(true)}
+                        onCopyLink={() => void copyLink()}
+                        onDelete={() => {
+                          setDeleteError(null);
+                          setDeleteOpen(true);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <Link
+                      href={`/workspaces/${workspaceId}/summaries?documentId=${documentId}`}
+                      className={cn(
+                        "inline-flex h-7 items-center gap-1.5 rounded-md border border-border-default px-2.5",
+                        "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",
+                      )}
+                    >
+                      <ScrollText className="h-3 w-3" aria-hidden />
+                      Summarize
+                    </Link>
+                    <Link
+                      href={`/workspaces/${workspaceId}/extractions?documentId=${documentId}`}
+                      className={cn(
+                        "inline-flex h-7 items-center gap-1.5 rounded-md border border-border-default px-2.5",
+                        "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",
+                      )}
+                    >
+                      <Wand2 className="h-3 w-3" aria-hidden />
+                      Extract
+                    </Link>
+                    <Link
+                      href={`/workspaces/${workspaceId}/graph`}
+                      className={cn(
+                        "inline-flex h-7 items-center gap-1.5 rounded-md border border-border-default px-2.5",
+                        "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",
+                      )}
+                    >
+                      <Network className="h-3 w-3" aria-hidden />
+                      Explore graph
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
-        <section className="flex flex-col gap-3" aria-label="Nội dung tài liệu">
-          <h2 className="text-h3 text-primary">Nội dung</h2>
-          <DocumentViewer
-            workspaceId={workspaceId}
-            documentId={documentId}
-            focusChunkId={focusChunkId}
-            focusPage={resolvedPage}
-            focusCitationId={focusCitationId}
-            focusSnippet={focusSnippet}
-            onMissingChunk={() =>
-              pushError("Không tìm thấy đoạn được tham chiếu.")
-            }
-            onHighlightFailed={() =>
-              pushError(
-                focusSnippet
-                  ? "Không khớp được đoạn trích — đã mở trang nguồn nếu có."
-                  : "Không xác định được vị trí highlight trong tài liệu.",
-              )
-            }
-          />
-        </section>
-
-        {!docError ? (
-          <section
-            aria-label="Công cụ AI cho tài liệu này"
-            className="flex flex-wrap gap-2"
-          >
-            <Link
-              href={`/workspaces/${workspaceId}/summaries?documentId=${documentId}`}
-              className={cn(
-                "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
-                "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
-              )}
-            >
-              <ScrollText className="h-4 w-4" aria-hidden />
-              Tóm tắt
-            </Link>
-            <Link
-              href={`/workspaces/${workspaceId}/extractions?documentId=${documentId}`}
-              className={cn(
-                "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
-                "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
-              )}
-            >
-              <Wand2 className="h-4 w-4" aria-hidden />
-              Trích xuất thông tin
-            </Link>
-          </section>
+        {jobs.length > 0 ? (
+          <div className="shrink-0 space-y-2 border-b border-border-default bg-elevated/30 px-4 py-3 sm:px-6">
+            {jobs.map((job) => (
+              <UploadJobCard
+                key={job.clientId}
+                workspaceId={workspaceId}
+                job={job}
+                onCancel={cancelJob}
+                onDismiss={removeJob}
+              />
+            ))}
+          </div>
         ) : null}
 
-        <div className="flex flex-col gap-3">
-          {isEditor ? (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowReplaceUpload((v) => !v)}
-                className={cn(
-                  "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
-                  "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
-                )}
-              >
-                <UploadCloud className="h-4 w-4" aria-hidden />
-                Tải lên version mới
-              </button>
-            </div>
+        {/* Reader canvas — fills remaining height */}
+        <div className="mx-auto w-full max-w-[1600px] flex-1 px-2 py-3 sm:px-4 sm:py-4 lg:px-6">
+          {!docError ? (
+            <DocumentViewer
+              workspaceId={workspaceId}
+              documentId={documentId}
+              document={doc}
+              currentVersion={currentVersion}
+              focusChunkId={resolvedChunkId}
+              focusPage={resolvedPage}
+              focusCitationId={focusCitationId}
+              focusSnippet={focusSnippet}
+              focusVersionId={resolvedVersionId}
+              focusLocator={focusLocator}
+              initialView={initialView}
+              onOpenVersionHistory={() => setHistoryOpen(true)}
+              onMissingChunk={() => pushError("Referenced passage not found.")}
+              onHighlightFailed={() =>
+                pushError(
+                  focusSnippet
+                    ? "Opened the source — exact text highlight was unavailable."
+                    : "Could not locate highlight in the document.",
+                )
+              }
+            />
           ) : null}
-
-          {showReplaceUpload ? (
-            <DocumentUploadDropzone mode="replace" onSubmit={handleReplaceSubmit} />
-          ) : null}
-
-          {jobs.length > 0 ? (
-            <div className="flex flex-col gap-3">
-              {jobs.map((job) => (
-                <UploadJobCard
-                  key={job.clientId}
-                  workspaceId={workspaceId}
-                  job={job}
-                  onCancel={cancelJob}
-                  onDismiss={removeJob}
-                />
-              ))}
-            </div>
-          ) : null}
-
-          <DocumentVersionHistory
-            workspaceId={workspaceId}
-            documentId={documentId}
-            versions={versions}
-            loading={versionsLoading}
-            error={versionsError}
-            onReload={reloadVersions}
-            pushSuccess={pushSuccess}
-            pushError={pushError}
-          />
         </div>
       </div>
+
+      <UploadVersionDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onSubmit={handleReplaceSubmit}
+      />
+
+      <VersionHistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        workspaceId={workspaceId}
+        documentId={documentId}
+        versions={versions}
+        loading={versionsLoading}
+        error={versionsError}
+        onReload={reloadVersions}
+        pushSuccess={pushSuccess}
+        pushError={pushError}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete document?"
+        description="This permanently removes the document and all of its versions from this Workspace."
+        confirmLabel="Delete document"
+        confirming={deleting}
+        error={deleteError}
+        onCancel={() => {
+          if (!deleting) setDeleteOpen(false);
+        }}
+        onConfirm={() => void handleDelete()}
+      />
 
       <ToastStack toasts={toasts} onDismiss={dismiss} />
     </AppShell>

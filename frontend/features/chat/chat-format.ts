@@ -7,7 +7,7 @@
  * Responsibilities:
  *   - Relative "updated_at" label for the session sidebar
  *   - Session title fallback when title is NULL (contract has no preview)
- *   - Document deep-link for a Chat citation (page + citation focus when known)
+ *   - Document deep-link for a Chat citation (?chunk=&page=&citation=&version=)
  *   - Conversation date grouping labels
  * Dependencies:
  *   - types/chat, types/citations
@@ -16,8 +16,7 @@
  *   - citationDisplayIndex, stripLeakedCitationUuids, conversationDayLabel
  * Database/Table: N/A
  * Related Modules: features/chat/SessionSidebar, CitationChip, SourcePanel
- * Important Notes: Kept dependency-free and pure so scripts/test-chat-ui.mjs
- *   can re-implement/exercise the same logic without a bundler.
+ * Important Notes: Prefer chunk_id like Search deep-links; citation id is fallback.
  * =============================================================================
  */
 
@@ -51,11 +50,13 @@ export function sessionTitleLabel(session: Pick<ChatSession, "title">): string {
 export type ChatCitationHrefInput = Pick<Citation, "document_id"> & {
   page?: number | null;
   citationId?: string | null;
+  chunkId?: string | null;
+  versionId?: string | null;
 };
 
 /**
- * Deep-link to the document viewer. Optional page + citation id enable
- * highlight via sessionStorage payload (see citation-session.ts).
+ * Deep-link to the document viewer (Knowledge View by default).
+ * Prefer ?chunk= (ChunkNavigator) like Search; keep ?citation= for snippet fallback.
  */
 export function buildChatCitationHref(
   workspaceId: string,
@@ -63,8 +64,15 @@ export function buildChatCitationHref(
 ): string | null {
   if (!citation.document_id) return null;
   const params = new URLSearchParams();
+  params.set("view", "knowledge");
+  if (citation.chunkId) {
+    params.set("chunk", citation.chunkId);
+  }
   if (citation.page != null && citation.page > 0) {
     params.set("page", String(citation.page));
+  }
+  if (citation.versionId) {
+    params.set("version", citation.versionId);
   }
   if (citation.citationId) {
     params.set("citation", citation.citationId);

@@ -3,16 +3,17 @@
  * File: SnippetNavigator.tsx
  * Module/Service: Document Viewer / Chat Citation
  * Layer: UI
- * Purpose: Resolve citation text_snippet → chunk → PDF page + highlight.
+ * Purpose: Resolve citation text_snippet → chunk → PDF page + sub-span highlight.
  * Responsibilities:
- *   - Match snippet to chunks; jump/highlight; fall back to page / approximate
+ *   - Match snippet to chunks; wait for page; text-layer highlight
+ *   - Page-only fallback navigates without inventing a highlight band
  * Dependencies:
  *   - citation-snippet-match, PDFViewerHandle
  * Public Exports:
  *   - SnippetNavigator
  * Database/Table: N/A
  * Related Modules: DocumentViewer
- * Important Notes: Highlight failure must not crash — falls back gracefully.
+ * Important Notes: Prefer ChunkNavigator when chunk_id is known.
  * =============================================================================
  */
 
@@ -60,45 +61,57 @@ export function SnippetNavigator({
       return;
     }
 
-    try {
-      const chunk = snippet ? findChunkForSnippet(chunks, snippet) : null;
-      if (chunk) {
-        const page =
-          chunk.page_number && chunk.page_number > 0
-            ? chunk.page_number
-            : pageHint && pageHint > 0
-              ? pageHint
-              : 1;
-        handle.jumpToPage(page);
-        const t = window.setTimeout(() => {
-          handle.setHighlight({
+    let cancelled = false;
+    void (async () => {
+      try {
+        const chunk = snippet ? findChunkForSnippet(chunks, snippet) : null;
+        if (chunk) {
+          const page =
+            chunk.page_number && chunk.page_number > 0
+              ? chunk.page_number
+              : pageHint && pageHint > 0
+                ? pageHint
+                : 1;
+          handle.jumpToPage(page);
+          await handle.waitForPage(page);
+          if (cancelled) return;
+          const ok = await handle.setHighlight({
             pageNumber: page,
             bbox: chunk.bounding_box,
-            approximate: !chunk.bounding_box,
+            snippet: snippet?.trim() || null,
           });
+          if (cancelled) return;
           onLocated?.(chunk, true);
-        }, 160);
-        return () => window.clearTimeout(t);
-      }
+          if (!ok) onHighlightFailed?.();
+          return;
+        }
 
-      if (pageHint && pageHint > 0) {
-        handle.jumpToPage(pageHint);
-        const t = window.setTimeout(() => {
-          handle.setHighlight({
-            pageNumber: pageHint,
-            approximate: true,
-          });
+        if (pageHint && pageHint > 0) {
+          handle.jumpToPage(pageHint);
+          await handle.waitForPage(pageHint);
+          if (cancelled) return;
+          // Try text-layer match on the hinted page without whole-page band.
+          const ok = snippet?.trim()
+            ? await handle.setHighlight({
+                pageNumber: pageHint,
+                snippet: snippet.trim(),
+              })
+            : false;
           onLocated?.(null, false);
-          onHighlightFailed?.();
-        }, 160);
-        return () => window.clearTimeout(t);
-      }
+          if (!ok) onHighlightFailed?.();
+          return;
+        }
 
-      onLocated?.(null, false);
-      onHighlightFailed?.();
-    } catch {
-      onHighlightFailed?.();
-    }
+        onLocated?.(null, false);
+        onHighlightFailed?.();
+      } catch {
+        onHighlightFailed?.();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     snippet,
     pageHint,

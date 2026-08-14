@@ -121,8 +121,18 @@ class DocumentChunkResponse(BaseModel):
         default=None,
         description="Optional [x, y, w, h] from layout_metadata when available.",
     )
-    start_offset: int | None = None
-    end_offset: int | None = None
+    start_offset: int | None = Field(
+        default=None,
+        description="Inclusive markdown_start of this chunk in Canonical Markdown.",
+    )
+    end_offset: int | None = Field(
+        default=None,
+        description="Exclusive markdown_end of this chunk in Canonical Markdown.",
+    )
+    block_ids: list[str] = Field(
+        default_factory=list,
+        description="Canonical block ids overlapping this chunk.",
+    )
 
 
 class DocumentChunkListResponse(BaseModel):

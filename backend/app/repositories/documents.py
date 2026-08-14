@@ -125,6 +125,10 @@ class DocumentRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_version_by_id(self, version_id: uuid.UUID) -> DocumentVersion | None:
+        """Load a version by primary key (citation locator batching)."""
+        return await self._session.get(DocumentVersion, version_id)
+
     async def list_versions(
         self,
         workspace_id: uuid.UUID,

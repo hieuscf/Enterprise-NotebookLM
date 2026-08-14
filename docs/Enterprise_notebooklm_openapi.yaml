@@ -356,10 +356,10 @@ paths:
       - { $ref: "#/components/parameters/DocumentId" }
     get:
       tags: [Documents]
-      summary: Danh sách chunk bản hiện hành (Document Viewer / deep-link Search)
+      summary: Danh sách chunk bản hiện hành (AI panel / deep-link — không phải body)
       description: >
-        Trả chunks đã index của current_version (hoặc versionId) để viewer
-        scroll/highlight theo chunk_id. Không gọi Hybrid Retrieval.
+        Trả chunks đã index của current_version (hoặc versionId) cho AI Context,
+        outline metadata và deep-link. Không dùng để render Canonical body.
       parameters:
         - name: versionId
           in: query
@@ -373,6 +373,38 @@ paths:
               schema: { $ref: "#/components/schemas/DocumentChunkListResponse" }
         "404":
           description: Document không tồn tại
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /workspaces/{workspaceId}/documents/{documentId}/canonical:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - { $ref: "#/components/parameters/DocumentId" }
+    get:
+      tags: [Documents]
+      summary: Canonical Knowledge Document (Markdown + blocks)
+      description: >
+        Trả Canonical Markdown và structured blocks cho Knowledge View.
+        Original artifact vẫn lấy qua /content. Không parse lại PDF.
+      parameters:
+        - name: versionId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanonicalDocument" }
+        "409":
+          description: Canonical Markdown chưa sẵn sàng
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Document/version không tồn tại
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1802,9 +1834,51 @@ components:
         message_id: { type: string, format: uuid }
         retrieval_id: { type: string, format: uuid }
         document_id: { type: string, format: uuid }
+        chunk_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Source document_chunks.id via retrievals (for Document Viewer deep-link).
+        document_version_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Exact document version used when the citation was created.
         text_snippet: { type: string }
         verified: { type: boolean }
         order_index: { type: integer }
+        location:
+          $ref: "#/components/schemas/ContentLocation"
+          nullable: true
+          description: Deterministic page/section locator from the source chunk.
+        locator:
+          $ref: "#/components/schemas/CitationLocator"
+          nullable: true
+          description: Canonical Knowledge View locator (block/range); not LLM-generated.
+
+    CitationLocator:
+      type: object
+      description: Deterministic locator for Knowledge View highlight + Original provenance
+      properties:
+        type: { type: string, enum: [canonical] }
+        view: { type: string, enum: [knowledge] }
+        confidence: { type: string, enum: [exact, normalized, none] }
+        markdown_start: { type: integer, nullable: true }
+        markdown_end: { type: integer, nullable: true }
+        ranges:
+          type: array
+          items:
+            type: object
+            properties:
+              block_id: { type: string }
+              start: { type: integer }
+              end: { type: integer }
+        page_number: { type: integer, nullable: true }
+        section_index: { type: integer, nullable: true }
+        bbox:
+          type: array
+          items: { type: number }
+          nullable: true
 
     ContentLocation:
       type: object
@@ -1813,6 +1887,45 @@ components:
         page_number: { type: integer, nullable: true }
         section_index: { type: integer, nullable: true }
         section_title: { type: string, nullable: true }
+
+    CanonicalDocument:
+      type: object
+      description: Canonical Knowledge Representation for one document_version
+      properties:
+        document_id: { type: string, format: uuid }
+        document_version_id: { type: string, format: uuid }
+        document_title: { type: string }
+        file_type: { type: string, enum: [pdf, docx, xlsx, pptx, txt] }
+        markdown: { type: string }
+        blocks:
+          type: array
+          items: { $ref: "#/components/schemas/CanonicalBlock" }
+        heading_tree:
+          type: array
+          items: { type: object }
+        has_original: { type: boolean }
+        preview_status:
+          type: string
+          enum: [pending, processing, completed, failed]
+
+    CanonicalBlock:
+      type: object
+      properties:
+        id: { type: string }
+        order_index: { type: integer }
+        block_type: { type: string, enum: [heading, paragraph, table, list, figure] }
+        content: { type: string }
+        heading_path: { type: string, nullable: true }
+        heading_level: { type: integer, nullable: true }
+        depth: { type: integer }
+        markdown_start: { type: integer, nullable: true }
+        markdown_end: { type: integer, nullable: true }
+        page_number: { type: integer, nullable: true }
+        section_index: { type: integer, nullable: true }
+        bbox:
+          type: array
+          items: { type: number }
+          nullable: true
 
     DocumentChunkListResponse:
       type: object
@@ -1857,6 +1970,10 @@ components:
           description: Optional [x, y, w, h] from layout_metadata
         start_offset: { type: integer, nullable: true }
         end_offset: { type: integer, nullable: true }
+        block_ids:
+          type: array
+          items: { type: string }
+          description: Canonical block ids overlapping this chunk
 
     AgentEvent:
       type: object
