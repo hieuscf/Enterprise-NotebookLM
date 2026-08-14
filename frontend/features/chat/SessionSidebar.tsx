@@ -78,8 +78,8 @@ export function SessionSidebar({
       <aside
         aria-label="Danh sách phiên chat"
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col border-r border-border-default bg-surface",
-          "transition-[width,transform] duration-200 lg:static lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 flex h-svh shrink-0 flex-col overflow-hidden border-r border-border-default bg-surface",
+          "transition-[width,transform] duration-200 lg:static lg:h-full lg:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
           collapsed ? "lg:w-14" : "w-[min(100%,17.5rem)] lg:w-[17.5rem]",
           "w-[min(100%,17.5rem)]",
@@ -136,7 +136,7 @@ export function SessionSidebar({
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-2" aria-label="Phiên chat">
+        <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2" aria-label="Phiên chat">
           {loading ? (
             <div className="flex flex-col gap-2 p-1" aria-busy aria-label="Đang tải phiên chat">
               {Array.from({ length: 4 }).map((_, i) => (

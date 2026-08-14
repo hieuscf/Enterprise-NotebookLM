@@ -16,8 +16,10 @@
  * Database/Table: N/A
  * Related Modules: app/page.tsx, features/workspaces/WorkspaceListView,
  *   features/workspaces/WorkspaceDetailView, features/workspaces/WorkspaceMembersView
- * Important Notes: Search is live when workspaceId is set. Notifications remain
- *   a visual placeholder until a notifications API exists. Settings live under
+ * Important Notes: Shell is locked to the viewport (h-svh overflow-hidden).
+ *   Sidebar nav scrolls independently; page content scrolls inside <main>.
+ *   Search is live when workspaceId is set. Notifications remain a visual
+ *   placeholder until a notifications API exists. Settings live under
  *   /workspaces/[id]/settings/*.
  * =============================================================================
  */
@@ -43,7 +45,7 @@ export function AppShell({ active, user, workspaceId, children }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-base md:flex">
+    <div className="flex h-svh overflow-hidden bg-base">
       <Sidebar
         active={active}
         user={user}
@@ -52,8 +54,8 @@ export function AppShell({ active, user, workspaceId, children }: Props) {
         onClose={() => setMobileOpen(false)}
       />
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-border-default bg-surface px-4 sm:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="z-20 flex h-16 shrink-0 items-center gap-3 border-b border-border-default bg-surface px-4 sm:px-6">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
@@ -97,7 +99,7 @@ export function AppShell({ active, user, workspaceId, children }: Props) {
           </button>
         </header>
 
-        <main className="flex-1">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">{children}</main>
       </div>
     </div>
   );

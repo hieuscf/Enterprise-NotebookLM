@@ -61,9 +61,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" suppressHydrationWarning>
+    <html lang="vi" className="h-svh overflow-hidden" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${beVietnam.variable} ${sourceSerif.variable} min-h-screen bg-base font-sans text-primary antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${beVietnam.variable} ${sourceSerif.variable} h-svh overflow-hidden bg-base font-sans text-primary antialiased`}
         suppressHydrationWarning
       >
         <ThemeBootstrap />

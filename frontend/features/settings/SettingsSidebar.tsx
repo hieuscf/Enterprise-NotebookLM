@@ -83,7 +83,7 @@ export function SettingsSidebar({ workspaceId, active, user }: Props) {
         aria-label="Điều hướng cài đặt"
         className="hidden w-[220px] shrink-0 lg:block xl:w-[240px]"
       >
-        <div className="sticky top-20 flex flex-col gap-6">
+        <div className="sticky top-0 flex flex-col gap-6">
           {visibleGroups.map((group) => (
             <div key={group.label}>
               <p className="px-2.5 pb-1.5 text-caption font-semibold uppercase tracking-wider text-tertiary">

@@ -17,7 +17,8 @@
  * Related Modules: AdminDashboardView, AdminWorkspacesView,
  *   AdminWorkspaceDetailView
  * Important Notes: Keep visual tokens aligned with AppShell; only the nav
- *   surface and top-bar purpose differ.
+ *   surface and top-bar purpose differ. Viewport lock matches AppShell
+ *   (h-svh overflow-hidden; sidebar nav scrolls independently).
  * =============================================================================
  */
 
@@ -42,7 +43,7 @@ export function AdminShell({ active, user, children }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-base md:flex">
+    <div className="flex h-svh overflow-hidden bg-base">
       <AdminSidebar
         active={active}
         user={user}
@@ -50,8 +51,8 @@ export function AdminShell({ active, user, children }: Props) {
         onClose={() => setMobileOpen(false)}
       />
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex h-16 shrink-0 items-center gap-3 border-b border-border-default bg-surface px-4 sm:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="z-20 flex h-16 shrink-0 items-center gap-3 border-b border-border-default bg-surface px-4 sm:px-6">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
@@ -71,7 +72,7 @@ export function AdminShell({ active, user, children }: Props) {
           </div>
         </header>
 
-        <main className="flex-1">{children}</main>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">{children}</main>
       </div>
     </div>
   );

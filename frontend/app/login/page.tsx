@@ -42,7 +42,7 @@ const highlights = [
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen bg-base">
+    <main className="flex h-full min-h-0 overflow-y-auto bg-base">
       {/* Left — brand panel */}
       <div className="relative hidden w-1/2 overflow-hidden bg-accent-primary lg:flex lg:flex-col lg:justify-between lg:p-12">
         <div

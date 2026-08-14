@@ -148,6 +148,7 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-body);
   line-height: 1.6;
+  overscroll-behavior: none;
 }
 
 /* Vùng đọc tài liệu luôn dùng serif — tách biệt hẳn với chrome UI xung quanh */

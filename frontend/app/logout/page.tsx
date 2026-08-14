@@ -35,7 +35,7 @@ export default function LogoutPage() {
   }, [router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-base">
+    <main className="flex h-full items-center justify-center bg-base">
       <p className="text-body text-secondary">Đang đăng xuất…</p>
     </main>
   );

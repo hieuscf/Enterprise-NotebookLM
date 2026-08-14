@@ -226,7 +226,7 @@ function ChatLayoutInner({
   }, [fallbackCitations, isStreaming, panelCitations, setPanelCitations]);
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0 bg-base">
+    <div className="flex h-full min-h-0 flex-1 bg-base">
       <SessionSidebar
         sessions={sessions}
         loading={sessionsLoading}

@@ -222,7 +222,7 @@ export function DocumentDetailView({
 
   return (
     <AppShell active="documents" user={user} workspaceId={workspaceId}>
-      <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col">
+      <div className="flex h-full min-h-0 flex-1 flex-col">
         {/* Compact document context bar */}
         <div className="shrink-0 border-b border-border-default bg-surface px-4 py-3 sm:px-6">
           <div className="mx-auto flex max-w-[1600px] flex-col gap-3">
