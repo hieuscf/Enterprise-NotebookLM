@@ -44,6 +44,7 @@ type Props = {
 const ROUTE_ORDER: RouteType[] = [
   "cache_hit",
   "metadata",
+  "section_extraction",
   "factoid",
   "complex",
 ];
@@ -51,6 +52,7 @@ const ROUTE_ORDER: RouteType[] = [
 const ROUTE_LABEL: Record<RouteType, string> = {
   cache_hit: "Cache Hit",
   metadata: "Metadata",
+  section_extraction: "Section Extraction",
   factoid: "Factoid",
   complex: "Complex",
 };
@@ -177,7 +179,7 @@ export function UsageSettings({ workspaceId }: Props) {
 
           <SettingsSection
             title="Query routing"
-            description="Phân bổ theo Query Router: cache_hit · metadata · factoid · complex."
+            description="Phân bổ theo Query Router: cache_hit · metadata · section_extraction · factoid · complex."
           >
             <ul className="max-w-xl divide-y divide-border-default">
               {routeBreakdown.map((row) => (

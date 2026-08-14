@@ -31,6 +31,30 @@ from app.models.enums import ChunkLayoutType, FileType
 from app.models.knowledge import DocumentChunk, Entity, Topic, TopicChunk
 
 
+def _to_hydration_row(
+    chunk: DocumentChunk,
+    document: Document,
+    version: DocumentVersion,
+) -> ChunkHydrationRow:
+    """Map a joined chunk/document/version row to ``ChunkHydrationRow``."""
+    return ChunkHydrationRow(
+        chunk_id=chunk.id,
+        document_id=document.id,
+        document_version_id=version.id,
+        workspace_id=document.workspace_id,
+        content=chunk.content or "",
+        title=document.title,
+        page_number=chunk.page_number,
+        section_index=chunk.section_index,
+        section=chunk.section,
+        chunk_index=chunk.chunk_index,
+        heading_path=chunk.heading_path,
+        layout_type=chunk.layout_type,
+        parent_chunk_id=chunk.parent_chunk_id,
+        depth=chunk.depth,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ChunkHydrationRow:
     """Chunk fields needed to build a RetrievalCandidate."""
@@ -46,6 +70,9 @@ class ChunkHydrationRow:
     section: str | None = None
     chunk_index: int | None = None
     heading_path: str | None = None
+    layout_type: ChunkLayoutType | None = None
+    parent_chunk_id: uuid.UUID | None = None
+    depth: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,19 +119,7 @@ class RetrievalRepository:
         rows = (await self._session.execute(stmt)).all()
         out: dict[uuid.UUID, ChunkHydrationRow] = {}
         for chunk, document, version in rows:
-            out[chunk.id] = ChunkHydrationRow(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                workspace_id=document.workspace_id,
-                content=chunk.content or "",
-                title=document.title,
-                page_number=chunk.page_number,
-                section_index=chunk.section_index,
-                section=chunk.section,
-                chunk_index=chunk.chunk_index,
-                heading_path=chunk.heading_path,
-            )
+            out[chunk.id] = _to_hydration_row(chunk, document, version)
         return out
 
     async def fetch_sibling_chunks(
@@ -170,21 +185,7 @@ class RetrievalRepository:
         for chunk, document, version in rows:
             if chunk.id in exclude:
                 continue
-            out.append(
-                ChunkHydrationRow(
-                    chunk_id=chunk.id,
-                    document_id=document.id,
-                    document_version_id=version.id,
-                    workspace_id=document.workspace_id,
-                    content=chunk.content or "",
-                    title=document.title,
-                    page_number=chunk.page_number,
-                    section_index=chunk.section_index,
-                    section=chunk.section,
-                    chunk_index=chunk.chunk_index,
-                    heading_path=chunk.heading_path,
-                )
-            )
+            out.append(_to_hydration_row(chunk, document, version))
             if len(out) >= max_total:
                 break
         return out
@@ -221,20 +222,10 @@ class RetrievalRepository:
         if not rows:
             return []
 
-        def _to_row(chunk: DocumentChunk, document: Document, version: DocumentVersion) -> ChunkHydrationRow:
-            return ChunkHydrationRow(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                workspace_id=document.workspace_id,
-                content=chunk.content or "",
-                title=document.title,
-                page_number=chunk.page_number,
-                section_index=chunk.section_index,
-                section=chunk.section,
-                chunk_index=chunk.chunk_index,
-                heading_path=chunk.heading_path,
-            )
+        def _to_row(
+            chunk: DocumentChunk, document: Document, version: DocumentVersion
+        ) -> ChunkHydrationRow:
+            return _to_hydration_row(chunk, document, version)
 
         headings = [
             (chunk, document, version)
@@ -292,19 +283,7 @@ class RetrievalRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            ChunkHydrationRow(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                workspace_id=document.workspace_id,
-                content=chunk.content or "",
-                title=document.title,
-                page_number=chunk.page_number,
-                section_index=chunk.section_index,
-                section=chunk.section,
-                chunk_index=chunk.chunk_index,
-                heading_path=chunk.heading_path,
-            )
+            _to_hydration_row(chunk, document, version)
             for chunk, document, version in rows
         ]
 
@@ -352,19 +331,202 @@ class RetrievalRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            ChunkHydrationRow(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                workspace_id=document.workspace_id,
-                content=chunk.content or "",
-                title=document.title,
-                page_number=chunk.page_number,
-                section_index=chunk.section_index,
-                section=chunk.section,
-                chunk_index=chunk.chunk_index,
-                heading_path=chunk.heading_path,
+            _to_hydration_row(chunk, document, version)
+            for chunk, document, version in rows
+        ]
+
+    async def search_heading_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        *,
+        section_number: str | None = None,
+        title_query: str | None = None,
+        limit: int = 80,
+    ) -> list[ChunkHydrationRow]:
+        """Lexical heading search scoped to ``workspace_id`` (no vector / LLM).
+
+        Matching order is applied by the caller. This query only bounds the
+        candidate set using ``layout_type=heading`` plus ILIKE on
+        ``content`` / ``section`` / ``heading_path``.
+        """
+        filters = [
+            Document.workspace_id == workspace_id,
+            DocumentChunk.layout_type == ChunkLayoutType.heading,
+        ]
+        text_filters = []
+        title = (title_query or "").strip()
+        if title:
+            like = f"%{title}%"
+            text_filters.append(
+                or_(
+                    DocumentChunk.content.ilike(like),
+                    DocumentChunk.section.ilike(like),
+                    DocumentChunk.heading_path.ilike(like),
+                )
             )
+        number = (section_number or "").strip()
+        if number:
+            number_filters = [
+                DocumentChunk.content.ilike(f"{number}.%"),
+                DocumentChunk.content.ilike(f"{number} %"),
+                DocumentChunk.section.ilike(f"{number}.%"),
+                DocumentChunk.section.ilike(f"{number} %"),
+                DocumentChunk.content == number,
+                DocumentChunk.section == number,
+            ]
+            text_filters.append(or_(*number_filters))
+        if text_filters:
+            filters.append(or_(*text_filters))
+
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(*filters)
+            .order_by(
+                DocumentChunk.document_version_id.asc(),
+                DocumentChunk.chunk_index.asc(),
+            )
+            .limit(max(1, limit))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            _to_hydration_row(chunk, document, version)
+            for chunk, document, version in rows
+        ]
+
+    async def list_child_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        parent_chunk_id: uuid.UUID,
+        *,
+        headings_only: bool = False,
+        limit: int = 200,
+    ) -> list[ChunkHydrationRow]:
+        """Return direct children of ``parent_chunk_id`` in document order."""
+        filters = [
+            Document.workspace_id == workspace_id,
+            DocumentChunk.parent_chunk_id == parent_chunk_id,
+        ]
+        if headings_only:
+            filters.append(DocumentChunk.layout_type == ChunkLayoutType.heading)
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(*filters)
+            .order_by(DocumentChunk.chunk_index.asc())
+            .limit(max(1, limit))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            _to_hydration_row(chunk, document, version)
+            for chunk, document, version in rows
+        ]
+
+    async def list_chunks_by_heading_path_prefix(
+        self,
+        workspace_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        heading_path: str,
+        *,
+        limit: int = 200,
+    ) -> list[ChunkHydrationRow]:
+        """Chunks whose ``heading_path`` is ``heading_path`` or a descendant."""
+        path = (heading_path or "").strip()
+        if not path:
+            return []
+        prefix = f"{path} > %"
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                DocumentChunk.document_version_id == document_version_id,
+                or_(
+                    DocumentChunk.heading_path == path,
+                    DocumentChunk.heading_path.like(prefix),
+                ),
+            )
+            .order_by(DocumentChunk.chunk_index.asc())
+            .limit(max(1, limit))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            _to_hydration_row(chunk, document, version)
+            for chunk, document, version in rows
+        ]
+
+    async def list_version_heading_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        *,
+        limit: int = 400,
+    ) -> list[ChunkHydrationRow]:
+        """All heading chunks of a version, ordered by ``chunk_index``."""
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                DocumentChunk.document_version_id == document_version_id,
+                DocumentChunk.layout_type == ChunkLayoutType.heading,
+            )
+            .order_by(DocumentChunk.chunk_index.asc())
+            .limit(max(1, limit))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            _to_hydration_row(chunk, document, version)
+            for chunk, document, version in rows
+        ]
+
+    async def list_chunks_in_index_range(
+        self,
+        workspace_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        *,
+        start_index: int,
+        end_index: int | None,
+        limit: int = 200,
+    ) -> list[ChunkHydrationRow]:
+        """Chunks in ``[start_index, end_index)`` for neighbor/section span fill."""
+        filters = [
+            Document.workspace_id == workspace_id,
+            DocumentChunk.document_version_id == document_version_id,
+            DocumentChunk.chunk_index >= start_index,
+        ]
+        if end_index is not None:
+            filters.append(DocumentChunk.chunk_index < end_index)
+        stmt = (
+            select(DocumentChunk, Document, DocumentVersion)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentChunk.document_version_id,
+            )
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(*filters)
+            .order_by(DocumentChunk.chunk_index.asc())
+            .limit(max(1, limit))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [
+            _to_hydration_row(chunk, document, version)
             for chunk, document, version in rows
         ]
 
@@ -430,19 +592,7 @@ class RetrievalRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            ChunkHydrationRow(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version_id=version.id,
-                workspace_id=document.workspace_id,
-                content=chunk.content or "",
-                title=document.title,
-                page_number=chunk.page_number,
-                section_index=chunk.section_index,
-                section=chunk.section,
-                chunk_index=chunk.chunk_index,
-                heading_path=chunk.heading_path,
-            )
+            _to_hydration_row(chunk, document, version)
             for chunk, document, version, _link_count, _focus_score in rows
         ]
 

@@ -26,7 +26,7 @@ from app.models.enums import RouteType
 
 @runtime_checkable
 class QueryClassifier(Protocol):
-    """Intent classifier for Query Router (metadata / factoid / complex).
+    """Intent classifier for Query Router (metadata / section_extraction / factoid / complex).
 
     Cache hits are a system state checked by the router — not by classifiers.
     """
@@ -39,7 +39,8 @@ class QueryClassifier(Protocol):
             workspace_id: Tenant scope (reserved for future per-workspace rules).
 
         Returns:
-            ``RouteType.metadata``, ``RouteType.factoid``, or ``RouteType.complex``.
+            ``RouteType.metadata``, ``RouteType.section_extraction``,
+            ``RouteType.factoid``, or ``RouteType.complex``.
             Must never return ``RouteType.cache_hit``.
         """
         ...

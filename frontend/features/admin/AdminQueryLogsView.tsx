@@ -41,6 +41,7 @@ import type { RouteType } from "@/types/chat";
 const VALID_ROUTES = new Set<RouteType>([
   "cache_hit",
   "metadata",
+  "section_extraction",
   "factoid",
   "complex",
 ]);

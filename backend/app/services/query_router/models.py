@@ -41,6 +41,7 @@ class ClassificationResult:
         confidence: Cosine similarity to winning centroid (embedding path), else 1.0.
         margin: Absolute gap between factoid and complex similarities.
         metadata_rule: Matched metadata rule name when applicable.
+        section_rule: Matched section-extraction rule name when applicable.
     """
 
     route_type: RouteType
@@ -48,3 +49,4 @@ class ClassificationResult:
     confidence: float | None = None
     margin: float | None = None
     metadata_rule: str | None = None
+    section_rule: str | None = None

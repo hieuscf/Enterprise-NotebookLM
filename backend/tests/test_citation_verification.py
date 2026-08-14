@@ -28,8 +28,13 @@ from app.services.citation_verification.metrics import (
 )
 from app.services.citation_verification.reasons import VerificationReason
 from app.services.citation_verification.results import RetrievalEvidence
-from app.services.citation_verification.service import CitationVerificationService
+from app.services.citation_verification.extractive import provenance_candidates_from_refs
+from app.services.citation_verification.service import (
+    CitationVerificationService,
+    evidence_from_candidates,
+)
 from app.services.citation_verification.text import normalize_evidence_text, snippet_in_source
+from app.services.query_router.schemas import CitationRef
 
 SOURCE = (
     "Enterprise NotebookLM provides hybrid retrieval using vector search, "
@@ -319,3 +324,101 @@ def test_metrics_record_valid_and_invalid() -> None:
     assert snap["citation_verification_total"] == 2
     assert snap["citation_verification_valid"] == 1
     assert snap["citation_verification_invalid"] == 1
+
+
+def test_extractive_null_page_is_valid() -> None:
+    ws, msg = uuid.uuid4(), uuid.uuid4()
+    chunk = uuid.uuid4()
+    doc = uuid.uuid4()
+    ref = CitationRef(
+        chunk_id=chunk,
+        document_id=doc,
+        page_number=None,
+        verify=True,
+        text_snippet="Hàng tồn kho",
+        workspace_id=ws,
+    )
+    evidence = evidence_from_candidates(
+        workspace_id=ws,
+        message_id=msg,
+        candidates=provenance_candidates_from_refs(workspace_id=ws, refs=[ref]),
+        use_candidate_workspace=True,
+    )
+    report = CitationVerificationService().verify_extractive_citations(
+        workspace_id=ws,
+        message_id=msg,
+        refs=[ref],
+        evidence=evidence,
+    )
+    assert report.has_verified
+    assert report.results[0].verified is True
+    assert report.results[0].page_number is None
+    assert report.results[0].chunk_id == chunk
+
+
+def test_extractive_wrong_workspace_is_invalid() -> None:
+    ws_a, ws_b, msg = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    chunk = uuid.uuid4()
+    ref = CitationRef(
+        chunk_id=chunk,
+        document_id=uuid.uuid4(),
+        page_number=4,
+        verify=True,
+        text_snippet="secret",
+        workspace_id=ws_b,
+    )
+    evidence = evidence_from_candidates(
+        workspace_id=ws_a,
+        message_id=msg,
+        candidates=provenance_candidates_from_refs(workspace_id=ws_a, refs=[ref]),
+        use_candidate_workspace=True,
+    )
+    report = CitationVerificationService().verify_extractive_citations(
+        workspace_id=ws_a,
+        message_id=msg,
+        refs=[ref],
+        evidence=evidence,
+    )
+    assert report.results[0].verified is False
+    assert report.results[0].reason is VerificationReason.WRONG_WORKSPACE
+
+
+def test_extractive_duplicate_content_keeps_both_chunk_ids() -> None:
+    ws, msg = uuid.uuid4(), uuid.uuid4()
+    text = "Chi phí xây dựng công trình dở dang được ghi nhận theo giá gốc."
+    a = uuid.uuid4()
+    b = uuid.uuid4()
+    refs = [
+        CitationRef(
+            chunk_id=a,
+            document_id=uuid.uuid4(),
+            page_number=9,
+            verify=True,
+            text_snippet=text,
+            workspace_id=ws,
+        ),
+        CitationRef(
+            chunk_id=b,
+            document_id=uuid.uuid4(),
+            page_number=9,
+            verify=True,
+            text_snippet=text,
+            workspace_id=ws,
+        ),
+    ]
+    evidence = evidence_from_candidates(
+        workspace_id=ws,
+        message_id=msg,
+        candidates=provenance_candidates_from_refs(workspace_id=ws, refs=refs),
+        use_candidate_workspace=True,
+    )
+    report = CitationVerificationService().verify_extractive_citations(
+        workspace_id=ws,
+        message_id=msg,
+        refs=refs,
+        evidence=evidence,
+    )
+    assert report.valid_count == 2
+    assert {row.chunk_id for row in report.verified_results} == {a, b}
+    persistable = CitationVerificationService().to_citation_refs(report)
+    assert {ref.chunk_id for ref in persistable} == {a, b}

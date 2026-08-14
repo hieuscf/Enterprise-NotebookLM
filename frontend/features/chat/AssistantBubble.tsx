@@ -5,10 +5,10 @@
  * Layer: UI
  * Purpose: Assistant answer as a reading surface — inline citations + source summary.
  * Responsibilities:
- *   - Map citations → view models; AnswerContent with chips; SourceSummary footer
- *   - Copy / regenerate actions (no tokens/latency in normal mode)
+ *   - AnswerContent (factoid/complex) or SectionExtractionAnswer (section_extraction)
+ *   - SourceSummary footer; copy / regenerate actions
  * Dependencies:
- *   - AnswerContent, SourceSummary, AgentBadge, citation-mapper
+ *   - AnswerContent, SectionExtractionAnswer, SourceSummary, AgentBadge, citation-mapper
  * Public Exports:
  *   - AssistantBubble
  * Database/Table: N/A
@@ -30,6 +30,7 @@ import {
   type DocumentMetaLookup,
 } from "@/features/chat/citation/citation-mapper";
 import { SourceSummary } from "@/features/chat/citation/SourceSummary";
+import { SectionExtractionAnswer } from "@/features/chat/section-extraction/SectionExtractionAnswer";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types/chat";
 
@@ -58,6 +59,7 @@ export function AssistantBubble({
   const status = message.status ?? "completed";
   const isEmpty = message.content.trim().length === 0;
   const showEmptyState = status === "completed" && isEmpty;
+  const isSectionExtraction = message.generation?.route_type === "section_extraction";
   const citations = useMemo(
     () => mapCitations(message.citations ?? [], docsById),
     [message.citations, docsById],
@@ -85,6 +87,15 @@ export function AssistantBubble({
       <div className="min-w-0 max-w-[min(46rem,calc(100%-2.5rem))] flex-1">
         {showEmptyState ? (
           <p className="text-body-sm italic text-tertiary">Không có nội dung trả lời.</p>
+        ) : isSectionExtraction ? (
+          <SectionExtractionAnswer
+            workspaceId={workspaceId}
+            content={message.content}
+            citations={citations}
+            isStreaming={
+              isStreamingThis || status === "streaming" || status === "pending"
+            }
+          />
         ) : (
           <AnswerContent
             workspaceId={workspaceId}

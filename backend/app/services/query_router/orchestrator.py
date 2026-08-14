@@ -4,19 +4,22 @@
 # Layer: Service
 # Purpose: Sole internal API for Chat Service — execute the FR11 branch.
 # Responsibilities:
-#   - handle_query → QueryRouter.route → cache / metadata / factoid / complex
-#   - Metadata/factoid miss or low-confidence → ComplexQueryPipeline fallback
+#   - handle_query → QueryRouter.route → cache / metadata / section /
+#     factoid / complex
+#   - Metadata/section/factoid miss or low-confidence → ComplexQueryPipeline fallback
 #   - Write-back verified factoid/complex answers to query_cache
+#   - Persist extractive retrievals + verify citations (0 LLM, chunk_id lookup)
 # Dependencies:
 #   - QueryRouter, MetadataBranch, FactoidBranch, logging_service,
-#     ComplexQueryPipeline, QueryCacheService
+#     ComplexQueryPipeline, QueryCacheService, CitationVerificationService
 # Public Exports:
 #   - QueryOrchestrator, COMPLEX_STATUS
 # Database/Table: query_logs (via logging_service); query_cache write-back;
-#   FR14 tables via ComplexQueryPipeline
+#   retrievals (extractive provenance); FR14 tables via ComplexQueryPipeline
 # Related Modules: Chat Service (downstream writes message_generations)
 # Important Notes:
-#   - 0-LLM branches: cache_hit / metadata / factoid (no ComplexQueryPipeline).
+#   - 0-LLM branches: cache_hit / metadata / section_extraction / factoid.
+#   - 0 LLM does not mean 0 citations — section_extraction writes retrievals.
 #   - Never return before log_query_routing completes (best-effort).
 #   - Do not call QueryRouter elsewhere from Chat — use handle_query only.
 #   - Cache write-back is best-effort and never blocks the answer.
@@ -26,7 +29,7 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -39,9 +42,12 @@ from app.services.query_router.logging_service import QueryRoutingLogger
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.router import QueryRouter
 from app.services.query_router.schemas import CitationRef, QueryExecutionResult, RouteDecision
+from app.services.query_router.section_branch import SectionExtractionBranch
 
 if TYPE_CHECKING:
+    from app.repositories.retrieval_records import RetrievalRecordRepository
     from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
+    from app.services.citation_verification.service import CitationVerificationService
 
 logger = get_logger(__name__)
 
@@ -63,15 +69,21 @@ class QueryOrchestrator:
         complex_pipeline: ComplexQueryPipeline | None = None,
         cache: QueryCacheService | None = None,
         settings: Settings | None = None,
+        section_branch: SectionExtractionBranch | None = None,
+        retrieval_records: RetrievalRecordRepository | None = None,
+        citation_verifier: CitationVerificationService | None = None,
     ) -> None:
         self._router = router
         self._metadata = metadata_branch
         self._factoid = factoid_branch
+        self._section = section_branch
         self._logger = QueryRoutingLogger(query_log_repository)
         self._session_id = session_id
         self._complex_pipeline = complex_pipeline
         self._cache = cache
         self._settings = settings
+        self._retrieval_records = retrieval_records
+        self._citation_verifier = citation_verifier
 
     async def handle_query(
         self,
@@ -111,6 +123,17 @@ class QueryOrchestrator:
             result = await self._run_metadata(
                 workspace_id=workspace_id,
                 user_id=user_id,
+                query_text=query_text,
+                decision=decision,
+                message_id=message_id,
+                assistant_message_id=assistant_message_id,
+                chat_history=chat_history,
+                llm_calls_count=llm_calls_count,
+                model_used=model_used,
+            )
+        elif decision.route_type is RouteType.section_extraction:
+            result = await self._run_section(
+                workspace_id=workspace_id,
                 query_text=query_text,
                 decision=decision,
                 message_id=message_id,
@@ -212,6 +235,65 @@ class QueryOrchestrator:
             branch = None
         if branch is not None and branch.route_type is RouteType.metadata:
             return self._from_zero_llm_branch(branch, route_type=RouteType.metadata)
+        return await self._run_complex(
+            workspace_id=workspace_id,
+            query_text=query_text,
+            decision=decision,
+            message_id=message_id,
+            assistant_message_id=assistant_message_id,
+            chat_history=chat_history,
+            llm_calls_count=llm_calls_count,
+            model_used=model_used,
+        )
+
+    async def _run_section(
+        self,
+        *,
+        workspace_id: UUID,
+        query_text: str,
+        decision: RouteDecision,
+        message_id: UUID | None,
+        assistant_message_id: UUID | None,
+        chat_history: list[Any] | None,
+        llm_calls_count: int | None,
+        model_used: str | None,
+    ) -> QueryExecutionResult:
+        branch = None
+        if self._section is not None:
+            try:
+                branch = await self._section.execute(
+                    workspace_id=workspace_id,
+                    query_text=query_text,
+                    decision=decision,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "section_extraction_branch_failed",
+                    workspace_id=str(workspace_id),
+                    error=type(exc).__name__,
+                )
+                branch = None
+        if (
+            branch is not None
+            and branch.route_type is RouteType.section_extraction
+            and (branch.answer or "").strip()
+        ):
+            result = self._from_zero_llm_branch(
+                branch, route_type=RouteType.section_extraction
+            )
+            result = await self._seal_extractive_provenance(
+                workspace_id=workspace_id,
+                message_id=message_id,
+                result=result,
+            )
+            await self._maybe_write_cache(
+                workspace_id=workspace_id,
+                query_text=query_text,
+                answer=result.answer,
+                citation_refs=result.citation_refs,
+                verify=result.verify,
+            )
+            return result
         return await self._run_complex(
             workspace_id=workspace_id,
             query_text=query_text,
@@ -346,6 +428,87 @@ class QueryOrchestrator:
             model_used=model_used,
             message_generation_id=None,
         )
+
+    async def _seal_extractive_provenance(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID | None,
+        result: QueryExecutionResult,
+    ) -> QueryExecutionResult:
+        """Write retrievals + extractive-verify citations (page_number optional)."""
+        refs = list(result.citation_refs)
+        if not refs:
+            return result
+
+        from app.services.citation_verification.extractive import (
+            merge_extractive_evidence,
+            provenance_candidates_from_refs,
+        )
+        from app.services.citation_verification.service import (
+            CitationVerificationService,
+            evidence_from_candidates,
+        )
+
+        candidates = provenance_candidates_from_refs(
+            workspace_id=workspace_id, refs=refs
+        )
+        evidence_message_id = message_id or uuid4()
+        if self._retrieval_records is not None and message_id is not None:
+            try:
+                await self._retrieval_records.insert_candidates(
+                    message_id=message_id,
+                    candidates=candidates,
+                    retrieval_pass=1,
+                )
+            except Exception as exc:  # noqa: BLE001 — never block the extractive answer
+                logger.warning(
+                    "section_extraction_retrievals_persist_failed",
+                    workspace_id=str(workspace_id),
+                    error=type(exc).__name__,
+                )
+
+        evidence = evidence_from_candidates(
+            workspace_id=workspace_id,
+            message_id=evidence_message_id,
+            candidates=candidates,
+            use_candidate_workspace=True,
+        )
+        if self._retrieval_records is not None and message_id is not None:
+            try:
+                persisted = await self._retrieval_records.list_integrity_for_cited_chunks(
+                    message_id=message_id,
+                    chunk_ids=[ref.chunk_id for ref in refs if ref.chunk_id is not None],
+                )
+                if persisted:
+                    evidence = merge_extractive_evidence(
+                        retrieved=evidence,
+                        persisted=persisted,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "section_extraction_integrity_lookup_failed",
+                    workspace_id=str(workspace_id),
+                    error=type(exc).__name__,
+                )
+
+        verifier = self._citation_verifier or CitationVerificationService()
+        report = verifier.verify_extractive_citations(
+            workspace_id=workspace_id,
+            message_id=evidence_message_id,
+            refs=refs,
+            evidence=evidence,
+        )
+        verified_refs = verifier.to_citation_refs(report)
+        result.citation_refs = verified_refs
+        result.verify = bool(verified_refs)
+        result.metadata = {
+            **dict(result.metadata or {}),
+            "answer_type": "extractive",
+            "citation_verified_count": report.valid_count,
+            "citation_invalid_count": report.invalid_count,
+        }
+        return result
 
     def _from_zero_llm_branch(
         self,

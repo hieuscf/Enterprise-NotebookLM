@@ -74,7 +74,7 @@ Luồng xử lý tổng quát (v3):
 - LightRAG Engine → index song song 4 kho: BM25 Index, Vector DB, Graph DB, Metadata DB
 
 **Query (hỏi đáp):**
-- User Query → Query Router (cache/metadata/factoid/complex, không dùng LLM — xem mục 6)
+- User Query → Query Router (cache/metadata/section_extraction/factoid/complex, không dùng LLM — xem mục 6)
 - Nếu **Complex Query** → Hybrid Retrieval (Vector + BM25 + Knowledge Graph + Metadata) → Cross-Encoder Reranker
 - Reranker → Confidence Engine → phân nhánh:
   - **High Confidence** → Prompt Builder → 1 lần gọi LLM (structured output)
@@ -117,10 +117,11 @@ Vấn đề: không phải câu hỏi nào cũng cần đến LLM. Gọi LLM cho
 
 ## 6\.1 Query Router (lớp định tuyến truy vấn)
 
-Router hoạt động bằng rule-based matching + embedding similarity classifier (không dùng LLM), phân loại truy vấn thành 4 nhóm:
+Router hoạt động bằng rule-based matching + embedding similarity classifier (không dùng LLM), phân loại truy vấn thành 5 nhóm:
 
 - Cache Hit — truy vấn trùng/tương tự truy vấn đã trả lời trước (semantic cache) → trả lời ngay từ cache kèm citation gốc. 0 lần gọi LLM.
 - Structured/Metadata Query — câu hỏi dạng liệt kê, lọc, thống kê (vd. "có bao nhiêu tài liệu trong workspace X") → truy vấn trực tiếp database. 0 lần gọi LLM.
+- Section Extraction — câu hỏi lấy section/subsection theo cấu trúc tài liệu (vd. "các sự kiện quan trọng trong kỳ", "mục 4 gồm những gì?") → khớp heading + hierarchy (`parent_chunk_id` / `heading_path` / số mục), render danh sách theo thứ tự tài liệu kèm citation. 0 lần gọi LLM. Không kết luận "không có thông tin" nếu đã khớp được heading.
 - Simple Factoid — câu hỏi có câu trả lời khớp trực tiếp với 1 đoạn (chunk) với độ tin cậy cao từ Retrieval → trả lời dạng trích xuất (extractive), không cần LLM sinh văn bản. 0 lần gọi LLM.
 - Complex Query — câu hỏi cần tổng hợp, suy luận, so sánh nhiều nguồn → đi qua pipeline RAG đầy đủ, tối đa 1 lần gọi LLM (xem 6.2).
 
@@ -138,6 +139,7 @@ Pipeline cũ có thể phát sinh nhiều lần gọi LLM riêng lẻ (re-rankin
 | :----------------------------------- | :----------------------------------- | :------------------------ |
 | Truy vấn lặp lại / đã cache          | 1-3 lần                              | 0 lần                     |
 | Truy vấn liệt kê/thống kê metadata   | 1-2 lần                              | 0 lần                     |
+| Truy vấn section / liệt kê mục con   | 1-2 lần                              | 0 lần                     |
 | Câu hỏi factoid đơn giản             | 1-2 lần                              | 0 lần                     |
 | Câu hỏi phức tạp — High Confidence   | 2-4 lần (rerank + generate + format) | 1 lần (structured output) |
 | Câu hỏi phức tạp — Low Confidence    | 2-4 lần                              | tối đa 1 lần LLM sinh câu trả lời + agent (non-LLM/model nhẹ) + tối đa 1 lần Second Retrieval |

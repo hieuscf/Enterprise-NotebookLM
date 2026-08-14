@@ -16,5 +16,8 @@
 
 from app.services.query_router.handlers.factoid_handler import FactoidHandler
 from app.services.query_router.handlers.metadata_handler import MetadataHandler
+from app.services.query_router.handlers.section_extraction_handler import (
+    SectionExtractionHandler,
+)
 
-__all__ = ["FactoidHandler", "MetadataHandler"]
+__all__ = ["FactoidHandler", "MetadataHandler", "SectionExtractionHandler"]

@@ -597,6 +597,35 @@ mark.highlight-citation {
   padding: 0.3em 0.6em;
 }
 
+/* Section extraction outline — never inherit markdown ordered-list numbering. */
+.section-extraction-answer ol,
+.section-extraction-answer ul {
+  list-style-position: outside;
+}
+.section-extraction-answer h3,
+.section-extraction-answer h4,
+.section-extraction-answer h5,
+.section-extraction-answer h6 {
+  counter-reset: none;
+}
+.section-extraction-answer .section-item {
+  list-style: none;
+}
+.section-extraction-answer .section-heading {
+  display: block;
+  line-height: 1.45;
+}
+.section-extraction-answer .section-number {
+  display: inline;
+  margin-right: 0.5em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.section-extraction-answer .section-title {
+  display: inline;
+}
+
 /* Blinking caret while a message is actively streaming */
 .chat-streaming-caret::after {
   content: "";

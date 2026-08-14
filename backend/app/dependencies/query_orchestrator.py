@@ -12,7 +12,8 @@
 # Database/Table: N/A
 # Related Modules: app.services.query_router.orchestrator, ComplexQueryPipeline
 # Important Notes: RBAC must be enforced by the calling route (workspace member).
-#   Wires QueryCacheService so Chat uses cache_hit / metadata / factoid / complex.
+#   Wires QueryCacheService so Chat uses cache_hit / metadata / section_extraction /
+#   factoid / complex.
 # =============================================================================
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from app.repositories.query_logs import QueryObservabilityRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
+from app.services.citation_verification.service import CitationVerificationService
 from app.services.chat.answer_generator import PromptAnswerGenerator
 from app.services.chat.complex_query_pipeline import ComplexQueryPipeline
 from app.services.chat.context_assembly import RetrievalRepositoryContextPort
@@ -48,6 +50,7 @@ from app.services.query_router.lightweight_retriever import LightweightVectorRet
 from app.services.query_router.metadata_branch import MetadataBranch
 from app.services.query_router.orchestrator import QueryOrchestrator
 from app.services.query_router.router import QueryRouter
+from app.services.query_router.section_branch import SectionExtractionBranch
 from app.services.retrieval.bm25_search import Bm25Search
 from app.services.retrieval.graph_search import GraphSearch
 from app.services.retrieval.hybrid_retrieval_service import HybridRetrievalService
@@ -96,6 +99,7 @@ def get_query_orchestrator(
         cache=cache,
     )
     observability = QueryObservabilityRepository(session)
+    retrieval_records = RetrievalRecordRepository(session)
     metadata_handler = MetadataHandler(
         repository=PostgresMetadataRepository(session),
     )
@@ -103,7 +107,7 @@ def get_query_orchestrator(
         settings=settings,
         hybrid=hybrid,
         agent_events=AgentEventRepository(session),
-        retrieval_records=RetrievalRecordRepository(session),
+        retrieval_records=retrieval_records,
         observability=observability,
         rewrite_agent=RewriteAgent(settings),
         graph_agent=GraphAgent(settings, get_neo4j_graph()),
@@ -125,8 +129,11 @@ def get_query_orchestrator(
             retriever=LightweightVectorRetriever(vector_search),
             settings=settings,
         ),
+        section_branch=SectionExtractionBranch(retrieval_repo=retrieval_repo),
         query_log_repository=observability,
         complex_pipeline=complex_pipeline,
         cache=cache,
         settings=settings,
+        retrieval_records=retrieval_records,
+        citation_verifier=CitationVerificationService(),
     )

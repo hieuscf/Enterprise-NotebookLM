@@ -4,22 +4,19 @@
 # Layer: Service
 # Purpose: Deterministic 4-level citation verification (no LLM).
 # Responsibilities:
-#   - Level 1: citation_id present
-#   - Level 2: retrieval membership of the current message
-#   - Level 3: source integrity (message / workspace / chunk / version / document)
-#   - Level 4: snippet is a sub-span of retrieved source text
+#   - verify() / verify_llm_citations(): 4-level LLM citation_id check
+#   - verify_extractive_citations(): chunk_id + workspace, page optional
 # Dependencies:
 #   - citation_verification.text, reasons, results, metrics
 # Public Exports:
 #   - CitationVerificationService, INSUFFICIENT_EVIDENCE_ANSWER,
 #     evidence_from_candidates
 # Database/Table: N/A (evidence loaded by repository / in-memory retrieval)
-# Related Modules: ComplexQueryPipeline, MessageProcessingService
+# Related Modules: ComplexQueryPipeline, MessageProcessingService, QueryOrchestrator
 # Important Notes:
 #   - Deterministic verification. No LLM call.
 #   - Must validate workspace/message/retrieval membership.
-#   - Source text MUST come from retrieved context of this query, not an
-#     arbitrary document lookup used to "make" an out-of-context citation valid.
+#   - Extractive route does not require snippet ⊆ source or page_number.
 # =============================================================================
 
 from __future__ import annotations
@@ -55,12 +52,14 @@ def evidence_from_candidates(
     workspace_id: UUID,
     message_id: UUID,
     candidates: Sequence[RetrievalCandidate],
+    use_candidate_workspace: bool = False,
 ) -> list[RetrievalEvidence]:
     """Build evidence rows from the in-memory retrieved context of this query.
 
-    ``workspace_id`` / ``message_id`` are the current query scope — retrieval
-    was already executed inside that workspace. Candidate.workspace_id is not
-    trusted as a substitute for the current workspace check.
+    ``message_id`` is the current query's user message. Hybrid retrieval is
+    already scoped to ``workspace_id``; candidate.workspace_id is not used as
+    a substitute (LLM path). Extractive provenance sets
+    ``use_candidate_workspace=True`` so a foreign chunk fails WRONG_WORKSPACE.
     """
     out: list[RetrievalEvidence] = []
     seen_chunks: set[UUID] = set()
@@ -69,12 +68,17 @@ def evidence_from_candidates(
         if chunk_id is None or chunk_id in seen_chunks:
             continue
         seen_chunks.add(chunk_id)
+        evidence_ws = (
+            cand.workspace_id
+            if use_candidate_workspace and cand.workspace_id is not None
+            else workspace_id
+        )
         out.append(
             RetrievalEvidence(
                 retrieval_id=uuid4(),
                 message_id=message_id,
                 source_text=str(cand.text_snippet or ""),
-                workspace_id=workspace_id,
+                workspace_id=evidence_ws,
                 chunk_id=chunk_id,
                 entity_id=cand.entity_id,
                 document_id=cand.document_id,
@@ -198,6 +202,139 @@ class CitationVerificationService:
         )
         return report
 
+    def verify_llm_citations(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        cited_ids: Sequence[str],
+        evidence: Sequence[RetrievalEvidence],
+        snippet_by_citation_id: Mapping[str, str] | None = None,
+    ) -> CitationVerificationReport:
+        """LLM citation_ids against retrieved evidence (4-level check)."""
+        return self.verify(
+            workspace_id=workspace_id,
+            message_id=message_id,
+            cited_ids=cited_ids,
+            evidence=evidence,
+            snippet_by_citation_id=snippet_by_citation_id,
+        )
+
+    def verify_extractive_citations(
+        self,
+        *,
+        workspace_id: UUID,
+        message_id: UUID,
+        refs: Sequence[CitationRef],
+        evidence: Sequence[RetrievalEvidence],
+    ) -> CitationVerificationReport:
+        """0-LLM provenance check: chunk exists, workspace matches, page optional.
+
+        Duplicate chunk ids collapse to one valid citation (provenance merge),
+        they are not rejected. Empty source text is allowed when integrity is ok
+        — extractive snippets may be heading titles rather than body spans.
+        """
+        started = time.perf_counter()
+        _by_retrieval, by_chunk = _index_evidence(evidence)
+        results: list[CitationVerificationResult] = []
+        seen_keys: set[str] = set()
+
+        for ref in refs:
+            citation_id = str(ref.chunk_id) if ref.chunk_id is not None else ""
+            result = self._verify_extractive_one(
+                citation_id=citation_id,
+                workspace_id=workspace_id,
+                message_id=message_id,
+                by_chunk=by_chunk,
+                snippet_override=ref.text_snippet,
+                seen_keys=seen_keys,
+            )
+            results.append(result)
+            self._log_one(
+                workspace_id=workspace_id,
+                message_id=message_id,
+                result=result,
+            )
+
+        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+        report = CitationVerificationReport(results=results, latency_ms=latency_ms)
+        self._record_metrics(report)
+        logger.info(
+            "citation_verification_extractive_completed",
+            workspace_id=str(workspace_id),
+            message_id=str(message_id),
+            citation_count=report.total_count,
+            valid_count=report.valid_count,
+            invalid_count=report.invalid_count,
+            verification_latency_ms=latency_ms,
+        )
+        return report
+
+    def _verify_extractive_one(
+        self,
+        *,
+        citation_id: str,
+        workspace_id: UUID,
+        message_id: UUID,
+        by_chunk: dict[str, RetrievalEvidence],
+        snippet_override: str | None,
+        seen_keys: set[str],
+    ) -> CitationVerificationResult:
+        if not citation_id:
+            return CitationVerificationResult(
+                citation_id=citation_id,
+                verified=False,
+                reason=VerificationReason.CITATION_NOT_FOUND,
+            )
+        evidence = by_chunk.get(citation_id)
+        if evidence is None:
+            return CitationVerificationResult(
+                citation_id=citation_id,
+                verified=False,
+                reason=VerificationReason.RETRIEVAL_NOT_FOUND,
+            )
+        if evidence.message_id != message_id:
+            return _rejected(citation_id, evidence, VerificationReason.WRONG_MESSAGE)
+        if evidence.chunk_id is None:
+            return _rejected(
+                citation_id, evidence, VerificationReason.INVALID_RETRIEVAL_REFERENCE
+            )
+        if not evidence.source_integrity_ok:
+            return _rejected(citation_id, evidence, VerificationReason.SOURCE_NOT_FOUND)
+        if evidence.workspace_id is None:
+            return _rejected(citation_id, evidence, VerificationReason.SOURCE_NOT_FOUND)
+        if evidence.workspace_id != workspace_id:
+            return _rejected(citation_id, evidence, VerificationReason.WRONG_WORKSPACE)
+
+        dedupe_key = str(evidence.chunk_id)
+        if dedupe_key in seen_keys:
+            return CitationVerificationResult(
+                citation_id=citation_id,
+                verified=True,
+                reason=VerificationReason.VALID,
+                retrieval_id=evidence.retrieval_id,
+                document_id=evidence.document_id,
+                chunk_id=evidence.chunk_id,
+                page_number=evidence.page_number,
+                text_snippet=(snippet_override or evidence.source_text or "").strip()
+                or None,
+                document_version_id=evidence.document_version_id,
+            )
+        seen_keys.add(dedupe_key)
+
+        snippet = (snippet_override or evidence.source_text or "").strip()
+        return CitationVerificationResult(
+            citation_id=citation_id,
+            verified=True,
+            reason=VerificationReason.VALID,
+            retrieval_id=evidence.retrieval_id,
+            document_id=evidence.document_id,
+            chunk_id=evidence.chunk_id,
+            page_number=evidence.page_number,
+            text_snippet=snippet or None,
+            document_version_id=evidence.document_version_id,
+        )
+
     def to_citation_refs(
         self,
         report: CitationVerificationReport,
@@ -212,6 +349,7 @@ class CitationVerificationService:
                     page_number=row.page_number,
                     verify=True,
                     text_snippet=row.text_snippet,
+                    document_version_id=row.document_version_id,
                 )
             )
         return refs

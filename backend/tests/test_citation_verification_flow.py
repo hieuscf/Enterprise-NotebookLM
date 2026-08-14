@@ -113,12 +113,37 @@ class FakeCitations:
 class FakeRetrievalRecords:
     def __init__(self, rows: list[Retrieval] | None = None) -> None:
         self.rows = list(rows or [])
+        self.insert_calls: list[dict[str, Any]] = []
 
     async def list_for_latest_pass(self, message_id: uuid.UUID) -> list[Retrieval]:
         return list(self.rows)
 
     async def get_latest_retrieval_pass(self, message_id: uuid.UUID) -> int | None:
         return 1 if self.rows else None
+
+    async def insert_candidates(self, **kwargs: Any) -> int:
+        self.insert_calls.append(kwargs)
+        candidates = kwargs.get("candidates") or []
+        message_id = kwargs["message_id"]
+        pass_no = int(kwargs.get("retrieval_pass") or 1)
+        method = __import__(
+            "app.models.enums", fromlist=["RetrievalMethod"]
+        ).RetrievalMethod.bm25
+        for index, cand in enumerate(candidates):
+            self.rows.append(
+                Retrieval(
+                    id=uuid.uuid4(),
+                    message_id=message_id,
+                    chunk_id=getattr(cand, "chunk_id", None),
+                    entity_id=getattr(cand, "entity_id", None),
+                    retrieval_method=method,
+                    score=1.0,
+                    rank=index,
+                    retrieval_pass=pass_no,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        return len(candidates)
 
 
 class FakeObservability:

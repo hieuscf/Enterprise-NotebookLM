@@ -30,7 +30,7 @@ C4Component
         Component(pipelineWorker, "Pipeline Worker", "Celery task", "Document Understanding (LlamaParse) → Cleaning & Normalize → Hierarchical Chunking → Embedding → Graph Extraction → Indexing (FR2, FR13)")
         Component(searchSvc, "Search Service", "FastAPI router", "Hybrid Retrieval Vector+BM25+KG+Metadata, ghi search_history (FR3)")
         Component(reranker, "Re-ranking Layer", "Cross-encoder (non-LLM)", "Xếp hạng lại kết quả truy hồi (FR3)")
-        Component(router, "Query Router", "Rule-based + embedding classifier", "Phân loại cache_hit/metadata/factoid/complex, check query_cache trước (FR11)")
+        Component(router, "Query Router", "Rule-based + embedding classifier", "Phân loại cache_hit/metadata/section_extraction/factoid/complex, check query_cache trước (FR11)")
         Component(confidenceEngine, "Confidence Engine", "Python module (non-LLM)", "Đánh giá confidence score sau rerank, phân nhánh High/Low Confidence (FR14)")
         Component(eventPolicy, "Event Policy Engine", "Python module", "Chọn Micro Agent theo loại sự kiện khi Low Confidence (FR14)")
         Component(rewriteAgent, "Rewrite Agent", "LLM nhẹ/rule-based", "Viết lại câu hỏi mơ hồ/thiếu ngữ cảnh (FR14)")

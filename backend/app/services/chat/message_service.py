@@ -184,6 +184,7 @@ class MessageProcessingService:
             user_message_id=user_msg.id,
             assistant_message_id=assistant_msg.id,
             citation_refs=execution.citation_refs,
+            workspace_id=workspace_id,
         )
         # Re-load with chunk/location joins — Citation ORM rows alone lack locator.
         enriched_citations = await self._messages.list_citations_for_message(
@@ -357,6 +358,7 @@ class MessageProcessingService:
         user_message_id: UUID,
         assistant_message_id: UUID,
         citation_refs: list[CitationRef],
+        workspace_id: UUID | None = None,
     ) -> list[Any]:
         if not citation_refs:
             return []
@@ -369,12 +371,56 @@ class MessageProcessingService:
         verified_refs = [ref for ref in citation_refs if ref.verify]
         if not verified_refs:
             return []
+        if not latest_rows:
+            latest_rows = await self._ensure_extractive_retrievals(
+                user_message_id=user_message_id,
+                citation_refs=verified_refs,
+                workspace_id=workspace_id,
+            )
         return await self._citations.insert_mapped(
             message_id=assistant_message_id,
             citation_refs=verified_refs,
             latest_pass_rows=latest_rows,
             snippet_by_chunk_id=snippet_by_chunk,
         )
+
+    async def _ensure_extractive_retrievals(
+        self,
+        *,
+        user_message_id: UUID,
+        citation_refs: list[CitationRef],
+        workspace_id: UUID | None,
+    ) -> list[Any]:
+        """Write retrievals for 0-LLM routes so citations.retrieval_id can FK."""
+        from app.services.citation_verification.extractive import (
+            provenance_candidates_from_refs,
+        )
+
+        ws = workspace_id or next(
+            (ref.workspace_id for ref in citation_refs if ref.workspace_id is not None),
+            None,
+        )
+        if ws is None:
+            return []
+        candidates = provenance_candidates_from_refs(
+            workspace_id=ws, refs=citation_refs
+        )
+        if not candidates:
+            return []
+        try:
+            await self._retrieval_records.insert_candidates(
+                message_id=user_message_id,
+                candidates=candidates,
+                retrieval_pass=1,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "extractive_retrievals_persist_failed",
+                message_id=str(user_message_id),
+                error=type(exc).__name__,
+            )
+            return []
+        return await self._retrieval_records.list_for_latest_pass(user_message_id)
 
     async def _ensure_generation(
         self,
@@ -404,6 +450,7 @@ class MessageProcessingService:
         is_zero_llm = route in {
             RouteType.cache_hit,
             RouteType.metadata,
+            RouteType.section_extraction,
             RouteType.factoid,
         }
         conf_enum: ConfidenceLevel | None = None

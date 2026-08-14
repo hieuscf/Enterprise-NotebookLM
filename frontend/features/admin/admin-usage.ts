@@ -43,6 +43,7 @@ export {
 export const ROUTE_LABEL_EN: Record<RouteType, string> = {
   cache_hit: "Cache Hit",
   metadata: "Metadata",
+  section_extraction: "Section Extraction",
   factoid: "Factoid",
   complex: "Complex",
 };
@@ -53,6 +54,7 @@ export const ROUTE_LABEL = ROUTE_LABEL_EN;
 export const ROUTE_EXPECTED_LLM: Record<RouteType, string> = {
   cache_hit: "0 LLM",
   metadata: "0 LLM",
+  section_extraction: "0 LLM",
   factoid: "0 LLM",
   complex: "≤1 LLM",
 };
@@ -232,7 +234,7 @@ export type NormalizedRouteRow = {
 };
 
 /**
- * Always surface all 4 Query Router routes (including zero counts) so Admins
+ * Always surface all Query Router routes (including zero counts) so Admins
  * can see zero-LLM routes even when the API omits empty buckets.
  */
 export function normalizeRouteBreakdown(
@@ -241,6 +243,7 @@ export function normalizeRouteBreakdown(
   const counts: Record<RouteType, number> = {
     cache_hit: 0,
     metadata: 0,
+    section_extraction: 0,
     factoid: 0,
     complex: 0,
   };

@@ -53,6 +53,7 @@ export {
 export const ROUTE_LABEL_EN: Record<RouteType, string> = {
   cache_hit: "Cache Hit",
   metadata: "Metadata",
+  section_extraction: "Section Extraction",
   factoid: "Factoid",
   complex: "Complex",
 };
@@ -64,6 +65,7 @@ export const ROUTE_LABEL = ROUTE_LABEL_EN;
 export const ROUTE_MARKER: Record<RouteType, string> = {
   cache_hit: "◈",
   metadata: "▣",
+  section_extraction: "▤",
   factoid: "◆",
   complex: "✦",
 };
@@ -89,7 +91,7 @@ export function expectedLlmCalls(route: RouteType): ExpectedLlmCalls {
 
 /**
  * Query Router invariants (project rules):
- * - cache_hit / metadata / factoid → llm_calls_count must be 0
+ * - cache_hit / metadata / section_extraction / factoid → llm_calls_count must be 0
  * - complex → llm_calls_count must be ≤ 1
  * UI never mutates the row; it only surfaces a warning.
  */
@@ -128,6 +130,7 @@ export function deriveQueryLogsOverview(
   const byRoute: Record<RouteType, number> = {
     cache_hit: 0,
     metadata: 0,
+    section_extraction: 0,
     factoid: 0,
     complex: 0,
   };
@@ -200,6 +203,12 @@ export function routingDecisionCopy(route: RouteType): RoutingDecisionCopy {
       return {
         title: "Metadata Query",
         body: "The query was resolved through structured metadata/database access.",
+        expectedLabel: "0",
+      };
+    case "section_extraction":
+      return {
+        title: "Section Extraction",
+        body: "The query was answered from document heading hierarchy without an LLM.",
         expectedLabel: "0",
       };
     case "factoid":

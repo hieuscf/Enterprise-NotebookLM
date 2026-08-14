@@ -95,7 +95,6 @@ DEFAULT_METADATA_RULES: tuple[PatternRule, ...] = (
             "display workspace",
             "danh sách tài liệu",
             "danh sách pdf",
-            "liệt kê",
             "liệt kê các pdf",
             "hiển thị workspace",
             "hiển thị tài liệu",

@@ -83,11 +83,18 @@ export function deltaOf(curr: number, prev: number): number | null {
   return (curr - prev) / prev;
 }
 
-export const ROUTE_ORDER: RouteType[] = ["cache_hit", "metadata", "factoid", "complex"];
+export const ROUTE_ORDER: RouteType[] = [
+  "cache_hit",
+  "metadata",
+  "section_extraction",
+  "factoid",
+  "complex",
+];
 
 export const ROUTE_LABEL_VI: Record<RouteType, string> = {
   cache_hit: "Cache Hit",
   metadata: "Metadata",
+  section_extraction: "Section",
   factoid: "Factoid",
   complex: "Complex",
 };
@@ -96,6 +103,7 @@ export const ROUTE_LABEL_VI: Record<RouteType, string> = {
 export const ROUTE_DOT_CLASS: Record<RouteType, string> = {
   cache_hit: "bg-success",
   metadata: "bg-info",
+  section_extraction: "bg-accent-primary",
   factoid: "bg-accent-secondary",
   complex: "bg-warning",
 };
@@ -103,6 +111,7 @@ export const ROUTE_DOT_CLASS: Record<RouteType, string> = {
 export const ROUTE_BADGE_CLASS: Record<RouteType, string> = {
   cache_hit: "bg-success/10 text-success",
   metadata: "bg-info/10 text-info",
+  section_extraction: "bg-accent-soft text-accent-primary",
   factoid: "bg-accent-secondary-soft text-accent-secondary",
   complex: "bg-warning/10 text-warning",
 };

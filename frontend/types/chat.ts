@@ -31,7 +31,12 @@ export type ChatMessageStatus = "pending" | "streaming" | "completed" | "failed"
 /** Live-only pipeline hint while waiting for the first token (SSE `status`). */
 export type ChatPipelineStage = "retrieving" | "generating" | "verifying";
 
-export type RouteType = "cache_hit" | "metadata" | "factoid" | "complex";
+export type RouteType =
+  | "cache_hit"
+  | "metadata"
+  | "section_extraction"
+  | "factoid"
+  | "complex";
 
 export type ConfidenceLevel = "high" | "low";
 

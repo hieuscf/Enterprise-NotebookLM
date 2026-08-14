@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs && node scripts/test-admin-dashboard.mjs && node scripts/test-admin-users.mjs && node scripts/test-rbac.mjs && node scripts/test-graph-ui.mjs && node scripts/test-citation-highlight.mjs && node scripts/test-knowledge-view.mjs"
+    "test": "node scripts/test-content-location.mjs && node scripts/test-search-ui.mjs && node scripts/test-chat-ui.mjs && node scripts/test-summary-ui.mjs && node scripts/test-extraction-ui.mjs && node scripts/test-comparison-ui.mjs && node scripts/test-admin-dashboard.mjs && node scripts/test-admin-users.mjs && node scripts/test-rbac.mjs && node scripts/test-graph-ui.mjs && node scripts/test-citation-highlight.mjs && node scripts/test-knowledge-view.mjs && node scripts/test-section-extraction-ui.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.3",

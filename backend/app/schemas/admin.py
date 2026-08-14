@@ -40,7 +40,9 @@ class QueryLogResponse(BaseModel):
     message_id: uuid.UUID | None = None
     cache_id: uuid.UUID | None = None
     query_text: str
-    route_type: Literal["cache_hit", "metadata", "factoid", "complex"]
+    route_type: Literal[
+        "cache_hit", "metadata", "section_extraction", "factoid", "complex"
+    ]
     llm_calls_count: int
     model_used: str | None = None
     latency_ms: int | None = None

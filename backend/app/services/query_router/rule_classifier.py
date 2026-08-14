@@ -40,6 +40,7 @@ from app.services.query_router.metadata_patterns import (
 )
 from app.services.query_router.models import ClassificationResult
 from app.services.query_router.normalizer import normalize_query
+from app.services.query_router.section_patterns import detect_section_intent
 
 logger = get_logger(__name__)
 
@@ -80,9 +81,10 @@ class RuleBasedClassifier:
 
     Pipeline:
       1. Normalize query
-      2. Metadata pattern registry (priority) — early return on match
-      3. Embed query; cosine to factoid / complex centroids
-      4. If confidence or margin below config thresholds → ``complex``
+      2. Section-extraction intent (structure / heading title) — early return
+      3. Metadata pattern registry — early return on match
+      4. Embed query; cosine to factoid / complex centroids
+      5. If confidence or margin below config thresholds → ``complex``
     """
 
     def __init__(
@@ -103,7 +105,7 @@ class RuleBasedClassifier:
     # ------------------------------------------------------------------
 
     def classify(self, query_text: str, workspace_id: UUID) -> RouteType:
-        """Classify into metadata / factoid / complex (never ``cache_hit``).
+        """Classify into metadata / section_extraction / factoid / complex (never ``cache_hit``).
 
         Args:
             query_text: Raw user question.
@@ -137,6 +139,25 @@ class RuleBasedClassifier:
                 reason="empty_query_default_complex",
                 confidence=None,
                 margin=None,
+            )
+
+        section = detect_section_intent(query_text)
+        if section.matched:
+            logger.info(
+                "query_classifier_section_extraction",
+                rule=section.rule_name,
+                intent=section.intent.value if section.intent else None,
+                section_number=section.section_number,
+            )
+            return ClassificationResult(
+                route_type=RouteType.section_extraction,
+                reason=(
+                    f"section_rule={section.rule_name};"
+                    f"intent={section.intent.value if section.intent else ''}"
+                ),
+                confidence=1.0,
+                margin=None,
+                section_rule=section.rule_name,
             )
 
         meta = self._patterns.match(normalized)

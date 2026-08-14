@@ -21,6 +21,10 @@ from uuid import uuid4
 
 from app.ai.hierarchical_chunking.chunk_splitter import split_content_block
 from app.ai.hierarchical_chunking.constants import ROOT_NODE_TITLE
+from app.ai.hierarchical_chunking.section_parser import (
+    heading_number_parent,
+    parse_numbered_heading,
+)
 from app.ai.hierarchical_chunking.token_budget import ChunkTokenBudget
 from app.ai.hierarchical_chunking.types import ContentBlock, HeadingNode, PlannedChunk
 from app.ai.tokens import count_tokens
@@ -47,8 +51,10 @@ def plan_hierarchical_chunks(
         parent_temp_id: str | None,
         page_number: int | None,
         section_index: int | None,
+        heading_level: int | None = None,
     ) -> str:
         nonlocal chunk_index
+        parsed = parse_numbered_heading(section or content)
         temp_id = str(uuid4())
         planned.append(
             PlannedChunk(
@@ -63,6 +69,9 @@ def plan_hierarchical_chunks(
                 page_number=page_number,
                 section_index=section_index,
                 token_count=count_tokens(content),
+                section_number=parsed.number,
+                parent_section_number=heading_number_parent(parsed.number),
+                heading_level=heading_level,
             )
         )
         chunk_index += 1
@@ -101,6 +110,7 @@ def plan_hierarchical_chunks(
                 parent_temp_id=parent_heading_temp_id,
                 page_number=_first_page_number(node.content_blocks),
                 section_index=node.section_index,
+                heading_level=node.level,
             )
 
         content_depth = node.depth + 1 if node.title != ROOT_NODE_TITLE else 0

@@ -2,10 +2,11 @@
 # File: router.py
 # Module/Service: Query Router (FR11)
 # Layer: Service
-# Purpose: Classify chat queries into cache_hit / metadata / factoid / complex.
+# Purpose: Classify chat queries into cache_hit / metadata / section_extraction /
+#          factoid / complex.
 # Responsibilities:
 #   - Exact then semantic query_cache lookup (0 LLM) before classification
-#   - Rule-based classifier for metadata / factoid / complex
+#   - Rule-based classifier for metadata / section_extraction / factoid / complex
 #   - Never generate answers — QueryOrchestrator executes the chosen branch
 # Dependencies:
 #   - QueryClassifier, QueryCacheService, RouterRules, HybridRetrievalService
@@ -37,7 +38,7 @@ logger = get_logger(__name__)
 
 
 class QueryRouter:
-    """FR11 Query Router — cache first, then metadata / factoid / complex."""
+    """FR11 Query Router — cache first, then metadata / section / factoid / complex."""
 
     def __init__(
         self,
@@ -66,8 +67,8 @@ class QueryRouter:
             query_text: Raw user question.
 
         Returns:
-            ``RouteDecision`` with ``cache_hit``, ``metadata``, ``factoid``,
-            or ``complex``. Cache hits include ``cache_entry``.
+            ``RouteDecision`` with ``cache_hit``, ``metadata``, ``section_extraction``,
+            ``factoid``, or ``complex``. Cache hits include ``cache_entry``.
         """
         started = time.perf_counter()
         nq = build_normalized_query(query_text)

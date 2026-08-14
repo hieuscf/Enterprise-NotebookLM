@@ -21,7 +21,11 @@ from app.services.query_router.classifier import (
     build_rule_based_classifier,
 )
 from app.services.query_router.exceptions import QueryCacheRepositoryError, QueryRouterError
-from app.services.query_router.handlers import FactoidHandler, MetadataHandler
+from app.services.query_router.handlers import (
+    FactoidHandler,
+    MetadataHandler,
+    SectionExtractionHandler,
+)
 from app.services.query_router.logging_models import (
     QueryRoutingLogContext,
     QueryRoutingLogResult,
@@ -65,6 +69,7 @@ __all__ = [
     "QueryRoutingLogResult",
     "QueryRoutingLogger",
     "RuleBasedClassifier",
+    "SectionExtractionHandler",
     "RouteDecision",
     "build_normalized_query",
     "build_rule_based_classifier",

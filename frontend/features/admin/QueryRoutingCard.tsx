@@ -4,12 +4,11 @@
  * Module/Service: Query Router (Web App)
  * Layer: UI
  * Purpose: Query Routing Analytics card (Admin Dashboard §9) — visualizes how
- *          the 4-branch Query Router is distributing traffic, and how much
+ *          the Query Router is distributing traffic, and how much
  *          LLM spend it is avoiding by design (FR11).
  * Responsibilities:
- *   - Compact horizontal-bar distribution over {cache_hit, metadata, factoid,
- *     complex} derived from CostSummary.by_route_type (real aggregate, not a
- *     client-side guess)
+ *   - Compact horizontal-bar distribution over {cache_hit, metadata,
+ *     section_extraction, factoid, complex} derived from CostSummary.by_route_type
  *   - LLM Avoidance Rate / LLM Calls per Query / Complex Query Rate, derived
  *     from total_llm_calls vs total query count in the same aggregate
  * Dependencies:
@@ -51,6 +50,7 @@ export function QueryRoutingCard({ cost, loading, error, onRetry, onViewQueryLog
   const counts: Record<RouteType, number> = {
     cache_hit: 0,
     metadata: 0,
+    section_extraction: 0,
     factoid: 0,
     complex: 0,
   };

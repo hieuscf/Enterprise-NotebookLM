@@ -21,6 +21,8 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
+import { ArrowUpRight } from "lucide-react";
+
 import { useChatCitationUiOptional } from "@/features/chat/ChatCitationContext";
 import { CitationPopover } from "@/features/chat/citation/CitationPopover";
 import type { CitationViewModel } from "@/features/chat/citation/citation-types";
@@ -33,9 +35,16 @@ type Props = {
   workspaceId: string;
   citation: CitationViewModel;
   compact?: boolean;
+  /** "index" = inline [n]; "page" = compact section badge (Trang N ↗). */
+  variant?: "index" | "page";
 };
 
-export function CitationChip({ workspaceId, citation, compact = true }: Props) {
+export function CitationChip({
+  workspaceId,
+  citation,
+  compact = true,
+  variant = "index",
+}: Props) {
   const router = useRouter();
   const ui = useChatCitationUiOptional();
   const popoverId = useId();
@@ -125,10 +134,13 @@ export function CitationChip({ workspaceId, citation, compact = true }: Props) {
 
   useEffect(() => () => clearCloseTimer(), []);
 
+  const pageLabel = locationLabel || "Nguồn";
+  const isPageVariant = variant === "page";
+
   return (
     <span
       ref={wrapRef}
-      className="relative inline-flex align-super"
+      className={cn("relative inline-flex", isPageVariant ? "align-middle" : "align-super")}
       onMouseEnter={handleOpenPreview}
       onMouseLeave={scheduleClose}
     >
@@ -147,28 +159,39 @@ export function CitationChip({ workspaceId, citation, compact = true }: Props) {
           }
         }}
         className={cn(
-          "mx-0.5 inline-flex cursor-pointer items-center gap-0.5 rounded px-1 py-px",
-          "align-super text-[11px] font-semibold leading-none transition-colors",
+          "inline-flex cursor-pointer items-center gap-0.5 font-semibold leading-none transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
           citation.verified
             ? "bg-citation-soft text-citation"
             : "bg-elevated text-secondary",
           isActive && "ring-2 ring-accent-primary/35",
           "hover:bg-accent-primary-soft hover:text-accent-primary",
+          isPageVariant
+            ? "rounded-md px-1.5 py-0.5 text-caption"
+            : "mx-0.5 align-super rounded px-1 py-px text-[11px]",
         )}
       >
-        [{citation.displayIndex}]
-        {!compact && citation.documentTitle ? (
-          <span className="hidden max-w-[8rem] truncate font-medium sm:inline">
-            {citation.documentTitle}
-            {citation.page ? ` · p.${citation.page}` : ""}
-          </span>
-        ) : null}
-        {citation.verified ? (
-          <span className="text-[9px] text-success" aria-hidden>
-            ✓
-          </span>
-        ) : null}
+        {isPageVariant ? (
+          <>
+            {pageLabel}
+            <ArrowUpRight className="h-3 w-3" aria-hidden />
+          </>
+        ) : (
+          <>
+            [{citation.displayIndex}]
+            {!compact && citation.documentTitle ? (
+              <span className="hidden max-w-[8rem] truncate font-medium sm:inline">
+                {citation.documentTitle}
+                {citation.page ? ` · p.${citation.page}` : ""}
+              </span>
+            ) : null}
+            {citation.verified ? (
+              <span className="text-[9px] text-success" aria-hidden>
+                ✓
+              </span>
+            ) : null}
+          </>
+        )}
       </button>
 
       {open ? (

@@ -17,6 +17,10 @@
 #   - Must validate workspace/message/retrieval membership.
 # =============================================================================
 
+from app.services.citation_verification.extractive import (
+    merge_extractive_evidence,
+    provenance_candidates_from_refs,
+)
 from app.services.citation_verification.reasons import VerificationReason
 from app.services.citation_verification.results import (
     CitationVerificationReport,
@@ -39,7 +43,9 @@ __all__ = [
     "RetrievalEvidence",
     "VerificationReason",
     "evidence_from_candidates",
+    "merge_extractive_evidence",
     "merge_retrieved_and_persisted_evidence",
     "normalize_evidence_text",
+    "provenance_candidates_from_refs",
     "snippet_in_source",
 ]

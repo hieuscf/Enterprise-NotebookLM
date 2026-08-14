@@ -241,13 +241,41 @@ class FakeRetrievalRecords:
     def __init__(self) -> None:
         self.latest_calls: list[uuid.UUID] = []
         self.pass2_rows: list[Retrieval] = []
+        self.insert_calls: list[dict[str, Any]] = []
 
     async def list_for_latest_pass(self, message_id: uuid.UUID) -> list[Retrieval]:
         self.latest_calls.append(message_id)
         return list(self.pass2_rows)
 
     async def get_latest_retrieval_pass(self, message_id: uuid.UUID) -> int | None:
-        return 2 if self.pass2_rows else 1
+        return 2 if self.pass2_rows else (1 if self.insert_calls else None)
+
+    async def insert_candidates(self, **kwargs: Any) -> int:
+        self.insert_calls.append(kwargs)
+        candidates = kwargs.get("candidates") or []
+        message_id = kwargs["message_id"]
+        pass_no = int(kwargs.get("retrieval_pass") or 1)
+        method = __import__(
+            "app.models.enums", fromlist=["RetrievalMethod"]
+        ).RetrievalMethod.bm25
+        rows: list[Retrieval] = []
+        for index, cand in enumerate(candidates):
+            rows.append(
+                Retrieval(
+                    id=uuid.uuid4(),
+                    message_id=message_id,
+                    chunk_id=getattr(cand, "chunk_id", None),
+                    entity_id=getattr(cand, "entity_id", None),
+                    retrieval_method=method,
+                    score=1.0,
+                    rank=index,
+                    retrieval_pass=pass_no,
+                    created_at=datetime.now(UTC),
+                )
+            )
+        if not self.pass2_rows:
+            self.pass2_rows = rows
+        return len(rows)
 
 
 class FakeObservability:
@@ -585,3 +613,61 @@ def test_format_sse_shape() -> None:
     status = format_sse(ChatStreamEvent(event="status", data={"stage": "retrieving"}))
     assert status.startswith("event: status\n")
     assert '"stage": "retrieving"' in status
+
+
+@pytest.mark.asyncio
+async def test_extractive_citations_write_retrievals_when_pass_empty() -> None:
+    ws, user = uuid.uuid4(), uuid.uuid4()
+    session = _session(user, ws)
+    chunk = uuid.uuid4()
+    doc = uuid.uuid4()
+    retrievals = FakeRetrievalRecords()
+    citations = FakeCitations()
+
+    class Orch:
+        async def handle_query(self, *args: Any, **kwargs: Any) -> QueryExecutionResult:
+            return QueryExecutionResult(
+                route_type=RouteType.section_extraction,
+                answer="3.3 Hàng tồn kho\nCông ty áp dụng phương pháp kê khai thường xuyên.",
+                citation_refs=[
+                    CitationRef(
+                        chunk_id=chunk,
+                        document_id=doc,
+                        page_number=None,
+                        verify=True,
+                        text_snippet="Hàng tồn kho",
+                        document_version_id=uuid.uuid4(),
+                        workspace_id=ws,
+                    )
+                ],
+                metadata={"llm_calls_count": 0, "answer_type": "extractive"},
+                verify=True,
+                latency_ms=8,
+                status="completed",
+                llm_calls_count=0,
+            )
+
+    svc = MessageProcessingService(
+        settings=_settings(),
+        session=AsyncMock(),  # type: ignore[arg-type]
+        sessions=FakeSessions(session),  # type: ignore[arg-type]
+        messages=FakeMessages(),  # type: ignore[arg-type]
+        citations=citations,  # type: ignore[arg-type]
+        retrieval_records=retrievals,  # type: ignore[arg-type]
+        observability=FakeObservability(),  # type: ignore[arg-type]
+        orchestrator=Orch(),  # type: ignore[arg-type]
+    )
+    result = await svc.generate_answer(
+        workspace_id=ws,
+        session_id=session.id,
+        user_id=user,
+        content="3.3 Hàng tồn kho",
+    )
+    assert result.route_type == RouteType.section_extraction
+    assert result.llm_calls_count == 0
+    assert retrievals.insert_calls
+    assert retrievals.insert_calls[0]["retrieval_pass"] == 1
+    assert citations.calls
+    latest = citations.calls[0]["latest_pass_rows"]
+    assert latest
+    assert latest[0].chunk_id == chunk

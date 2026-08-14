@@ -127,6 +127,7 @@ class MessageRole(enum.StrEnum):
 class RouteType(enum.StrEnum):
     cache_hit = "cache_hit"
     metadata = "metadata"
+    section_extraction = "section_extraction"
     factoid = "factoid"
     complex = "complex"
 

@@ -80,7 +80,9 @@ class MessageGenerationResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    route_type: Literal["cache_hit", "metadata", "factoid", "complex"]
+    route_type: Literal[
+        "cache_hit", "metadata", "section_extraction", "factoid", "complex"
+    ]
     confidence_level: Literal["high", "low"] | None = None
     confidence_score: float | None = None
     agent_triggered: bool = False

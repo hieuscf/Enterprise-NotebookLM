@@ -78,6 +78,9 @@ class PlannedChunk:
     page_number: int | None
     section_index: int | None
     token_count: int
+    section_number: str | None = None
+    parent_section_number: str | None = None
+    heading_level: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

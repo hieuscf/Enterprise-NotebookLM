@@ -78,6 +78,8 @@ class CitationRef:
     page_number: int | None = None
     verify: bool = True
     text_snippet: str | None = None
+    document_version_id: UUID | None = None
+    workspace_id: UUID | None = None
 
 
 @dataclass(slots=True)
