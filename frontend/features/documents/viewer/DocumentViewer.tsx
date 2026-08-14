@@ -33,6 +33,7 @@ import {
 import { AIContextPanel } from "@/features/documents/viewer/AIContextPanel";
 import { ChunkNavigator } from "@/features/documents/viewer/ChunkNavigator";
 import { KnowledgeView } from "@/features/documents/viewer/KnowledgeView";
+import { KnowledgeSkeleton } from "@/features/documents/viewer/knowledge/DocumentRenderer";
 import {
   PDFViewer,
   type PDFViewerHandle,
@@ -181,19 +182,8 @@ export function DocumentViewer({
 
   useEffect(() => {
     let active = true;
-    const autoFellBack = { current: false };
     setCanonicalLoading(true);
     setCanonicalError(null);
-
-    // Don't leave the user on an infinite Knowledge spinner — show Original after 4s.
-    const fallbackTimer = window.setTimeout(() => {
-      if (!active) return;
-      setViewMode((prev) => {
-        if (prev !== "knowledge") return prev;
-        autoFellBack.current = true;
-        return "original";
-      });
-    }, 4000);
 
     async function loadCanonical() {
       try {
@@ -205,9 +195,6 @@ export function DocumentViewer({
         if (!active) return;
         setCanonical(data);
         setCanonicalError(null);
-        if (autoFellBack.current && initialView === "knowledge") {
-          setViewMode("knowledge");
-        }
       } catch (err) {
         if (!active) return;
         setCanonical(null);
@@ -216,7 +203,6 @@ export function DocumentViewer({
             ? err.message
             : "Canonical document unavailable.",
         );
-        setViewMode((prev) => (prev === "knowledge" ? "original" : prev));
       } finally {
         if (active) setCanonicalLoading(false);
       }
@@ -224,9 +210,8 @@ export function DocumentViewer({
     void loadCanonical();
     return () => {
       active = false;
-      window.clearTimeout(fallbackTimer);
     };
-  }, [workspaceId, documentId, focusVersionId, initialView]);
+  }, [workspaceId, documentId, focusVersionId]);
 
   useEffect(() => {
     setPdfReady(false);
@@ -373,16 +358,13 @@ export function DocumentViewer({
   const viewerKind =
     previewReady && meta?.viewer_kind === "pdf" ? "pdf" : "original_download";
 
-  const handleMissing = useCallback(
-    (_id: string) => {
-      onMissingChunk?.();
-      if (focusPage && focusPage > 0) {
-        pdfRef.current?.jumpToPage(focusPage);
-        setCurrentPage(focusPage);
-      }
-    },
-    [onMissingChunk, focusPage],
-  );
+  const handleMissing = useCallback(() => {
+    onMissingChunk?.();
+    if (focusPage && focusPage > 0) {
+      pdfRef.current?.jumpToPage(focusPage);
+      setCurrentPage(focusPage);
+    }
+  }, [onMissingChunk, focusPage]);
 
   const handleLocated = useCallback((chunk: DocumentChunk) => {
     const key = chunk.heading_path || chunk.section_path || chunk.section;
@@ -543,11 +525,13 @@ export function DocumentViewer({
         </div>
         <div className="min-w-0 flex-1">
           <ViewerToolbar
+            variant={viewMode}
+            sectionLabel={viewMode === "knowledge" ? activeSection : null}
             scale={scale}
             page={currentPage}
             pageCount={pageCount || currentVersion?.page_count || 0}
             searchOpen={findOpen}
-            disabled={viewMode !== "original" || viewerKind !== "pdf" || !pdfReady}
+            disabled={viewerKind !== "pdf" || !pdfReady}
             onZoomIn={() => setScale((s) => Math.min(2.5, s + 0.15))}
             onZoomOut={() => setScale((s) => Math.max(0.5, s - 0.15))}
             onFitWidth={() => setScale(1.25)}
@@ -735,7 +719,10 @@ export function DocumentViewer({
                   <li key={entry.page}>
                     <button
                       type="button"
-                      onClick={() => jumpToPage(entry.page)}
+                      onClick={() => {
+                        setViewMode("original");
+                        jumpToPage(entry.page);
+                      }}
                       className={cn(
                         "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
                         currentPage === entry.page
@@ -764,46 +751,32 @@ export function DocumentViewer({
               <KnowledgeView
                 blocks={canonical.blocks}
                 markdownFallback={canonical.markdown}
+                documentTitle={canonical.document_title}
                 locator={focusLocator}
                 highlightSnippet={focusSnippet}
                 activeBlockId={activeBlockId}
                 onBlockVisible={setActiveBlockId}
               />
+            ) : canonicalLoading ? (
+              <KnowledgeSkeleton />
             ) : (
               <div className="flex h-full min-h-[28rem] flex-col items-center justify-center gap-3 rounded-md border border-border-default bg-elevated/20 px-6">
-                {canonicalError ? (
-                  <>
-                    <p className="text-body-sm font-medium text-primary">
-                      Knowledge View unavailable
-                    </p>
-                    <p className="max-w-sm text-center text-caption text-secondary">
-                      {canonicalError}
-                    </p>
-                    <button
-                      type="button"
-                      className="mt-2 inline-flex h-9 items-center rounded-md bg-accent-primary px-4 text-body-sm font-medium text-white"
-                      onClick={() => setViewMode("original")}
-                    >
-                      Open Original View
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent-primary border-t-transparent" />
-                    <p className="text-body-sm text-secondary">
-                      {canonicalLoading
-                        ? "Loading canonical document…"
-                        : "Canonical document not ready"}
-                    </p>
-                    <button
-                      type="button"
-                      className="mt-1 text-caption text-accent-primary underline-offset-2 hover:underline"
-                      onClick={() => setViewMode("original")}
-                    >
-                      Switch to Original View
-                    </button>
-                  </>
-                )}
+                <p className="text-body-sm font-medium text-primary">
+                  {canonicalError
+                    ? "Knowledge View unavailable"
+                    : "Document content is unavailable."}
+                </p>
+                <p className="max-w-sm text-center text-caption text-secondary">
+                  {canonicalError ||
+                    "Canonical Markdown could not be loaded for this version."}
+                </p>
+                <button
+                  type="button"
+                  className="mt-2 inline-flex h-9 items-center rounded-md bg-accent-primary px-4 text-body-sm font-medium text-white"
+                  onClick={() => setViewMode("original")}
+                >
+                  Open Original View
+                </button>
               </div>
             )
           ) : previewBusy ? (

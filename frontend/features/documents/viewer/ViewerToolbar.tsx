@@ -41,6 +41,8 @@ type Props = {
   pageCount: number;
   searchOpen?: boolean;
   disabled?: boolean;
+  variant?: "knowledge" | "original";
+  sectionLabel?: string | null;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onFitWidth: () => void;
@@ -65,6 +67,8 @@ export function ViewerToolbar({
   pageCount,
   searchOpen,
   disabled,
+  variant = "original",
+  sectionLabel = null,
   onZoomIn,
   onZoomOut,
   onFitWidth,
@@ -80,6 +84,8 @@ export function ViewerToolbar({
   onToggleSearch,
 }: Props) {
   const [pageInput, setPageInput] = useState(String(page));
+  const pdfControls = variant === "original";
+  const pdfDisabled = !pdfControls || Boolean(disabled);
 
   useEffect(() => {
     setPageInput(String(page));
@@ -100,11 +106,13 @@ export function ViewerToolbar({
         "flex flex-wrap items-center gap-1 rounded-md border border-border-default bg-surface/95 px-2 py-1.5 shadow-xs backdrop-blur-sm",
       )}
     >
+      {pdfControls ? (
+        <>
       <div className="flex items-center gap-0.5">
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled}
+          disabled={pdfDisabled}
           onClick={onZoomOut}
           aria-label="Zoom out"
           title="Zoom out (−)"
@@ -117,7 +125,7 @@ export function ViewerToolbar({
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled}
+          disabled={pdfDisabled}
           onClick={onZoomIn}
           aria-label="Zoom in"
           title="Zoom in (+)"
@@ -132,7 +140,7 @@ export function ViewerToolbar({
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled || page <= 1}
+          disabled={pdfDisabled || page <= 1}
           onClick={onPrevPage}
           aria-label="Previous page"
           title="Previous page (←)"
@@ -145,7 +153,7 @@ export function ViewerToolbar({
         <input
           id="viewer-page-jump"
           value={pageInput}
-          disabled={disabled || pageCount < 1}
+          disabled={pdfDisabled || pageCount < 1}
           onChange={(e) => setPageInput(e.target.value.replace(/[^\d]/g, ""))}
           onBlur={commitPage}
           onKeyDown={(e) => {
@@ -162,7 +170,7 @@ export function ViewerToolbar({
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled || page >= pageCount}
+          disabled={pdfDisabled || page >= pageCount}
           onClick={onNextPage}
           aria-label="Next page"
           title="Next page (→)"
@@ -176,7 +184,7 @@ export function ViewerToolbar({
       <button
         type="button"
         className={cn(iconBtn, "hidden sm:inline-flex")}
-        disabled={disabled}
+        disabled={pdfDisabled}
         onClick={onFitWidth}
         title="Fit width (F)"
         aria-label="Fit width"
@@ -186,7 +194,7 @@ export function ViewerToolbar({
       <button
         type="button"
         className={iconBtn}
-        disabled={disabled}
+        disabled={pdfDisabled}
         onClick={onFitPage}
         title="Fit page (0)"
         aria-label="Fit page"
@@ -196,28 +204,34 @@ export function ViewerToolbar({
       <button
         type="button"
         className={iconBtn}
-        disabled={disabled}
+        disabled={pdfDisabled}
         onClick={onRotate}
         title="Rotate"
         aria-label="Rotate"
       >
         <RotateCw className="h-3.5 w-3.5" aria-hidden />
       </button>
+        </>
+      ) : sectionLabel ? (
+        <span className="max-w-[16rem] truncate px-1 text-caption text-tertiary" title={sectionLabel}>
+          {sectionLabel}
+        </span>
+      ) : null}
+
       <button
         type="button"
         className={cn(iconBtn, searchOpen && "bg-accent-primary-soft text-accent-primary")}
-        disabled={disabled}
         onClick={onToggleSearch}
         title="Search in document (/)"
         aria-label="Search in document"
       >
         <Search className="h-3.5 w-3.5" aria-hidden />
       </button>
-      {onRefresh ? (
+      {onRefresh && pdfControls ? (
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled}
+          disabled={pdfDisabled}
           onClick={onRefresh}
           title="Refresh"
           aria-label="Refresh"
@@ -250,7 +264,6 @@ export function ViewerToolbar({
         <button
           type="button"
           className={iconBtn}
-          disabled={disabled}
           onClick={onPrint}
           title="Print"
           aria-label="Print"

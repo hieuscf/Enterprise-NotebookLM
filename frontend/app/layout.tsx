@@ -45,7 +45,7 @@ const beVietnam = Be_Vietnam_Pro({
 
 const sourceSerif = Source_Serif_4({
   variable: "--font-source-serif",
-  subsets: ["latin"],
+  subsets: ["latin", "vietnamese"],
   weight: ["400", "600"],
 });
 

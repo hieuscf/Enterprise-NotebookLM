@@ -157,6 +157,301 @@ body {
   font-family: var(--font-serif);
 }
 
+/* Knowledge View — scholarly document reader (presentation layer only) */
+.knowledge-scroll {
+  height: 100%;
+  max-height: calc(100vh - 14rem);
+  min-height: 28rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-color: color-mix(in srgb, var(--bg-elevated) 55%, var(--bg-base));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.knowledge-canvas {
+  max-width: 46rem;
+  width: calc(100% - 2rem);
+  margin: 1.25rem auto 2.5rem;
+  padding: 2.5rem 2.25rem 3.25rem;
+  background-color: var(--doc-bg);
+  color: var(--doc-text);
+  font-family: var(--font-serif), var(--font-be-vietnam), Georgia, serif;
+  font-size: 1.0625rem;
+  line-height: 1.8;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xs);
+  overflow-wrap: break-word;
+  user-select: text;
+}
+
+@media (min-width: 640px) {
+  .knowledge-canvas {
+    width: calc(100% - 3rem);
+    padding: 3rem 3.25rem 3.75rem;
+  }
+}
+
+.knowledge-letterhead {
+  margin: 0 0 2.25rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border-default);
+  text-align: center;
+}
+
+.knowledge-letterhead-line {
+  margin: 0.15em 0;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  text-wrap: balance;
+}
+
+.knowledge-doc-title {
+  margin: 1rem 0 0.35rem;
+  font-size: 1.375rem;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--doc-text);
+  text-wrap: balance;
+}
+
+.knowledge-doc-subtitle {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 400;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.knowledge-h {
+  color: var(--doc-text);
+  font-weight: 600;
+  text-wrap: balance;
+  scroll-margin-top: 1.5rem;
+}
+
+.knowledge-h1 {
+  margin: 2.25rem 0 0.85rem;
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.knowledge-h2 {
+  margin: 1.85rem 0 0.7rem;
+  font-size: 1.125rem;
+  line-height: 1.4;
+}
+
+.knowledge-h3 {
+  margin: 1.4rem 0 0.5rem;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.knowledge-h4 {
+  margin: 1.15rem 0 0.4rem;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.knowledge-letterhead .knowledge-h1,
+.knowledge-letterhead .knowledge-h2,
+.knowledge-letterhead .knowledge-h3 {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+.knowledge-p {
+  margin: 0 0 0.95em;
+  max-width: 42rem;
+  font-weight: 400;
+  line-height: 1.8;
+  text-align: left;
+  white-space: normal;
+}
+
+.knowledge-p:last-child {
+  margin-bottom: 0;
+}
+
+.knowledge-ul,
+.knowledge-ol {
+  margin: 0 0 1em;
+  padding-left: 1.4em;
+  max-width: 42rem;
+}
+
+.knowledge-ul {
+  list-style: disc;
+}
+
+.knowledge-ol {
+  list-style: decimal;
+}
+
+.knowledge-ul ul {
+  list-style: circle;
+  margin: 0.25em 0;
+}
+
+.knowledge-li {
+  margin: 0.28em 0;
+  line-height: 1.75;
+  padding-left: 0.15em;
+}
+
+.knowledge-quote {
+  margin: 1em 0;
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-secondary);
+  font-style: italic;
+  line-height: 1.75;
+}
+
+.knowledge-hr {
+  margin: 1.75rem 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.knowledge-pre,
+.knowledge-code-block {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-style: normal;
+}
+
+.knowledge-pre {
+  margin: 1em 0;
+  padding: 0.85em 1em;
+  overflow-x: auto;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  line-height: 1.55;
+}
+
+.knowledge-code-inline {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  background-color: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+}
+
+.knowledge-a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+.knowledge-table-scroll {
+  margin: 1.1em 0 1.4em;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+
+.knowledge-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.knowledge-table th,
+.knowledge-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: top;
+  text-align: left;
+}
+
+.knowledge-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--bg-elevated);
+  white-space: nowrap;
+}
+
+.knowledge-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.knowledge-table tbody tr:nth-child(even) td {
+  background-color: color-mix(in srgb, var(--bg-elevated) 45%, transparent);
+}
+
+.knowledge-figure {
+  margin: 1.25em auto;
+  max-width: 36rem;
+  text-align: center;
+}
+
+.knowledge-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: var(--radius-sm);
+}
+
+.knowledge-figure figcaption {
+  margin-top: 0.5rem;
+  font-family: var(--font-sans);
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+}
+
+.knowledge-md-host > *:first-child {
+  margin-top: 0;
+}
+
+.knowledge-canvas [data-block-id] {
+  scroll-margin-top: 1.5rem;
+}
+
+.knowledge-canvas [data-outline-active] {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
+.knowledge-canvas [data-active-block] {
+  outline: none;
+}
+
+.knowledge-canvas mark.highlight-citation {
+  background-color: var(--highlight-citation);
+  color: inherit;
+  border-radius: 1px;
+  border-bottom: 1.5px solid var(--citation);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.knowledge-canvas [data-block-id]:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-scroll {
+    scroll-behavior: auto;
+  }
+}
+
 code,
 pre,
 .mono {
