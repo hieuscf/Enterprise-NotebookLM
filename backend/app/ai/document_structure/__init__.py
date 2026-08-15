@@ -19,6 +19,26 @@ from app.ai.document_structure.exact_types import (
     ValueDirection,
     ValueType,
 )
+from app.ai.document_structure.scoring_config import RiskScoreConfig
+from app.ai.document_structure.scoring_engine import (
+    apply_adjustments,
+    level_from_score,
+    score_taxonomy,
+)
+from app.ai.document_structure.scoring_types import (
+    RiskImpact,
+    RiskLevel,
+    RiskScoreResult,
+    RiskScoringResult,
+)
+from app.ai.document_structure.taxonomy_config import TaxonomyConfig
+from app.ai.document_structure.taxonomy_engine import classify_taxonomy
+from app.ai.document_structure.taxonomy_types import (
+    ClassificationConfidence,
+    RiskCategory,
+    TaxonomyAssignment,
+    TaxonomyResult,
+)
 from app.ai.document_structure.semantic_config import SemanticMatchConfig
 from app.ai.document_structure.semantic_engine import (
     refine_mapping_semantically,
@@ -121,4 +141,18 @@ __all__ = [
     "ValueChangeType",
     "ValueDirection",
     "ValueType",
+    "TaxonomyConfig",
+    "TaxonomyAssignment",
+    "TaxonomyResult",
+    "RiskCategory",
+    "ClassificationConfidence",
+    "classify_taxonomy",
+    "RiskScoreConfig",
+    "RiskScoreResult",
+    "RiskScoringResult",
+    "RiskLevel",
+    "RiskImpact",
+    "level_from_score",
+    "score_taxonomy",
+    "apply_adjustments",
 ]

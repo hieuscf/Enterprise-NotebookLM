@@ -19,6 +19,8 @@ from app.services.document_structure.exact import ClauseExactDiffEngine
 from app.services.document_structure.mapper import ClauseMappingEngine
 from app.services.document_structure.normalizer import ClauseNormalizer
 from app.services.document_structure.semantic import ClauseSemanticMatcher
+from app.services.document_structure.scoring import RiskScoringEngine
+from app.services.document_structure.taxonomy import LegalRiskTaxonomyEngine
 
 __all__ = [
     "ClauseDiffEngine",
@@ -28,4 +30,6 @@ __all__ = [
     "ClauseSemanticMatcher",
     "DocumentStructureError",
     "DocumentStructureExtractor",
+    "LegalRiskTaxonomyEngine",
+    "RiskScoringEngine",
 ]
