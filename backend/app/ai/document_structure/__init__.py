@@ -38,6 +38,22 @@ from app.ai.document_structure.verification_types import (
     VerificationReasonCode,
     VerificationStatus,
 )
+from app.ai.document_structure.llm_boundary_engine import (
+    assemble_llm_context,
+    assemble_llm_contexts,
+    validate_llm_output,
+)
+from app.ai.document_structure.llm_output_schema import (
+    StructuredComparisonExplanation,
+    parse_structured_llm_output,
+)
+from app.ai.document_structure.llm_boundary_types import (
+    ComparisonLLMContext,
+    DeterministicFacts,
+    LLMTask,
+    ValidatedLLMResult,
+    ValidationStatus,
+)
 from app.ai.document_structure.scoring_config import RiskScoreConfig
 from app.ai.document_structure.scoring_engine import (
     apply_adjustments,
@@ -187,4 +203,14 @@ __all__ = [
     "VerificationReasonCode",
     "FindingVerification",
     "ComparisonVerificationResult",
+    "assemble_llm_context",
+    "assemble_llm_contexts",
+    "validate_llm_output",
+    "ComparisonLLMContext",
+    "DeterministicFacts",
+    "LLMTask",
+    "ValidatedLLMResult",
+    "ValidationStatus",
+    "StructuredComparisonExplanation",
+    "parse_structured_llm_output",
 ]

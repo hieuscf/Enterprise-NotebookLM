@@ -23,6 +23,7 @@ from app.services.document_structure.evidence import ClauseEvidenceBinder
 from app.services.document_structure.scoring import RiskScoringEngine
 from app.services.document_structure.taxonomy import LegalRiskTaxonomyEngine
 from app.services.document_structure.verification import ComparisonCitationVerifier
+from app.services.document_structure.llm_boundary import ComparisonLLMBoundary
 
 __all__ = [
     "ClauseDiffEngine",
@@ -36,4 +37,5 @@ __all__ = [
     "RiskScoringEngine",
     "ClauseEvidenceBinder",
     "ComparisonCitationVerifier",
+    "ComparisonLLMBoundary",
 ]
