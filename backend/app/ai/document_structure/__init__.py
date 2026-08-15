@@ -19,6 +19,25 @@ from app.ai.document_structure.exact_types import (
     ValueDirection,
     ValueType,
 )
+from app.ai.document_structure.evidence_engine import bind_evidence
+from app.ai.document_structure.evidence_types import (
+    BindingStatus,
+    EvidenceBindingResult,
+    EvidenceRef,
+    FindingEvidence,
+)
+from app.ai.document_structure.verification_engine import (
+    catalog_from_structures,
+    inventory_from_structures,
+    verify_bindings,
+)
+from app.ai.document_structure.verification_types import (
+    AbsenceStatus,
+    ComparisonVerificationResult,
+    FindingVerification,
+    VerificationReasonCode,
+    VerificationStatus,
+)
 from app.ai.document_structure.scoring_config import RiskScoreConfig
 from app.ai.document_structure.scoring_engine import (
     apply_adjustments,
@@ -155,4 +174,17 @@ __all__ = [
     "level_from_score",
     "score_taxonomy",
     "apply_adjustments",
+    "bind_evidence",
+    "BindingStatus",
+    "EvidenceBindingResult",
+    "EvidenceRef",
+    "FindingEvidence",
+    "verify_bindings",
+    "catalog_from_structures",
+    "inventory_from_structures",
+    "VerificationStatus",
+    "AbsenceStatus",
+    "VerificationReasonCode",
+    "FindingVerification",
+    "ComparisonVerificationResult",
 ]
