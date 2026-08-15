@@ -1,0 +1,77 @@
+{
+  "case_id": "v1_v2_regression_articles",
+  "description": "Structured labels for Hop_dong_mau_Ra_soat_Phap_ly V1 vs V2. Not production code.",
+  "clauses": [
+    {"identity_key": "ARTICLE:1", "status": "UNCHANGED"},
+    {"identity_key": "ARTICLE:2", "status": "MODIFIED", "use_subtree": true},
+    {"identity_key": "ARTICLE:3", "status": "MODIFIED", "use_subtree": true},
+    {"identity_key": "ARTICLE:4", "status": "UNCHANGED"},
+    {"identity_key": "ARTICLE:5", "status": "UNCHANGED"},
+    {"identity_key": "ARTICLE:6", "status": "UNCHANGED"},
+    {"identity_key": "ARTICLE:7", "status": "UNCHANGED"},
+    {
+      "identity_key": "ARTICLE:8",
+      "status": "MODIFIED",
+      "use_subtree": true
+    },
+    {
+      "identity_key": "ARTICLE:9",
+      "status": "MODIFIED",
+      "use_subtree": true
+    },
+    {"identity_key": "ARTICLE:10", "status": "UNCHANGED"},
+    {
+      "identity_key": "ARTICLE:11",
+      "status": "MODIFIED",
+      "use_subtree": true
+    },
+    {"identity_key": "ARTICLE:12", "status": "UNCHANGED"},
+    {
+      "identity_key": "CLAUSE:1.2",
+      "status": "UNCHANGED",
+      "forbidden_statuses": ["ADDED", "REMOVED"],
+      "mapped_v2_key": "CLAUSE:1.2"
+    },
+    {
+      "identity_key": "CLAUSE:1.3",
+      "status": "UNCHANGED",
+      "forbidden_statuses": ["ADDED", "REMOVED"],
+      "mapped_v2_key": "CLAUSE:1.3"
+    },
+    {
+      "identity_key": "CLAUSE:2.1",
+      "status": "MODIFIED",
+      "exact_value_types": ["DURATION"]
+    },
+    {
+      "identity_key": "CLAUSE:3.1",
+      "status": "MODIFIED",
+      "risk_category": "FINANCIAL",
+      "exact_value_types": ["MONEY"]
+    },
+    {
+      "identity_key": "CLAUSE:8.2",
+      "status": "MODIFIED",
+      "risk_category": "LIABILITY",
+      "risk_level_in": ["HIGH", "CRITICAL", "MEDIUM"],
+      "exact_value_types": ["PERCENTAGE"]
+    },
+    {
+      "identity_key": "CLAUSE:8.3",
+      "status": "ADDED",
+      "v1_clause_id": null,
+      "v2_clause_id": "CLAUSE:8.3"
+    },
+    {
+      "identity_key": "CLAUSE:9.3",
+      "status": "ADDED",
+      "v1_clause_id": null,
+      "v2_clause_id": "CLAUSE:9.3"
+    },
+    {
+      "identity_key": "CLAUSE:11.2",
+      "status": "MODIFIED",
+      "risk_level_in": ["HIGH", "CRITICAL", "MEDIUM"]
+    }
+  ]
+}

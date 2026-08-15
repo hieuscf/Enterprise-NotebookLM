@@ -4,10 +4,11 @@
 # Layer: Service
 # Purpose: Package exports for the reusable structure-extraction service.
 # Public Exports:
-#   - DocumentStructureExtractor, DocumentStructureError
+#   - DocumentStructureExtractor, DocumentStructureError,
+#     ContractComparisonOrchestrator, ContractComparisonError
 # Database/Table: documents, document_versions, document_chunks (read-only)
-# Related Modules: Comparison Service (downstream consumer)
-# Important Notes: Not wired into ComparisonService (CMP-01..04 stay domain-only).
+# Related Modules: Comparison Service (FR8 similarities path remains separate)
+# Important Notes: CMP-16 quality-gates CMP-15 reports; engines stay unchanged.
 # =============================================================================
 
 from app.services.document_structure.extractor import (
@@ -24,6 +25,11 @@ from app.services.document_structure.scoring import RiskScoringEngine
 from app.services.document_structure.taxonomy import LegalRiskTaxonomyEngine
 from app.services.document_structure.verification import ComparisonCitationVerifier
 from app.services.document_structure.llm_boundary import ComparisonLLMBoundary
+from app.services.document_structure.orchestrator import (
+    ContractComparisonError,
+    ContractComparisonOrchestrator,
+)
+from app.services.document_structure.quality import ComparisonQualityEvaluator
 
 __all__ = [
     "ClauseDiffEngine",
@@ -38,4 +44,7 @@ __all__ = [
     "ClauseEvidenceBinder",
     "ComparisonCitationVerifier",
     "ComparisonLLMBoundary",
+    "ContractComparisonError",
+    "ContractComparisonOrchestrator",
+    "ComparisonQualityEvaluator",
 ]

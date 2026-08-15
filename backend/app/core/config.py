@@ -249,6 +249,8 @@ class Settings(BaseSettings):
     comparison_prompt_reserve_tokens: int = 4_096
     # Max chunks per document when no completed summary exists (topic-ranked).
     comparison_top_chunks_per_document: int = 8
+    # CMP-16 — optional clause-pipeline explanation budget (FR8 similarities LLM is separate).
+    contract_comparison_max_llm_calls: int = 8
 
     # FR11 — Query Router (0 LLM). Thresholds consumed by app.config.router_rules.
     query_cache_similarity_threshold: float = 0.92

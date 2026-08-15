@@ -47,6 +47,31 @@ from app.ai.document_structure.llm_output_schema import (
     StructuredComparisonExplanation,
     parse_structured_llm_output,
 )
+from app.ai.document_structure.report_engine import (
+    build_comparison_report,
+    summarize_clauses,
+)
+from app.ai.document_structure.report_types import (
+    AuditableComparisonReport,
+    ClauseComparisonResult,
+    ComparisonStatistics,
+    ComparisonSummary,
+    ReportStatus,
+)
+from app.ai.document_structure.evaluation_engine import (
+    apply_quality_gate,
+    deterministic_fingerprint,
+    evaluate_report,
+    score_classification,
+)
+from app.ai.document_structure.evaluation_types import (
+    ExpectedClause,
+    QualityStatus,
+)
+from app.ai.document_structure.quality_metrics import (
+    get_contract_comparison_metrics,
+    reset_contract_comparison_metrics_for_tests,
+)
 from app.ai.document_structure.llm_boundary_types import (
     ComparisonLLMContext,
     DeterministicFacts,
@@ -213,4 +238,19 @@ __all__ = [
     "ValidationStatus",
     "StructuredComparisonExplanation",
     "parse_structured_llm_output",
+    "build_comparison_report",
+    "summarize_clauses",
+    "AuditableComparisonReport",
+    "ClauseComparisonResult",
+    "ComparisonStatistics",
+    "ComparisonSummary",
+    "ReportStatus",
+    "apply_quality_gate",
+    "deterministic_fingerprint",
+    "evaluate_report",
+    "score_classification",
+    "ExpectedClause",
+    "QualityStatus",
+    "get_contract_comparison_metrics",
+    "reset_contract_comparison_metrics_for_tests",
 ]
