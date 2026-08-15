@@ -10,6 +10,21 @@
 # =============================================================================
 
 from app.ai.document_structure.diff_config import DiffConfig
+from app.ai.document_structure.exact_config import ExactDiffConfig
+from app.ai.document_structure.exact_engine import extract_exact_differences
+from app.ai.document_structure.exact_types import (
+    ExactChange,
+    ExactDiffResult,
+    ValueChangeType,
+    ValueDirection,
+    ValueType,
+)
+from app.ai.document_structure.semantic_config import SemanticMatchConfig
+from app.ai.document_structure.semantic_engine import (
+    refine_mapping_semantically,
+    combined_semantic_score,
+    types_compatible,
+)
 from app.ai.document_structure.diff_engine import (
     classify_pair,
     diff_mapping_result,
@@ -67,6 +82,9 @@ __all__ = [
     "DiffConfig",
     "DiffResult",
     "DiffVerificationStatus",
+    "ExactChange",
+    "ExactDiffConfig",
+    "ExactDiffResult",
     "DocumentCorpus",
     "DocumentStructure",
     "ExtractionConfidence",
@@ -75,6 +93,7 @@ __all__ = [
     "MappingResult",
     "MappingStatus",
     "MappingType",
+    "SemanticMatchConfig",
     "NormalizedDocumentStructure",
     "NormalizedUnit",
     "SourceSpan",
@@ -86,6 +105,7 @@ __all__ = [
     "classify_pair",
     "diff_mapping_result",
     "diff_normalized_structures",
+    "extract_exact_differences",
     "extract_from_pages",
     "extract_from_text",
     "extract_structure",
@@ -94,5 +114,11 @@ __all__ = [
     "mappable_units",
     "normalize_structure",
     "normalize_title",
+    "refine_mapping_semantically",
     "score_pair",
+    "types_compatible",
+    "combined_semantic_score",
+    "ValueChangeType",
+    "ValueDirection",
+    "ValueType",
 ]

@@ -43,7 +43,7 @@ from app.ai.document_structure.diff_types import (
     DiffVerificationStatus,
     TextChange,
 )
-from app.ai.document_structure.mapping_engine import map_normalized_structures
+from app.ai.document_structure.mapping_engine import EmbedFn, RerankFn, map_normalized_structures
 from app.ai.document_structure.mapping_types import (
     ClauseMapping,
     MappingResult,
@@ -56,6 +56,8 @@ from app.ai.document_structure.normalization import (
     NormalizedDocumentStructure,
     NormalizedUnit,
 )
+from app.ai.document_structure.semantic_config import SemanticMatchConfig
+from app.ai.document_structure.semantic_engine import refine_mapping_semantically
 
 _REVIEW_STATUSES = frozenset({MappingStatus.AMBIGUOUS, MappingStatus.LOW_CONFIDENCE})
 _SUBTREE_DIRTY = frozenset(
@@ -73,9 +75,21 @@ def diff_normalized_structures(
     *,
     mapping: MappingResult | None = None,
     config: DiffConfig | None = None,
+    embed_fn: EmbedFn | None = None,
+    rerank_fn: RerankFn | None = None,
+    semantic_config: SemanticMatchConfig | None = None,
+    refine_semantic: bool | None = None,
 ) -> DiffResult:
-    """Map (if needed) then diff the complete clause sets."""
+    """Map (if needed), optionally refine leftovers, then diff."""
     mapping_result = mapping or map_normalized_structures(source, target)
+    should_refine = refine_semantic if refine_semantic is not None else mapping is None
+    if should_refine:
+        mapping_result = refine_mapping_semantically(
+            mapping_result,
+            config=semantic_config,
+            embed_fn=embed_fn,
+            rerank_fn=rerank_fn,
+        )
     return diff_mapping_result(mapping_result, config=config)
 
 

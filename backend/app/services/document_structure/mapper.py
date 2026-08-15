@@ -30,9 +30,11 @@ from app.ai.document_structure.mapping_engine import (
 )
 from app.ai.document_structure.mapping_types import MappingResult
 from app.ai.document_structure.normalization import NormalizedDocumentStructure
+from app.ai.document_structure.semantic_config import SemanticMatchConfig
 from app.core.logging import get_logger
 from app.services.document_structure.extractor import DocumentStructureExtractor
 from app.services.document_structure.normalizer import ClauseNormalizer
+from app.services.document_structure.semantic import ClauseSemanticMatcher
 
 logger = get_logger(__name__)
 
@@ -46,10 +48,15 @@ class ClauseMappingEngine:
         extractor: DocumentStructureExtractor | None = None,
         normalizer: ClauseNormalizer | None = None,
         config: MappingConfig | None = None,
+        semantic: ClauseSemanticMatcher | None = None,
+        semantic_config: SemanticMatchConfig | None = None,
+        refine_semantic: bool = True,
     ) -> None:
         self._extractor = extractor
         self._normalizer = normalizer or ClauseNormalizer()
         self._config = config or MappingConfig()
+        self._semantic = semantic or ClauseSemanticMatcher(config=semantic_config)
+        self._refine_semantic = refine_semantic
 
     def map_structures(
         self,
@@ -59,8 +66,10 @@ class ClauseMappingEngine:
         embed_fn: EmbedFn | None = None,
         rerank_fn: RerankFn | None = None,
         config: MappingConfig | None = None,
+        refine_semantic: bool | None = None,
+        semantic_config: SemanticMatchConfig | None = None,
     ) -> MappingResult:
-        """Map already-normalized trees. Does not query RAG."""
+        """Map already-normalized trees, then optionally refine leftovers."""
         logger.info(
             "clause_mapping_started",
             source_document_id=str(source.document_id),
@@ -73,6 +82,13 @@ class ClauseMappingEngine:
             embed_fn=embed_fn,
             rerank_fn=rerank_fn,
         )
+        if refine_semantic if refine_semantic is not None else self._refine_semantic:
+            result = self._semantic.refine(
+                result,
+                embed_fn=embed_fn,
+                rerank_fn=rerank_fn,
+                config=semantic_config,
+            )
         logger.info(
             "clause_mapping_completed",
             source_document_id=str(source.document_id),
@@ -92,6 +108,8 @@ class ClauseMappingEngine:
             reranker_invocation_count=result.metadata.get("reranker_invocation_count"),
             mapping_latency_ms=result.metadata.get("mapping_latency_ms"),
             mapping_llm_calls=result.metadata.get("mapping_llm_calls"),
+            semantic_accepted=result.metadata.get("semantic_accepted"),
+            semantic_fallback_count=result.metadata.get("semantic_fallback_count"),
         )
         return result
 

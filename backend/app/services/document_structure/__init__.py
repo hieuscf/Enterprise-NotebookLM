@@ -15,13 +15,17 @@ from app.services.document_structure.extractor import (
     DocumentStructureExtractor,
 )
 from app.services.document_structure.differ import ClauseDiffEngine
+from app.services.document_structure.exact import ClauseExactDiffEngine
 from app.services.document_structure.mapper import ClauseMappingEngine
 from app.services.document_structure.normalizer import ClauseNormalizer
+from app.services.document_structure.semantic import ClauseSemanticMatcher
 
 __all__ = [
     "ClauseDiffEngine",
+    "ClauseExactDiffEngine",
     "ClauseMappingEngine",
     "ClauseNormalizer",
+    "ClauseSemanticMatcher",
     "DocumentStructureError",
     "DocumentStructureExtractor",
 ]
