@@ -129,6 +129,9 @@ class FakeComparisonRepo:
             focus=kwargs.get("focus"),
             status=ComparisonStatus.processing,
             result=None,
+            review={},
+            comments=[],
+            audit=[],
             created_at=datetime.now(UTC),
         )
         doc_ids = list(kwargs["document_ids"])
@@ -189,6 +192,45 @@ class FakeComparisonRepo:
     async def delete(self, comparison: Comparison) -> None:
         self.rows.pop(comparison.id, None)
         self._links.pop(comparison.id, None)
+
+    async def update_review(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        review: dict[str, Any],
+    ) -> ComparisonWithDocuments | None:
+        item = self.rows.get(comparison_id)
+        if item is None or item.comparison.workspace_id != workspace_id:
+            return None
+        item.comparison.review = dict(review)
+        return item
+
+    async def update_comments(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comments: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        item = self.rows.get(comparison_id)
+        if item is None or item.comparison.workspace_id != workspace_id:
+            return None
+        item.comparison.comments = list(comments)
+        return item
+
+    async def append_audit(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        audit: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        item = self.rows.get(comparison_id)
+        if item is None or item.comparison.workspace_id != workspace_id:
+            return None
+        item.comparison.audit = list(audit)
+        return item
 
 
 def _settings() -> Settings:
@@ -426,3 +468,383 @@ async def test_post_cross_workspace_document_404(
     )
     assert resp.status_code == 404
     assert resp.json()["detail"]["code"] == "not_found"
+
+
+def _complete_with_clause_report(
+    comparisons_repo: FakeComparisonRepo,
+    comparison_id: uuid.UUID,
+) -> dict[str, Any]:
+    item = comparisons_repo.rows[comparison_id]
+    result = {
+        "similarities": ["Both cap liability."],
+        "differences": ["Cap increased."],
+        "contract_comparison": {
+            "clauses": {
+                "modified": [
+                    {
+                        "clause_id": "CLAUSE:8.2",
+                        "status": "MODIFIED",
+                        "risk": {"risk_level": "CRITICAL"},
+                        "exact_differences": [
+                            {
+                                "value_type": "MONEY",
+                                "old": {"raw": "480,000,000"},
+                                "new": {"raw": "600,000,000"},
+                            }
+                        ],
+                        "evidence": [{"evidence_id": "ev-1", "page_number": 4}],
+                    }
+                ],
+                "added": [],
+                "removed": [],
+                "unchanged": [],
+                "unresolved": [],
+            }
+        },
+    }
+    item.comparison.status = ComparisonStatus.completed
+    item.comparison.result = result
+    item.comparison.review = {}
+    item.comparison.comments = []
+    item.comparison.audit = []
+    return result
+
+
+@pytest.mark.asyncio
+async def test_patch_review_does_not_mutate_analysis(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    assert created.status_code == 202
+    comparison_id = uuid.UUID(created.json()["id"])
+    original = _complete_with_clause_report(comparisons_repo, comparison_id)
+
+    resp = await client.patch(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "REVIEWED"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["review"]["CLAUSE:8.2"]["status"] == "REVIEWED"
+    assert body["review"]["CLAUSE:8.2"]["reviewer_name"] == "U"
+    assert body["result"]["similarities"] == original["similarities"]
+    assert body["result"]["differences"] == original["differences"]
+    clause = body["result"]["contract_comparison"]["clauses"]["modified"][0]
+    assert clause["status"] == "MODIFIED"
+    assert clause["risk"]["risk_level"] == "CRITICAL"
+    stored = comparisons_repo.rows[comparison_id].comparison
+    assert stored.result == original
+    assert stored.review["CLAUSE:8.2"]["status"] == "REVIEWED"
+
+    reset = await client.patch(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "OPEN"},
+    )
+    assert reset.status_code == 200
+    assert reset.json()["review"] == {}
+    assert comparisons_repo.rows[comparison_id].comparison.result == original
+
+
+@pytest.mark.asyncio
+async def test_patch_review_viewer_forbidden(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    _complete_with_clause_report(comparisons_repo, comparison_id)
+    _set_role(RoleName.viewer)
+    resp = await client.patch(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "ACKNOWLEDGED"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_post_comment_does_not_mutate_analysis(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    original = _complete_with_clause_report(comparisons_repo, comparison_id)
+
+    resp = await client.post(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments",
+        json={
+            "clause_id": "CLAUSE:8.2",
+            "body": "Please confirm whether the new cap is acceptable.",
+        },
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert len(body["comments"]) == 1
+    assert body["comments"][0]["clause_id"] == "CLAUSE:8.2"
+    assert body["comments"][0]["target_type"] == "CLAUSE"
+    assert "acceptable" in body["comments"][0]["body"]
+    assert body["result"]["similarities"] == original["similarities"]
+    assert body["result"]["differences"] == original["differences"]
+    clause = body["result"]["contract_comparison"]["clauses"]["modified"][0]
+    assert clause["status"] == "MODIFIED"
+    assert clause["risk"]["risk_level"] == "CRITICAL"
+    stored = comparisons_repo.rows[comparison_id].comparison
+    assert stored.result == original
+    assert stored.review == {}
+
+    comment_id = body["comments"][0]["id"]
+    edited = await client.patch(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments/{comment_id}",
+        json={"body": "Need legal confirmation on the cap."},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["comments"][0]["body"] == "Need legal confirmation on the cap."
+    assert comparisons_repo.rows[comparison_id].comparison.result == original
+
+    evidence = await client.post(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments",
+        json={
+            "clause_id": "CLAUSE:8.2",
+            "body": "Check page 4 excerpt.",
+            "target_type": "EVIDENCE",
+            "target_id": "ev-1",
+        },
+    )
+    assert evidence.status_code == 201
+    assert any(item["target_type"] == "EVIDENCE" for item in evidence.json()["comments"])
+
+    diff = await client.post(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments",
+        json={
+            "clause_id": "CLAUSE:8.2",
+            "body": "Delta looks material.",
+            "target_type": "EXACT_DIFFERENCE",
+            "target_id": "0",
+        },
+    )
+    assert diff.status_code == 201
+
+    removed = await client.delete(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments/{comment_id}",
+    )
+    assert removed.status_code == 200
+    remaining = removed.json()["comments"]
+    assert all(item["id"] != comment_id for item in remaining)
+    assert comparisons_repo.rows[comparison_id].comparison.result == original
+
+
+@pytest.mark.asyncio
+async def test_post_comment_viewer_forbidden(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    _complete_with_clause_report(comparisons_repo, comparison_id)
+    _set_role(RoleName.viewer)
+    resp = await client.post(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/comments",
+        json={"clause_id": "CLAUSE:8.2", "body": "Viewer note"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_records_review_and_comments_without_mutating_analysis(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    original = _complete_with_clause_report(comparisons_repo, comparison_id)
+    base = f"/workspaces/{workspace_id}/comparisons/{comparison_id}"
+
+    opened = await client.post(
+        f"{base}/audit",
+        json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
+    )
+    assert opened.status_code == 200
+    assert opened.json()["events"][0]["action"] == "CLAUSE_OPENED"
+    first_id = opened.json()["events"][0]["id"]
+
+    debounced = await client.post(
+        f"{base}/audit",
+        json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
+    )
+    assert debounced.status_code == 200
+    assert len(debounced.json()["events"]) == 1
+    assert debounced.json()["events"][0]["id"] == first_id
+
+    reviewed = await client.patch(
+        f"{base}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "REVIEWED"},
+    )
+    assert reviewed.status_code == 200
+    assert "audit" not in reviewed.json()
+
+    noop = await client.patch(
+        f"{base}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "REVIEWED"},
+    )
+    assert noop.status_code == 200
+
+    commented = await client.post(
+        f"{base}/comments",
+        json={"clause_id": "CLAUSE:8.2", "body": "Need to confirm the cap."},
+    )
+    assert commented.status_code == 201
+    comment_id = commented.json()["comments"][0]["id"]
+
+    edited = await client.patch(
+        f"{base}/comments/{comment_id}",
+        json={"body": "Need legal confirmation on the cap."},
+    )
+    assert edited.status_code == 200
+
+    removed = await client.delete(f"{base}/comments/{comment_id}")
+    assert removed.status_code == 200
+
+    trail = await client.get(f"{base}/audit")
+    assert trail.status_code == 200
+    actions = [item["action"] for item in trail.json()["events"]]
+    assert actions == [
+        "CLAUSE_OPENED",
+        "REVIEW_STATUS_CHANGED",
+        "COMMENT_ADDED",
+        "COMMENT_EDITED",
+        "COMMENT_DELETED",
+    ]
+    review_event = trail.json()["events"][1]
+    assert review_event["before"]["status"] == "OPEN"
+    assert review_event["after"]["status"] == "REVIEWED"
+    assert trail.json()["events"][0]["id"] == first_id
+
+    stored = comparisons_repo.rows[comparison_id].comparison
+    assert stored.result == original
+    assert stored.review["CLAUSE:8.2"]["status"] == "REVIEWED"
+    detail = await client.get(base)
+    assert "audit" not in detail.json()
+    assert detail.json()["result"]["similarities"] == original["similarities"]
+
+
+@pytest.mark.asyncio
+async def test_audit_viewer_can_read_and_record_open_but_not_mutate(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    _complete_with_clause_report(comparisons_repo, comparison_id)
+    base = f"/workspaces/{workspace_id}/comparisons/{comparison_id}"
+    _set_role(RoleName.viewer)
+
+    listing = await client.get(f"{base}/audit")
+    assert listing.status_code == 200
+    assert listing.json()["events"] == []
+
+    opened = await client.post(
+        f"{base}/audit",
+        json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
+    )
+    assert opened.status_code == 200
+    assert opened.json()["events"][0]["action"] == "CLAUSE_OPENED"
+
+    forbidden_review = await client.patch(
+        f"{base}/review",
+        json={"clause_id": "CLAUSE:8.2", "status": "REVIEWED"},
+    )
+    assert forbidden_review.status_code == 403
+    forbidden_comment = await client.post(
+        f"{base}/comments",
+        json={"clause_id": "CLAUSE:8.2", "body": "Viewer note"},
+    )
+    assert forbidden_comment.status_code == 403
+    stored = comparisons_repo.rows[comparison_id].comparison
+    assert stored.review == {}
+    assert stored.comments == []
+

@@ -30,7 +30,13 @@ import {
 import { LOADING_STEPS } from "@/features/comparisons/comparison-summary";
 import { ComparisonSummaryView } from "@/features/comparisons/ComparisonSummaryView";
 import { cn } from "@/lib/utils";
-import type { Comparison, DocumentMeta } from "@/types/comparisons";
+import type {
+  Comparison,
+  ComparisonAuditEvent,
+  ComparisonCommentTarget,
+  ComparisonReviewStatus,
+  DocumentMeta,
+} from "@/types/comparisons";
 
 type Props = {
   workspaceId: string;
@@ -38,7 +44,22 @@ type Props = {
   documentTitles?: Record<string, string>;
   documentMeta?: Record<string, DocumentMeta>;
   initialClauseId?: string | null;
+  canEdit?: boolean;
+  reviewing?: boolean;
+  commenting?: boolean;
+  onReviewChange?: (clauseId: string, status: ComparisonReviewStatus) => void;
+  onCommentCreate?: (
+    clauseId: string,
+    body: string,
+    targetType: ComparisonCommentTarget,
+    targetId?: string | null,
+  ) => void;
+  onCommentUpdate?: (commentId: string, body: string) => void;
+  onCommentDelete?: (commentId: string) => void;
   onClauseChange?: (clauseId: string | null) => void;
+  onClauseOpened?: (clauseId: string) => void;
+  auditEvents?: ComparisonAuditEvent[];
+  auditLoading?: boolean;
   onRetry?: () => void;
 };
 
@@ -108,7 +129,17 @@ export function ComparisonResultView({
   documentTitles = {},
   documentMeta = {},
   initialClauseId = null,
+  canEdit = false,
+  reviewing = false,
+  commenting = false,
+  onReviewChange,
+  onCommentCreate,
+  onCommentUpdate,
+  onCommentDelete,
   onClauseChange,
+  onClauseOpened,
+  auditEvents = [],
+  auditLoading = false,
   onRetry,
 }: Props) {
   if (!comparison) {
@@ -204,7 +235,17 @@ export function ComparisonResultView({
           report={contract_comparison}
           documentMeta={documentMeta}
           initialClauseId={initialClauseId}
+          canEdit={canEdit}
+          reviewing={reviewing}
+          commenting={commenting}
+          onReviewChange={onReviewChange}
+          onCommentCreate={onCommentCreate}
+          onCommentUpdate={onCommentUpdate}
+          onCommentDelete={onCommentDelete}
           onClauseChange={onClauseChange}
+          onClauseOpened={onClauseOpened}
+          auditEvents={auditEvents}
+          auditLoading={auditLoading}
         />
       ) : null}
 

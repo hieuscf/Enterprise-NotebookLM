@@ -24,6 +24,7 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ToastStack } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { buildComparisonsHref } from "@/features/comparisons/clause-view";
 import { ComparisonHistory } from "@/features/comparisons/ComparisonHistory";
@@ -31,8 +32,10 @@ import { ComparisonPicker } from "@/features/comparisons/ComparisonPicker";
 import { ComparisonResult } from "@/features/comparisons/ComparisonResult";
 import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "@/hooks/useAuth";
+import { useComparisonAudit } from "@/hooks/useComparisonAudit";
 import { useComparisons } from "@/hooks/useComparisons";
 import { useDocuments } from "@/hooks/useDocuments";
+import { useToasts } from "@/hooks/useToasts";
 import { useWorkspaceRole } from "@/hooks/useWorkspaceRole";
 import { cn } from "@/lib/utils";
 import type { Comparison } from "@/types/comparisons";
@@ -50,6 +53,7 @@ export function ComparisonsView({
 }: Props) {
   const router = useRouter();
   const { user } = useAuth();
+  const { toasts, dismiss, pushSuccess } = useToasts();
   const { isEditor, loading: roleLoading } = useWorkspaceRole(workspaceId);
   const {
     comparisons,
@@ -57,9 +61,15 @@ export function ComparisonsView({
     error,
     creating,
     deletingId,
+    reviewing,
+    commenting,
     reload,
     create,
     remove,
+    setReview,
+    addComment,
+    editComment,
+    removeComment,
   } = useComparisons(workspaceId);
   const { items: documents } = useDocuments(workspaceId, {
     page: 1,
@@ -72,6 +82,12 @@ export function ComparisonsView({
   );
   const [pendingDelete, setPendingDelete] = useState<Comparison | null>(null);
   const [clauseId, setClauseId] = useState<string | null>(initialClauseId);
+  const {
+    events: auditEvents,
+    loading: auditLoading,
+    reload: reloadAudit,
+    recordOpened,
+  } = useComparisonAudit(workspaceId, selectedId);
 
   const replaceQuery = useCallback(
     (comparisonId: string | null, nextClauseId: string | null) => {
@@ -232,10 +248,54 @@ export function ComparisonsView({
             documentTitles={documentTitles}
             documentMeta={documentMeta}
             initialClauseId={clauseId}
+            canEdit={isEditor && !roleLoading}
+            reviewing={reviewing}
+            commenting={commenting}
+            onReviewChange={async (clauseIdValue, status) => {
+              if (!selected) return;
+              const row = await setReview(selected.id, clauseIdValue, status);
+              if (row) {
+                pushSuccess("Đã ghi nhận quyết định rà soát.");
+                void reloadAudit();
+              }
+            }}
+            onCommentCreate={async (clauseIdValue, body, targetType, targetId) => {
+              if (!selected) return;
+              const row = await addComment(
+                selected.id,
+                clauseIdValue,
+                body,
+                targetType,
+                targetId,
+              );
+              if (row) {
+                pushSuccess("Đã thêm ghi chú rà soát.");
+                void reloadAudit();
+              }
+            }}
+            onCommentUpdate={async (commentId, body) => {
+              if (!selected) return;
+              const row = await editComment(selected.id, commentId, body);
+              if (row) {
+                pushSuccess("Đã cập nhật ghi chú.");
+                void reloadAudit();
+              }
+            }}
+            onCommentDelete={async (commentId) => {
+              if (!selected) return;
+              const row = await removeComment(selected.id, commentId);
+              if (row) {
+                pushSuccess("Đã xoá ghi chú.");
+                void reloadAudit();
+              }
+            }}
             onClauseChange={(next) => {
               setClauseId(next);
               replaceQuery(selectedId, next);
             }}
+            onClauseOpened={recordOpened}
+            auditEvents={auditEvents}
+            auditLoading={auditLoading}
             onRetry={
               selected
                 ? () => void handleCompare(selected.document_ids, "")
@@ -254,6 +314,7 @@ export function ComparisonsView({
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDelete(null)}
       />
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
     </AppShell>
   );
 }

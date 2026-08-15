@@ -30,18 +30,19 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { ComparisonComments } from "@/features/comparisons/ComparisonComments";
+import { ComparisonReviewActions } from "@/features/comparisons/ComparisonReviewActions";
 import {
   EvidenceStateBadge,
+  ReviewBadge,
   RiskBadge,
   StatusBadge,
 } from "@/features/comparisons/comparison-badges";
 import {
   absenceMessage,
   columnHeading,
-  filterLabel,
   highlightSegments,
   mappingConfidenceLabel,
   positionLabel,
@@ -54,20 +55,24 @@ import {
   type ClauseNav,
   type HighlightSegment,
 } from "@/features/comparisons/clause-view";
+import { aiCitationRefs } from "@/features/comparisons/comparison-evidence";
+import { exactDifferenceTargetId } from "@/features/comparisons/comparison-comments";
+import { reviewState, type ReviewMap } from "@/features/comparisons/comparison-review";
 import {
   clauseRiskLevel,
   displayClauseId,
   evidenceForSide,
   evidenceState,
   evidenceStateLabel,
-  evidenceViewerHref,
   explanationText,
   formatExactDifference,
   riskLevelHelp,
-  type ClauseFilter,
 } from "@/features/comparisons/comparison-summary";
 import { cn } from "@/lib/utils";
 import type {
+  ComparisonComment,
+  ComparisonCommentTarget,
+  ComparisonReviewStatus,
   ContractClauseResult,
   ContractComparisonReport,
   ContractEvidenceRef,
@@ -80,30 +85,56 @@ type Props = {
   report: ContractComparisonReport;
   clause: ContractClauseResult | null;
   nav: ClauseNav;
-  filter: ClauseFilter;
+  scopeLabel: string;
   loading?: boolean;
   error?: string | null;
   documentMeta?: Record<string, DocumentMeta>;
+  evidenceOpen?: boolean;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
   onRetry?: () => void;
+  onOpenEvidence?: (evidenceId?: string | null) => void;
+  canEdit?: boolean;
+  reviewing?: boolean;
+  commenting?: boolean;
+  review?: ReviewMap | null;
+  comments?: ComparisonComment[] | null;
+  onReviewChange?: (clauseId: string, status: ComparisonReviewStatus) => void;
+  onCommentCreate?: (
+    clauseId: string,
+    body: string,
+    targetType: ComparisonCommentTarget,
+    targetId?: string | null,
+  ) => void;
+  onCommentUpdate?: (commentId: string, body: string) => void;
+  onCommentDelete?: (commentId: string) => void;
 };
 
 export function ClauseComparisonView({
   open,
-  workspaceId,
   report,
   clause,
   nav,
-  filter,
+  scopeLabel,
   loading = false,
   error = null,
   documentMeta = {},
+  evidenceOpen = false,
   onClose,
   onPrev,
   onNext,
   onRetry,
+  onOpenEvidence,
+  canEdit = false,
+  reviewing = false,
+  commenting = false,
+  review = null,
+  comments = null,
+  onReviewChange,
+  onCommentCreate,
+  onCommentUpdate,
+  onCommentDelete,
 }: Props) {
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -116,6 +147,7 @@ export function ClauseComparisonView({
     document.body.style.overflow = "hidden";
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        if (evidenceOpen) return;
         event.preventDefault();
         onClose();
         return;
@@ -134,7 +166,7 @@ export function ClauseComparisonView({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose, onPrev, onNext, nav.prevId, nav.nextId]);
+  }, [open, evidenceOpen, onClose, onPrev, onNext, nav.prevId, nav.nextId]);
 
   useEffect(() => {
     setMobilePane("v1");
@@ -169,7 +201,7 @@ export function ClauseComparisonView({
               Đối chiếu điều khoản
             </p>
             <p className="text-caption text-tertiary">
-              {positionLabel(nav, filterLabel(filter))}
+              {positionLabel(nav, scopeLabel)}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -193,6 +225,17 @@ export function ClauseComparisonView({
               Sau
               <ChevronRight className="h-4 w-4" aria-hidden />
             </button>
+            {onOpenEvidence ? (
+              <button
+                type="button"
+                onClick={() => onOpenEvidence()}
+                className={navButtonClass}
+                aria-label="Xem bằng chứng của điều khoản hiện tại"
+              >
+                <FileText className="h-4 w-4" aria-hidden />
+                Bằng chứng
+              </button>
+            ) : null}
             <button
               type="button"
               ref={closeRef}
@@ -222,12 +265,20 @@ export function ClauseComparisonView({
             <ClauseWorkspace
               titleId={titleId}
               clause={clause}
-              workspaceId={workspaceId}
-              report={report}
               v1Title={v1Title}
               v2Title={v2Title}
               mobilePane={mobilePane}
               onMobilePane={setMobilePane}
+              onOpenEvidence={onOpenEvidence}
+              canEdit={canEdit}
+              reviewing={reviewing}
+              commenting={commenting}
+              review={review}
+              comments={comments}
+              onReviewChange={onReviewChange}
+              onCommentCreate={onCommentCreate}
+              onCommentUpdate={onCommentUpdate}
+              onCommentDelete={onCommentDelete}
             />
           ) : null}
         </div>
@@ -285,21 +336,42 @@ function ErrorState({
 function ClauseWorkspace({
   titleId,
   clause,
-  workspaceId,
-  report,
   v1Title,
   v2Title,
   mobilePane,
   onMobilePane,
+  onOpenEvidence,
+  canEdit,
+  reviewing,
+  commenting,
+  review,
+  comments,
+  onReviewChange,
+  onCommentCreate,
+  onCommentUpdate,
+  onCommentDelete,
 }: {
   titleId: string;
   clause: ContractClauseResult;
-  workspaceId: string;
-  report: ContractComparisonReport;
   v1Title: string;
   v2Title: string;
   mobilePane: "v1" | "v2";
   onMobilePane: (pane: "v1" | "v2") => void;
+  onOpenEvidence?: (evidenceId?: string | null) => void;
+  canEdit: boolean;
+  reviewing: boolean;
+  commenting?: boolean;
+  review: ReviewMap | null;
+  comments?: ComparisonComment[] | null;
+  onReviewChange?: (clauseId: string, status: ComparisonReviewStatus) => void;
+  onCommentCreate?: (
+    clauseId: string,
+    body: string,
+    targetType: ComparisonCommentTarget,
+    targetId?: string | null,
+  ) => void;
+  onCommentUpdate?: (commentId: string, body: string) => void;
+  onCommentDelete?: (commentId: string) => void;
 }) {
   const status = String(clause.status).toUpperCase();
   const risk = clauseRiskLevel(clause);
@@ -311,8 +383,6 @@ function ClauseWorkspace({
   const rules = userFacingRules(clause.risk?.triggered_rules ?? null);
   const category = clause.risk?.risk_category ? String(clause.risk.risk_category) : null;
   const showDiff = shouldEmphasizeDiff(status);
-  const v1Doc = report.metadata?.document_v1;
-  const v2Doc = report.metadata?.document_v2;
 
   return (
     <div className="flex flex-col gap-5">
@@ -330,6 +400,7 @@ function ClauseWorkspace({
             <StatusBadge status={status} />
             <RiskBadge level={risk} />
             <EvidenceStateBadge state={evState} />
+            <ReviewBadge status={reviewState(review, clause.clause_id)} />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-body-sm text-secondary">
@@ -357,6 +428,26 @@ function ClauseWorkspace({
           <p className="text-body-sm text-secondary">{unchangedCaption()}</p>
         ) : null}
       </header>
+
+      <ComparisonReviewActions
+        clauseId={clause.clause_id}
+        review={review}
+        canEdit={canEdit}
+        saving={reviewing}
+        onChange={(next) => onReviewChange?.(clause.clause_id, next)}
+      />
+
+      <ComparisonComments
+        clauseId={clause.clause_id}
+        comments={comments}
+        canEdit={canEdit}
+        saving={commenting}
+        onCreate={(body, targetType, targetId) =>
+          onCommentCreate?.(clause.clause_id, body, targetType, targetId)
+        }
+        onUpdate={(commentId, body) => onCommentUpdate?.(commentId, body)}
+        onDelete={(commentId) => onCommentDelete?.(commentId)}
+      />
 
       <div
         className="flex gap-1.5 md:hidden"
@@ -414,6 +505,22 @@ function ClauseWorkspace({
                       {[formatted.delta, formatted.percent].filter(Boolean).join(" · ")}
                     </p>
                   ) : null}
+                  <div className="mt-2">
+                    <ComparisonComments
+                      clauseId={clause.clause_id}
+                      comments={comments}
+                      canEdit={canEdit}
+                      saving={commenting}
+                      compact
+                      targetType="EXACT_DIFFERENCE"
+                      targetId={exactDifferenceTargetId(index)}
+                      onCreate={(body, targetType, targetId) =>
+                        onCommentCreate?.(clause.clause_id, body, targetType, targetId)
+                      }
+                      onUpdate={(commentId, body) => onCommentUpdate?.(commentId, body)}
+                      onDelete={(commentId) => onCommentDelete?.(commentId)}
+                    />
+                  </div>
                 </li>
               );
             })}
@@ -456,6 +563,28 @@ function ClauseWorkspace({
           </h3>
           <p className="mt-1 text-body-sm font-medium text-secondary">Vì sao cần rà soát</p>
           <p className="mt-1 text-body-sm text-secondary">{analysis}</p>
+          {onOpenEvidence && aiCitationRefs(clause).length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Trích dẫn trong phân tích AI">
+              {aiCitationRefs(clause).map((citation) => (
+                <li key={citation.evidenceId}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenEvidence(citation.evidenceId)}
+                    className="inline-flex items-center rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-caption text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+                    aria-label={`Mở bằng chứng nguồn ${citation.index}`}
+                  >
+                    [{citation.index}]
+                    {citation.item?.evidence.page_number ? (
+                      <span className="ml-1 font-sans">
+                        {citation.item.side === "v1" ? "V1" : "V2"} · Trang{" "}
+                        {citation.item.evidence.page_number}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <p className="mt-2 text-caption text-tertiary">
             Đây là diễn giải, không phải nguyên văn hợp đồng hay sự kiện pháp lý đã xác minh độc lập.
           </p>
@@ -482,9 +611,7 @@ function ClauseWorkspace({
                 ? "Không xác định được điều khoản tương ứng ở V1"
                 : "Không có bằng chứng"
             }
-            workspaceId={workspaceId}
-            fallbackDocumentId={v1Doc?.document_id}
-            fallbackVersionId={v1Doc?.document_version_id}
+            onOpenItem={onOpenEvidence}
           />
           <EvidenceColumn
             label="Phiên bản 2"
@@ -494,9 +621,7 @@ function ClauseWorkspace({
                 ? "Không xác định được điều khoản tương ứng ở V2"
                 : "Không có bằng chứng"
             }
-            workspaceId={workspaceId}
-            fallbackDocumentId={v2Doc?.document_id}
-            fallbackVersionId={v2Doc?.document_version_id}
+            onOpenItem={onOpenEvidence}
           />
         </div>
       </section>
@@ -597,16 +722,12 @@ function EvidenceColumn({
   label,
   items,
   emptyLabel,
-  workspaceId,
-  fallbackDocumentId,
-  fallbackVersionId,
+  onOpenItem,
 }: {
   label: string;
   items: ContractEvidenceRef[];
   emptyLabel: string;
-  workspaceId: string;
-  fallbackDocumentId?: string | null;
-  fallbackVersionId?: string | null;
+  onOpenItem?: (evidenceId?: string | null) => void;
 }) {
   return (
     <div>
@@ -616,25 +737,20 @@ function EvidenceColumn({
       ) : (
         <ul className="mt-1 flex flex-col gap-1">
           {items.map((item, index) => {
-            const href = evidenceViewerHref(
-              workspaceId,
-              item,
-              fallbackDocumentId,
-              fallbackVersionId,
-            );
             const clause = item.clause_id ? `Điều ${displayClauseId(item.clause_id)}` : null;
             const page = item.page_number ? `Trang ${item.page_number}` : null;
-            const text = [clause, page].filter(Boolean).join(" · ") || "Mở nguồn";
+            const text = [clause, page].filter(Boolean).join(" · ") || "Xem bằng chứng";
             return (
               <li key={item.evidence_id ?? `${label}-${index}`}>
-                {href ? (
-                  <Link
-                    href={href}
+                {onOpenItem ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenItem(item.evidence_id ?? null)}
                     className="inline-flex items-center gap-1 text-caption text-accent-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
                   >
                     <FileText className="h-3 w-3" aria-hidden />
                     {text}
-                  </Link>
+                  </button>
                 ) : (
                   <span className="text-caption text-tertiary">{text}</span>
                 )}

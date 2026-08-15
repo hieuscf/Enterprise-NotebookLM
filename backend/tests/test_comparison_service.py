@@ -286,6 +286,9 @@ class FakeComparisonRepo:
             focus=kwargs.get("focus"),
             status=ComparisonStatus.processing,
             result=None,
+            review={},
+            comments=[],
+            audit=[],
             created_at=datetime.now(UTC),
         )
         doc_ids = list(kwargs["document_ids"])
@@ -303,6 +306,9 @@ class FakeComparisonRepo:
             focus=kwargs.get("focus"),
             status=ComparisonStatus.completed,
             result=kwargs["result"],
+            review={},
+            comments=[],
+            audit=[],
             created_at=datetime.now(UTC),
         )
         doc_ids = list(kwargs["document_ids"])
@@ -373,6 +379,54 @@ class FakeComparisonRepo:
     async def delete(self, comparison: Comparison) -> None:
         self.created = [c for c in self.created if c.comparison.id != comparison.id]
         self._links.pop(comparison.id, None)
+
+    async def update_review(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        review: dict[str, Any],
+    ) -> ComparisonWithDocuments | None:
+        for item in self.created:
+            if (
+                item.comparison.id == comparison_id
+                and item.comparison.workspace_id == workspace_id
+            ):
+                item.comparison.review = dict(review)
+                return item
+        return None
+
+    async def update_comments(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comments: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        for item in self.created:
+            if (
+                item.comparison.id == comparison_id
+                and item.comparison.workspace_id == workspace_id
+            ):
+                item.comparison.comments = list(comments)
+                return item
+        return None
+
+    async def append_audit(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        audit: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        for item in self.created:
+            if (
+                item.comparison.id == comparison_id
+                and item.comparison.workspace_id == workspace_id
+            ):
+                item.comparison.audit = list(audit)
+                return item
+        return None
 
 
 def _ready_doc(
@@ -493,10 +547,8 @@ async def test_create_comparison_uses_summary_context_and_strong_model() -> None
 
     assert session.commits == 1
     assert outcome.document_ids == [doc_a.id, doc_b.id]
-    assert outcome.comparison.result == {
-        "similarities": ["Both cover onboarding"],
-        "differences": ["Only Alpha covers benefits"],
-    }
+    assert outcome.comparison.result["similarities"] == ["Both cover onboarding"]
+    assert outcome.comparison.result["differences"] == ["Only Alpha covers benefits"]
     assert captured["model"] == "claude-sonnet-test"
     assert "Focus constraint" in captured["system"]
     assert "Comparison focus: onboarding" in captured["user"]
@@ -547,6 +599,7 @@ async def test_create_comparison_falls_back_to_chunks_when_no_summary() -> None:
     )
 
     assert retrieval.last_focus == "metrics"
+    assert outcome.comparison.result["similarities"] == []
     assert outcome.comparison.result["differences"] == ["X differs: 1 vs 2"]
 
 

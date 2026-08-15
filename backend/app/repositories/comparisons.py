@@ -23,6 +23,7 @@ from typing import Any
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from app.models.artifacts import Comparison, ComparisonDocument
 from app.models.enums import ComparisonStatus
@@ -189,6 +190,54 @@ class ComparisonRepository:
         result_row = await self._session.execute(stmt)
         await self._session.flush()
         return bool(result_row.rowcount)
+
+    async def update_review(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        review: dict[str, Any],
+    ) -> ComparisonWithDocuments | None:
+        """Replace the review map only. Never writes comparisons.result."""
+        row = await self.get(workspace_id=workspace_id, comparison_id=comparison_id)
+        if row is None:
+            return None
+        row.comparison.review = dict(review)
+        attributes.flag_modified(row.comparison, "review")
+        await self._session.flush()
+        return row
+
+    async def update_comments(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comments: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        """Replace the comments list only. Never writes comparisons.result."""
+        row = await self.get(workspace_id=workspace_id, comparison_id=comparison_id)
+        if row is None:
+            return None
+        row.comparison.comments = list(comments)
+        attributes.flag_modified(row.comparison, "comments")
+        await self._session.flush()
+        return row
+
+    async def append_audit(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        audit: list[dict[str, Any]],
+    ) -> ComparisonWithDocuments | None:
+        """Replace the audit list only. Callers must append, never rewrite history."""
+        row = await self.get(workspace_id=workspace_id, comparison_id=comparison_id)
+        if row is None:
+            return None
+        row.comparison.audit = list(audit)
+        attributes.flag_modified(row.comparison, "audit")
+        await self._session.flush()
+        return row
 
     async def delete(self, comparison: Comparison) -> None:
         await self._session.delete(comparison)

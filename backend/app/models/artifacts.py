@@ -168,6 +168,18 @@ class Comparison(Base):
         server_default=ComparisonStatus.processing.value,
     )
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # CMP-20 reviewer decisions — never mixed into result (analysis stays immutable).
+    review: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}", default=dict
+    )
+    # CMP-22 reviewer comments — never mixed into result (analysis stays immutable).
+    comments: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]", default=list
+    )
+    # CMP-23 append-only audit trail — never mixed into result / review / comments.
+    audit: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]", default=list
+    )
     created_at: Mapped[datetime] = created_at_col()
 
 

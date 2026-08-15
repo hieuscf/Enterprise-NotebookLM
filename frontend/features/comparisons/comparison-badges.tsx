@@ -9,7 +9,7 @@
  * Dependencies:
  *   - comparison-summary helpers, lucide-react, design tokens
  * Public Exports:
- *   - StatusBadge, RiskBadge, EvidenceStateBadge, riskToneClass
+ *   - StatusBadge, RiskBadge, EvidenceStateBadge, ReviewBadge, riskToneClass
  * Database/Table: N/A
  * Related Modules: ComparisonSummaryView, ClauseComparisonView
  * Important Notes: Color is never the only indicator.
@@ -18,8 +18,11 @@
 
 "use client";
 
-import { AlertTriangle, Check, Minus, Pencil, Plus, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Check, Eye, Flag, Minus, Pencil, Plus, ShieldAlert } from "lucide-react";
 
+import {
+  reviewStateLabel,
+} from "@/features/comparisons/comparison-review";
 import {
   clauseStatusLabel,
   evidenceStateLabel,
@@ -27,6 +30,7 @@ import {
   type EvidenceUiState,
 } from "@/features/comparisons/comparison-summary";
 import { cn } from "@/lib/utils";
+import type { ComparisonReviewStatus } from "@/types/comparisons";
 
 export function riskToneClass(level: string): string {
   const key = level.toUpperCase();
@@ -89,6 +93,32 @@ export function EvidenceStateBadge({ state }: { state: EvidenceUiState }) {
         <AlertTriangle className="h-3 w-3" aria-hidden />
       )}
       {evidenceStateLabel(state)}
+    </span>
+  );
+}
+
+export function ReviewBadge({ status }: { status: ComparisonReviewStatus }) {
+  const key = String(status).toUpperCase();
+  const Icon =
+    key === "REVIEWED"
+      ? Check
+      : key === "NEEDS_ATTENTION"
+        ? Flag
+        : key === "ACKNOWLEDGED"
+          ? Eye
+          : Minus;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption font-semibold",
+        key === "REVIEWED" && "border-success/30 bg-success/10 text-success",
+        key === "NEEDS_ATTENTION" && "border-warning/30 bg-warning/10 text-warning",
+        key === "ACKNOWLEDGED" && "border-info/30 bg-info/10 text-info",
+        key === "OPEN" && "border-border-default bg-elevated text-tertiary",
+      )}
+    >
+      <Icon className="h-3 w-3" aria-hidden />
+      {reviewStateLabel(key)}
     </span>
   );
 }

@@ -18,11 +18,14 @@
 # Important Notes:
 #   - HTTP path must not call the LLM; generation runs in process_comparison.
 #   - Complex query → prefer_strong=True (Claude Sonnet via Settings).
-#   - Exactly one LLM call per comparison; never invent beyond provided context.
+#   - Exactly one LLM call per comparison (FR8); never invent beyond provided context.
+#   - Optional CMP-15 enrichment (LLMTask.NONE) attaches contract_comparison
+#     for exactly 2 documents; failure is non-fatal and omits the field.
 # =============================================================================
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import time
 import uuid
 from collections.abc import Callable
@@ -47,9 +50,32 @@ from app.services.chat.model_tiering import (
     model_context_window,
     select_answer_model,
 )
+from app.services.comparison.audit import (
+    AuditError,
+    append_event,
+    make_event,
+    normalize_audit,
+    review_status_of,
+    should_debounce_open,
+    snapshot_text,
+)
+from app.services.comparison.comments import (
+    CommentError,
+    add_comment,
+    delete_comment,
+    find_comment,
+    resolve_comment_target,
+    update_comment,
+)
 from app.services.comparison.prompts import (
     DocumentCompareContext,
     build_comparison_prompts,
+)
+from app.services.comparison.review import (
+    REVIEW_STATUSES,
+    apply_review,
+    canonical_clause_id,
+    unwrap_contract_report,
 )
 from app.services.comparison.result_schemas import (
     comparison_result_to_dict,
@@ -217,6 +243,12 @@ class ComparisonService:
                 contexts=contexts,
                 focus=focus_term,
             )
+            result_payload = await self._attach_contract_comparison(
+                result_payload,
+                workspace_id=row.workspace_id,
+                document_ids=document_ids,
+                comparison_id=row.id,
+            )
         except ComparisonServiceError as exc:
             logger.warning(
                 "comparison_generation_failed",
@@ -342,6 +374,400 @@ class ComparisonService:
                 status_code=404,
             )
         await self._comparisons.delete(row.comparison)
+
+    async def set_review(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        clause_id: str,
+        status: str,
+        reviewer_id: uuid.UUID,
+        reviewer_name: str,
+    ) -> ComparisonWithDocuments:
+        """Record a reviewer decision without mutating comparison analysis."""
+        normalized = (status or "").strip().upper()
+        if normalized not in REVIEW_STATUSES:
+            raise ComparisonServiceError(
+                "invalid_review_status",
+                "Unsupported review status",
+                status_code=422,
+            )
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        self._require_completed_report(
+            row,
+            unavailable_code="review_unavailable",
+            unavailable_message="Clause review requires a contract comparison report",
+        )
+        canonical = canonical_clause_id(row.comparison.result, clause_id)
+        if canonical is None:
+            raise ComparisonServiceError(
+                "clause_not_found",
+                "Clause not found in this comparison",
+                status_code=422,
+            )
+        next_map = apply_review(
+            row.comparison.review,
+            clause_id=canonical,
+            status=normalized,
+            reviewer_id=reviewer_id,
+            reviewer_name=(reviewer_name or "").strip() or "Reviewer",
+            reviewed_at=datetime.now(UTC),
+        )
+        before_status = review_status_of(row.comparison.review, canonical)
+        updated = await self._comparisons.update_review(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            review=next_map,
+        )
+        if updated is None:
+            raise ComparisonServiceError(
+                "not_found",
+                "Comparison not found",
+                status_code=404,
+            )
+        if before_status != normalized:
+            occurred_at = datetime.now(UTC)
+            event = make_event(
+                action="REVIEW_STATUS_CHANGED",
+                actor_id=reviewer_id,
+                actor_name=reviewer_name,
+                occurred_at=occurred_at,
+                clause_id=canonical,
+                before={"status": before_status},
+                after={"status": normalized},
+            )
+            updated = await self._persist_audit_event(
+                workspace_id=workspace_id,
+                comparison_id=comparison_id,
+                existing=getattr(updated.comparison, "audit", None),
+                event=event,
+            )
+        await self._session.commit()
+        return updated
+
+    def _require_completed_report(
+        self,
+        row: ComparisonWithDocuments,
+        *,
+        unavailable_code: str,
+        unavailable_message: str,
+    ) -> None:
+        if row.comparison.status != ComparisonStatus.completed:
+            raise ComparisonServiceError(
+                "comparison_not_ready",
+                "Review is available after the comparison completes",
+                status_code=409,
+            )
+        if unwrap_contract_report(row.comparison.result) is None:
+            raise ComparisonServiceError(
+                unavailable_code,
+                unavailable_message,
+                status_code=409,
+            )
+
+    async def add_comment(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        clause_id: str,
+        body: str,
+        target_type: str,
+        target_id: str | None,
+        author_id: uuid.UUID,
+        author_name: str,
+    ) -> ComparisonWithDocuments:
+        """Attach a reviewer comment without mutating comparison analysis."""
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        self._require_completed_report(
+            row,
+            unavailable_code="comments_unavailable",
+            unavailable_message="Comments require a contract comparison report",
+        )
+        try:
+            canonical, normalized_type, resolved_target = resolve_comment_target(
+                row.comparison.result,
+                clause_id=clause_id,
+                target_type=target_type,
+                target_id=target_id,
+            )
+            next_comments = add_comment(
+                getattr(row.comparison, "comments", None),
+                clause_id=canonical,
+                target_type=normalized_type,
+                target_id=resolved_target,
+                body=body,
+                author_id=author_id,
+                author_name=author_name,
+                created_at=datetime.now(UTC),
+            )
+        except CommentError as exc:
+            raise ComparisonServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        created = next_comments[-1] if next_comments else {}
+        event = make_event(
+            action="COMMENT_ADDED",
+            actor_id=author_id,
+            actor_name=author_name,
+            occurred_at=datetime.now(UTC),
+            clause_id=canonical,
+            after={
+                "body": snapshot_text(created.get("body")),
+                "target_type": normalized_type,
+                "target_id": resolved_target,
+            },
+            target_type=normalized_type,
+            target_id=resolved_target,
+            comment_id=str(created.get("id") or "") or None,
+        )
+        return await self._persist_comments(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            comments=next_comments,
+            audit_event=event,
+            existing_audit=getattr(row.comparison, "audit", None),
+        )
+
+    async def edit_comment(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comment_id: str,
+        body: str,
+        author_id: uuid.UUID,
+    ) -> ComparisonWithDocuments:
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        previous = find_comment(getattr(row.comparison, "comments", None), comment_id)
+        try:
+            next_comments = update_comment(
+                getattr(row.comparison, "comments", None),
+                comment_id=comment_id,
+                body=body,
+                author_id=author_id,
+                updated_at=datetime.now(UTC),
+            )
+        except CommentError as exc:
+            raise ComparisonServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        previous_body = snapshot_text((previous or {}).get("body"))
+        next_body = snapshot_text(body)
+        audit_event = None
+        if previous_body != next_body:
+            audit_event = make_event(
+                action="COMMENT_EDITED",
+                actor_id=author_id,
+                actor_name=str((previous or {}).get("author_name") or "").strip() or "Reviewer",
+                occurred_at=datetime.now(UTC),
+                clause_id=str((previous or {}).get("clause_id") or "") or None,
+                before={"body": previous_body},
+                after={"body": next_body},
+                target_type=str((previous or {}).get("target_type") or "") or None,
+                target_id=str((previous or {}).get("target_id") or "") or None,
+                comment_id=comment_id,
+            )
+        return await self._persist_comments(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            comments=next_comments,
+            audit_event=audit_event,
+            existing_audit=getattr(row.comparison, "audit", None),
+        )
+
+    async def remove_comment(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comment_id: str,
+        actor_id: uuid.UUID,
+        actor_name: str,
+    ) -> ComparisonWithDocuments:
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        previous = find_comment(getattr(row.comparison, "comments", None), comment_id)
+        try:
+            next_comments = delete_comment(
+                getattr(row.comparison, "comments", None),
+                comment_id=comment_id,
+                deleted_at=datetime.now(UTC),
+            )
+        except CommentError as exc:
+            raise ComparisonServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        event = make_event(
+            action="COMMENT_DELETED",
+            actor_id=actor_id,
+            actor_name=actor_name,
+            occurred_at=datetime.now(UTC),
+            clause_id=str((previous or {}).get("clause_id") or "") or None,
+            before={"body": snapshot_text((previous or {}).get("body"))},
+            target_type=str((previous or {}).get("target_type") or "") or None,
+            target_id=str((previous or {}).get("target_id") or "") or None,
+            comment_id=comment_id,
+        )
+        return await self._persist_comments(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            comments=next_comments,
+            audit_event=event,
+            existing_audit=getattr(row.comparison, "audit", None),
+        )
+
+    async def list_audit(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+    ) -> list[dict[str, Any]]:
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        return normalize_audit(getattr(row.comparison, "audit", None))
+
+    async def record_clause_opened(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        clause_id: str,
+        actor_id: uuid.UUID,
+        actor_name: str,
+    ) -> list[dict[str, Any]]:
+        """Record a clause workspace open. Members may call this; analysis is unchanged."""
+        row = await self.get_comparison(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        self._require_completed_report(
+            row,
+            unavailable_code="audit_unavailable",
+            unavailable_message="Audit recording requires a contract comparison report",
+        )
+        canonical = canonical_clause_id(row.comparison.result, clause_id)
+        if canonical is None:
+            raise ComparisonServiceError(
+                "clause_not_found",
+                "Clause not found in this comparison",
+                status_code=422,
+            )
+        occurred_at = datetime.now(UTC)
+        existing = getattr(row.comparison, "audit", None)
+        if should_debounce_open(
+            existing,
+            actor_id=actor_id,
+            clause_id=canonical,
+            occurred_at=occurred_at,
+        ):
+            return normalize_audit(existing)
+        event = make_event(
+            action="CLAUSE_OPENED",
+            actor_id=actor_id,
+            actor_name=actor_name,
+            occurred_at=occurred_at,
+            clause_id=canonical,
+        )
+        updated = await self._persist_audit_event(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            existing=existing,
+            event=event,
+        )
+        await self._session.commit()
+        return normalize_audit(getattr(updated.comparison, "audit", None))
+
+    async def _persist_comments(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        comments: list[dict[str, Any]],
+        audit_event: dict[str, Any] | None = None,
+        existing_audit: object = None,
+    ) -> ComparisonWithDocuments:
+        if audit_event is not None:
+            try:
+                append_event(existing_audit, audit_event)
+            except AuditError as exc:
+                raise ComparisonServiceError(
+                    exc.code,
+                    exc.message,
+                    status_code=exc.status_code,
+                ) from exc
+        updated = await self._comparisons.update_comments(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            comments=comments,
+        )
+        if updated is None:
+            raise ComparisonServiceError(
+                "not_found",
+                "Comparison not found",
+                status_code=404,
+            )
+        if audit_event is not None:
+            current_audit = getattr(updated.comparison, "audit", None)
+            if current_audit is None:
+                current_audit = existing_audit
+            updated = await self._persist_audit_event(
+                workspace_id=workspace_id,
+                comparison_id=comparison_id,
+                existing=current_audit,
+                event=audit_event,
+            )
+        await self._session.commit()
+        return updated
+
+    async def _persist_audit_event(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        existing: object,
+        event: dict[str, Any],
+    ) -> ComparisonWithDocuments:
+        try:
+            next_events = append_event(existing, event)
+        except AuditError as exc:
+            raise ComparisonServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        updated = await self._comparisons.append_audit(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            audit=next_events,
+        )
+        if updated is None:
+            raise ComparisonServiceError(
+                "not_found",
+                "Comparison not found",
+                status_code=404,
+            )
+        return updated
 
     # ------------------------------------------------------------------
     # Internals
@@ -511,12 +937,77 @@ class ComparisonService:
             return bool((ctx.summary_text or "").strip())
         return any((c.content or "").strip() for c in ctx.chunks)
 
+    async def _attach_contract_comparison(
+        self,
+        payload: dict[str, Any],
+        *,
+        workspace_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+        comparison_id: uuid.UUID,
+    ) -> dict[str, Any]:
+        """Attach CMP-15 clause report when exactly two documents are compared.
+
+        Non-fatal: FR8 similarities/differences remain the stored result if
+        structure extraction is unavailable or the orchestrator raises.
+        """
+        if len(document_ids) != 2:
+            return payload
+        try:
+            from app.ai.document_structure.llm_boundary_types import LLMTask
+            from app.services.document_structure.extractor import (
+                DocumentStructureExtractor,
+            )
+            from app.services.document_structure.orchestrator import (
+                ContractComparisonError,
+                ContractComparisonOrchestrator,
+            )
+
+            extractor = DocumentStructureExtractor(
+                documents=self._documents,
+                retrieval=self._retrieval,
+            )
+            orchestrator = ContractComparisonOrchestrator(
+                extractor=extractor,
+                documents=self._documents,
+            )
+            report = await orchestrator.compare_documents(
+                workspace_id=workspace_id,
+                source_document_id=document_ids[0],
+                target_document_id=document_ids[1],
+                llm_task=LLMTask.NONE,
+                comparison_id=comparison_id,
+            )
+            inner = report.as_dict(include_text=True).get("comparison")
+            if not isinstance(inner, dict):
+                return payload
+            merged = dict(payload)
+            merged["contract_comparison"] = inner
+            logger.info(
+                "contract_comparison_attached",
+                comparison_id=str(comparison_id),
+            )
+            return merged
+        except ContractComparisonError as exc:
+            logger.info(
+                "contract_comparison_enrichment_skipped",
+                comparison_id=str(comparison_id),
+                code=exc.code,
+            )
+            return payload
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "contract_comparison_enrichment_failed",
+                comparison_id=str(comparison_id),
+                exc_info=True,
+            )
+            return payload
+
     async def _run_comparison_llm(
         self,
         *,
         contexts: list[DocumentCompareContext],
         focus: str | None,
-    ) -> dict[str, list[str]]:
+    ) -> dict[str, Any]:
         if resolve_chat_llm(self._settings) is None and self._llm_call is None:
             raise ComparisonServiceError(
                 "llm_not_configured",

@@ -25,11 +25,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "@/lib/api-client";
 import {
   createComparison,
+  createComparisonComment,
   deleteComparison,
+  deleteComparisonComment,
   getComparison,
   listComparisons,
+  updateComparisonComment,
+  updateComparisonReview,
 } from "@/lib/comparisons.api";
-import type { Comparison } from "@/types/comparisons";
+import type {
+  Comparison,
+  ComparisonCommentTarget,
+  ComparisonReviewStatus,
+} from "@/types/comparisons";
 
 const DEFAULT_INTERVAL_MS = 2500;
 
@@ -43,6 +51,8 @@ export function useComparisons(workspaceId: string) {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [commenting, setCommenting] = useState(false);
 
   const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(
     new Map(),
@@ -203,15 +213,159 @@ export function useComparisons(workspaceId: string) {
     [deletingId, stopPoll, workspaceId],
   );
 
+  const setReview = useCallback(
+    async (
+      comparisonId: string,
+      clauseId: string,
+      status: ComparisonReviewStatus,
+    ): Promise<Comparison | null> => {
+      if (reviewing) return null;
+      setReviewing(true);
+      setError(null);
+      try {
+        const row = await updateComparisonReview(workspaceId, comparisonId, {
+          clause_id: clauseId,
+          status,
+        });
+        if (!mountedRef.current) return row;
+        upsertComparison(row);
+        return row;
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(
+            err instanceof ApiClientError
+              ? err.message
+              : "Không ghi nhận được quyết định rà soát.",
+          );
+        }
+        return null;
+      } finally {
+        if (mountedRef.current) setReviewing(false);
+      }
+    },
+    [reviewing, upsertComparison, workspaceId],
+  );
+
+  const addComment = useCallback(
+    async (
+      comparisonId: string,
+      clauseId: string,
+      body: string,
+      targetType: ComparisonCommentTarget = "CLAUSE",
+      targetId?: string | null,
+    ): Promise<Comparison | null> => {
+      if (commenting) return null;
+      setCommenting(true);
+      setError(null);
+      try {
+        const row = await createComparisonComment(workspaceId, comparisonId, {
+          clause_id: clauseId,
+          body,
+          target_type: targetType,
+          target_id: targetId,
+        });
+        if (!mountedRef.current) return row;
+        upsertComparison(row);
+        return row;
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(
+            err instanceof ApiClientError
+              ? err.message
+              : "Không gửi được ghi chú.",
+          );
+        }
+        return null;
+      } finally {
+        if (mountedRef.current) setCommenting(false);
+      }
+    },
+    [commenting, upsertComparison, workspaceId],
+  );
+
+  const editComment = useCallback(
+    async (
+      comparisonId: string,
+      commentId: string,
+      body: string,
+    ): Promise<Comparison | null> => {
+      if (commenting) return null;
+      setCommenting(true);
+      setError(null);
+      try {
+        const row = await updateComparisonComment(
+          workspaceId,
+          comparisonId,
+          commentId,
+          body,
+        );
+        if (!mountedRef.current) return row;
+        upsertComparison(row);
+        return row;
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(
+            err instanceof ApiClientError
+              ? err.message
+              : "Không sửa được ghi chú.",
+          );
+        }
+        return null;
+      } finally {
+        if (mountedRef.current) setCommenting(false);
+      }
+    },
+    [commenting, upsertComparison, workspaceId],
+  );
+
+  const removeComment = useCallback(
+    async (
+      comparisonId: string,
+      commentId: string,
+    ): Promise<Comparison | null> => {
+      if (commenting) return null;
+      setCommenting(true);
+      setError(null);
+      try {
+        const row = await deleteComparisonComment(
+          workspaceId,
+          comparisonId,
+          commentId,
+        );
+        if (!mountedRef.current) return row;
+        upsertComparison(row);
+        return row;
+      } catch (err) {
+        if (mountedRef.current) {
+          setError(
+            err instanceof ApiClientError
+              ? err.message
+              : "Không xoá được ghi chú.",
+          );
+        }
+        return null;
+      } finally {
+        if (mountedRef.current) setCommenting(false);
+      }
+    },
+    [commenting, upsertComparison, workspaceId],
+  );
+
   return {
     comparisons,
     loading,
     error,
     creating,
     deletingId,
+    reviewing,
+    commenting,
     reload,
     create,
     remove,
+    setReview,
+    addComment,
+    editComment,
+    removeComment,
     clearError: () => setError(null),
   };
 }

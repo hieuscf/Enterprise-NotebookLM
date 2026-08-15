@@ -3,12 +3,13 @@
  * File: ComparisonSummaryView.tsx
  * Module/Service: Comparison Service (Web App)
  * Layer: UI
- * Purpose: TASK-CMP-17 clause-level Comparison Summary for CMP-15/16 reports.
+ * Purpose: TASK-CMP-17 clause-level Comparison Summary for CMP-15/16 reports,
+ *   with TASK-CMP-21 combined filtering and search.
  * Responsibilities:
  *   - Header V1 vs V2, status, summary stats, risk, distribution, priority
- *   - Filterable clause list; open CMP-18 side-by-side workspace
+ *   - Combined filter/search; open CMP-18 side-by-side workspace
  * Dependencies:
- *   - comparison-summary helpers, ClauseComparisonView, design tokens
+ *   - comparison-summary, comparison-filter, ClauseComparisonView, design tokens
  * Public Exports:
  *   - ComparisonSummaryView
  * Database/Table: N/A
@@ -22,19 +23,44 @@
 import {
   ArrowRight,
   FileText,
-  Search,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ClauseComparisonView } from "@/features/comparisons/ClauseComparisonView";
+import { ComparisonEvidencePanel } from "@/features/comparisons/ComparisonEvidencePanel";
+import { ComparisonFilterBar } from "@/features/comparisons/ComparisonFilterBar";
 import {
   EvidenceStateBadge,
+  ReviewBadge,
   RiskBadge,
   StatusBadge,
   riskToneClass,
 } from "@/features/comparisons/comparison-badges";
 import { clauseNav, resolveClauseId } from "@/features/comparisons/clause-view";
+import { aiCitationRefs } from "@/features/comparisons/comparison-evidence";
+import {
+  applyComparisonQuery,
+  clauseCategories,
+  EMPTY_COMPARISON_QUERY,
+  facetCounts,
+  isQueryActive,
+  queryScopeLabel,
+  type ComparisonQuery,
+} from "@/features/comparisons/comparison-filter";
+import { ComparisonAuditTrail } from "@/features/comparisons/ComparisonAuditTrail";
+import { ComparisonComments } from "@/features/comparisons/ComparisonComments";
+import { ComparisonReviewActions } from "@/features/comparisons/ComparisonReviewActions";
+import {
+  commentCount,
+  commentCountLabel,
+  exactDifferenceTargetId,
+} from "@/features/comparisons/comparison-comments";
+import {
+  reviewProgress,
+  reviewState,
+  type ReviewMap,
+} from "@/features/comparisons/comparison-review";
 import {
   authoritativeSummary,
   clauseRiskLevel,
@@ -47,10 +73,8 @@ import {
   evidenceForSide,
   evidenceLine,
   evidenceState,
-  evidenceViewerHref,
   excerpt,
   explanationText,
-  filterClauses,
   flattenClauses,
   formatExactDifference,
   hasMaterialChanges,
@@ -61,12 +85,15 @@ import {
   riskLevelLabel,
   shortChangeSummary,
   statusBannerLabel,
-  type ClauseFilter,
 } from "@/features/comparisons/comparison-summary";
 import { formatComparisonDateTime } from "@/features/comparisons/comparison-format";
 import { cn } from "@/lib/utils";
 import type {
   Comparison,
+  ComparisonAuditEvent,
+  ComparisonComment,
+  ComparisonCommentTarget,
+  ComparisonReviewStatus,
   ContractClauseResult,
   ContractComparisonReport,
   ContractEvidenceRef,
@@ -79,18 +106,23 @@ type Props = {
   report: ContractComparisonReport;
   documentMeta?: Record<string, DocumentMeta>;
   initialClauseId?: string | null;
+  canEdit?: boolean;
+  reviewing?: boolean;
+  commenting?: boolean;
+  onReviewChange?: (clauseId: string, status: ComparisonReviewStatus) => void;
+  onCommentCreate?: (
+    clauseId: string,
+    body: string,
+    targetType: ComparisonCommentTarget,
+    targetId?: string | null,
+  ) => void;
+  onCommentUpdate?: (commentId: string, body: string) => void;
+  onCommentDelete?: (commentId: string) => void;
   onClauseChange?: (clauseId: string | null) => void;
+  onClauseOpened?: (clauseId: string) => void;
+  auditEvents?: ComparisonAuditEvent[];
+  auditLoading?: boolean;
 };
-
-const FILTERS: { id: ClauseFilter; label: string }[] = [
-  { id: "all", label: "Tất cả" },
-  { id: "modified", label: "Đã sửa" },
-  { id: "added", label: "Thêm mới" },
-  { id: "removed", label: "Đã xoá" },
-  { id: "unchanged", label: "Không đổi" },
-];
-
-const RISK_FILTERS = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
 
 export function ComparisonSummaryView({
   workspaceId,
@@ -98,7 +130,17 @@ export function ComparisonSummaryView({
   report,
   documentMeta = {},
   initialClauseId = null,
+  canEdit = false,
+  reviewing = false,
+  commenting = false,
+  onReviewChange,
+  onCommentCreate,
+  onCommentUpdate,
+  onCommentDelete,
   onClauseChange,
+  onClauseOpened,
+  auditEvents = [],
+  auditLoading = false,
 }: Props) {
   const summary = authoritativeSummary(report);
   const clauses = useMemo(() => flattenClauses(report), [report]);
@@ -123,9 +165,7 @@ export function ComparisonSummaryView({
     report.metadata?.document_v2?.document_version_id ?? v2.versionId,
   );
 
-  const [filter, setFilter] = useState<ClauseFilter>("all");
-  const [riskFilter, setRiskFilter] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState<ComparisonQuery>(EMPTY_COMPARISON_QUERY);
   const resolvedInitial = resolveClauseId(clauses, initialClauseId);
   const defaultSelected =
     resolvedInitial ??
@@ -137,32 +177,61 @@ export function ComparisonSummaryView({
         null);
   const [selectedId, setSelectedId] = useState<string | null>(defaultSelected);
   const [workspaceOpen, setWorkspaceOpen] = useState(Boolean(initialClauseId));
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [focusEvidenceId, setFocusEvidenceId] = useState<string | null>(null);
+  const recordedInitialRef = useRef<string | null>(null);
 
   useEffect(() => {
     const resolved = resolveClauseId(clauses, initialClauseId);
     if (!resolved) return;
     setSelectedId(resolved);
     setWorkspaceOpen(true);
-  }, [clauses, initialClauseId]);
+    if (recordedInitialRef.current === resolved) return;
+    recordedInitialRef.current = resolved;
+    onClauseOpened?.(resolved);
+  }, [clauses, initialClauseId, onClauseOpened]);
 
   const visible = useMemo(
-    () => filterClauses(clauses, filter, query, riskFilter),
-    [clauses, filter, query, riskFilter],
+    () => applyComparisonQuery(clauses, comparison.review, query, comparison.comments),
+    [clauses, comparison.comments, comparison.review, query],
+  );
+  const categories = useMemo(() => clauseCategories(clauses), [clauses]);
+  const facets = useMemo(
+    () => facetCounts(clauses, comparison.review, query, comparison.comments),
+    [clauses, comparison.comments, comparison.review, query],
   );
   const selected = clauses.find((c) => c.clause_id === selectedId) ?? null;
   const nav = clauseNav(visible, selectedId);
   const showRiskFilters = risks.critical + risks.high + risks.medium + risks.low > 0;
   const noMaterial = summary ? !hasMaterialChanges(summary) : false;
+  const progress = reviewProgress(
+    clauses.map((clause) => clause.clause_id),
+    comparison.review,
+  );
 
   function openClause(clauseId: string) {
     setSelectedId(clauseId);
     setWorkspaceOpen(true);
     onClauseChange?.(clauseId);
+    onClauseOpened?.(clauseId);
   }
 
   function closeWorkspace() {
     setWorkspaceOpen(false);
+    setEvidenceOpen(false);
+    setFocusEvidenceId(null);
     onClauseChange?.(null);
+  }
+
+  function openEvidence(clauseId: string, evidenceId?: string | null) {
+    setSelectedId(clauseId);
+    setFocusEvidenceId(evidenceId ?? null);
+    setEvidenceOpen(true);
+  }
+
+  function closeEvidence() {
+    setEvidenceOpen(false);
+    setFocusEvidenceId(null);
   }
 
   return (
@@ -225,11 +294,40 @@ export function ComparisonSummaryView({
             Tổng quan
           </h3>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <StatCard label="Điều khoản" value={summary.total_clauses} emphasize="quiet" />
-            <StatCard label="Không đổi" value={summary.unchanged} emphasize="quiet" />
-            <StatCard label="Đã sửa" value={summary.modified} emphasize="modified" />
-            <StatCard label="Thêm mới" value={summary.added} emphasize="added" />
-            <StatCard label="Đã xoá" value={summary.removed} emphasize="removed" />
+            <StatCard
+              label="Điều khoản"
+              value={summary.total_clauses}
+              emphasize="quiet"
+              onClick={() => setQuery({ ...query, status: "all" })}
+            />
+            <StatCard
+              label="Không đổi"
+              value={summary.unchanged}
+              emphasize="quiet"
+              pressed={query.status === "unchanged"}
+              onClick={() => setQuery({ ...query, status: "unchanged" })}
+            />
+            <StatCard
+              label="Đã sửa"
+              value={summary.modified}
+              emphasize="modified"
+              pressed={query.status === "modified"}
+              onClick={() => setQuery({ ...query, status: "modified" })}
+            />
+            <StatCard
+              label="Thêm mới"
+              value={summary.added}
+              emphasize="added"
+              pressed={query.status === "added"}
+              onClick={() => setQuery({ ...query, status: "added" })}
+            />
+            <StatCard
+              label="Đã xoá"
+              value={summary.removed}
+              emphasize="removed"
+              pressed={query.status === "removed"}
+              onClick={() => setQuery({ ...query, status: "removed" })}
+            />
           </div>
           <ChangeDistribution summary={summary} dist={dist} />
         </section>
@@ -253,11 +351,46 @@ export function ComparisonSummaryView({
           Rủi ro
         </h3>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <RiskCountCard level="CRITICAL" count={risks.critical} />
-          <RiskCountCard level="HIGH" count={risks.high} />
-          <RiskCountCard level="MEDIUM" count={risks.medium} />
-          <RiskCountCard level="LOW" count={risks.low} />
+          <RiskCountCard
+            level="CRITICAL"
+            count={risks.critical}
+            pressed={query.risk === "CRITICAL"}
+            onClick={() =>
+              setQuery({ ...query, risk: query.risk === "CRITICAL" ? null : "CRITICAL" })
+            }
+          />
+          <RiskCountCard
+            level="HIGH"
+            count={risks.high}
+            pressed={query.risk === "HIGH"}
+            onClick={() => setQuery({ ...query, risk: query.risk === "HIGH" ? null : "HIGH" })}
+          />
+          <RiskCountCard
+            level="MEDIUM"
+            count={risks.medium}
+            pressed={query.risk === "MEDIUM"}
+            onClick={() =>
+              setQuery({ ...query, risk: query.risk === "MEDIUM" ? null : "MEDIUM" })
+            }
+          />
+          <RiskCountCard
+            level="LOW"
+            count={risks.low}
+            pressed={query.risk === "LOW"}
+            onClick={() => setQuery({ ...query, risk: query.risk === "LOW" ? null : "LOW" })}
+          />
         </div>
+      </section>
+
+      <section aria-labelledby="review-progress-heading" className="flex flex-col gap-2">
+        <h3 id="review-progress-heading" className="text-body-sm font-semibold text-primary">
+          Tiến độ rà soát
+        </h3>
+        <p className="text-body-sm text-secondary">
+          {progress.reviewed} đã rà soát · {progress.needsAttention} cần chú ý · {progress.acknowledged}{" "}
+          đã ghi nhận · {progress.open} chưa rà soát
+          <span className="text-tertiary"> · {progress.total} điều khoản</span>
+        </p>
       </section>
 
       {priority.length > 0 ? (
@@ -271,7 +404,9 @@ export function ComparisonSummaryView({
                 <PriorityChangeCard
                   clause={clause}
                   selected={selectedId === clause.clause_id}
+                  reviewStatus={reviewState(comparison.review, clause.clause_id)}
                   onOpen={() => openClause(clause.clause_id)}
+                  onOpenEvidence={() => openEvidence(clause.clause_id)}
                 />
               </li>
             ))}
@@ -283,71 +418,15 @@ export function ComparisonSummaryView({
         <h3 id="clause-list-heading" className="text-body-sm font-semibold text-primary">
           So sánh điều khoản
         </h3>
-        <div className="flex flex-col gap-2">
-          <div
-            role="tablist"
-            aria-label="Lọc theo trạng thái điều khoản"
-            className="flex flex-wrap gap-1.5"
-          >
-            {FILTERS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === item.id}
-                onClick={() => setFilter(item.id)}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 text-caption font-medium",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
-                  filter === item.id
-                    ? "border-accent-primary/40 bg-accent-primary/10 text-primary"
-                    : "border-border-default text-secondary hover:bg-elevated",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          {showRiskFilters ? (
-            <div
-              role="group"
-              aria-label="Lọc theo mức rủi ro"
-              className="flex flex-wrap gap-1.5"
-            >
-              {RISK_FILTERS.map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  aria-pressed={riskFilter === level}
-                  onClick={() => setRiskFilter((prev) => (prev === level ? null : level))}
-                  className={cn(
-                    "rounded-md border px-2.5 py-1 text-caption font-medium",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
-                    riskFilter === level
-                      ? riskToneClass(level)
-                      : "border-border-default text-secondary hover:bg-elevated",
-                  )}
-                >
-                  {riskLevelLabel(level)}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <label className="relative block">
-            <span className="sr-only">Tìm điều khoản</span>
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-tertiary"
-              aria-hidden
-            />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Tìm số điều, tiêu đề hoặc nội dung…"
-              className="h-9 w-full rounded-md border border-border-default bg-surface pl-8 pr-3 text-body-sm text-primary placeholder:text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
-            />
-          </label>
-        </div>
+        <ComparisonFilterBar
+          query={query}
+          total={clauses.length}
+          visible={visible.length}
+          facets={facets}
+          categories={categories}
+          showRiskFilters={showRiskFilters}
+          onChange={setQuery}
+        />
 
         <div className="grid gap-3 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
           <ul
@@ -356,7 +435,16 @@ export function ComparisonSummaryView({
           >
             {visible.length === 0 ? (
               <li className="rounded-md border border-dashed border-border-default px-3 py-4 text-body-sm text-tertiary">
-                Không có điều khoản khớp bộ lọc.
+                <p>Không có điều khoản khớp bộ lọc.</p>
+                {isQueryActive(query) ? (
+                  <button
+                    type="button"
+                    onClick={() => setQuery({ ...EMPTY_COMPARISON_QUERY })}
+                    className="mt-2 text-caption font-medium text-accent-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+                  >
+                    Xóa bộ lọc
+                  </button>
+                ) : null}
               </li>
             ) : (
               visible.map((clause) => (
@@ -364,7 +452,10 @@ export function ComparisonSummaryView({
                   <ClauseRow
                     clause={clause}
                     selected={selectedId === clause.clause_id}
+                    reviewStatus={reviewState(comparison.review, clause.clause_id)}
+                    commentCount={commentCount(comparison.comments, clause.clause_id)}
                     onSelect={() => openClause(clause.clause_id)}
+                    onOpenEvidence={() => openEvidence(clause.clause_id)}
                   />
                 </li>
               ))
@@ -372,12 +463,28 @@ export function ComparisonSummaryView({
           </ul>
           <ClauseDetailPanel
             clause={selected}
-            workspaceId={workspaceId}
-            report={report}
             onOpen={() => selected && openClause(selected.clause_id)}
+            onOpenEvidence={(evidenceId) =>
+              selected && openEvidence(selected.clause_id, evidenceId)
+            }
+            review={comparison.review}
+            comments={comparison.comments}
+            canEdit={canEdit}
+            reviewing={reviewing}
+            commenting={commenting}
+            onReviewChange={onReviewChange}
+            onCommentCreate={onCommentCreate}
+            onCommentUpdate={onCommentUpdate}
+            onCommentDelete={onCommentDelete}
           />
         </div>
       </section>
+
+      <ComparisonAuditTrail
+        events={auditEvents}
+        selectedClauseId={selectedId}
+        loading={auditLoading}
+      />
 
       <ClauseComparisonView
         open={workspaceOpen}
@@ -385,7 +492,8 @@ export function ComparisonSummaryView({
         report={report}
         clause={selected}
         nav={nav}
-        filter={filter}
+        scopeLabel={queryScopeLabel(query)}
+        evidenceOpen={evidenceOpen}
         error={
           workspaceOpen && initialClauseId && !resolveClauseId(clauses, initialClauseId) && !selected
             ? "Không tải được đối chiếu điều khoản này."
@@ -395,12 +503,46 @@ export function ComparisonSummaryView({
         onClose={closeWorkspace}
         onPrev={() => nav.prevId && openClause(nav.prevId)}
         onNext={() => nav.nextId && openClause(nav.nextId)}
+        onOpenEvidence={(evidenceId) => selected && openEvidence(selected.clause_id, evidenceId)}
+        canEdit={canEdit}
+        reviewing={reviewing}
+        commenting={commenting}
+        review={comparison.review}
+        comments={comparison.comments}
+        onReviewChange={onReviewChange}
+        onCommentCreate={onCommentCreate}
+        onCommentUpdate={onCommentUpdate}
+        onCommentDelete={onCommentDelete}
         onRetry={
           initialClauseId
             ? () => {
                 const resolved = resolveClauseId(clauses, initialClauseId);
                 if (resolved) openClause(resolved);
               }
+            : undefined
+        }
+      />
+      <ComparisonEvidencePanel
+        open={evidenceOpen}
+        workspaceId={workspaceId}
+        report={report}
+        clause={selected}
+        documentMeta={documentMeta}
+        focusEvidenceId={focusEvidenceId}
+        onClose={closeEvidence}
+        onFocusEvidence={(evidenceId) => setFocusEvidenceId(evidenceId)}
+        canEdit={canEdit}
+        reviewing={reviewing}
+        commenting={commenting}
+        review={comparison.review}
+        comments={comparison.comments}
+        onReviewChange={onReviewChange}
+        onCommentCreate={onCommentCreate}
+        onCommentUpdate={onCommentUpdate}
+        onCommentDelete={onCommentDelete}
+        onRetry={
+          selected
+            ? () => openEvidence(selected.clause_id, focusEvidenceId)
             : undefined
         }
       />
@@ -464,19 +606,28 @@ function StatCard({
   label,
   value,
   emphasize,
+  pressed = false,
+  onClick,
 }: {
   label: string;
   value: number;
   emphasize: "quiet" | "modified" | "added" | "removed";
+  pressed?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={pressed}
       className={cn(
-        "rounded-md border px-3 py-2.5",
+        "rounded-md border px-3 py-2.5 text-left",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
         emphasize === "quiet" && "border-border-default bg-elevated/40",
         emphasize === "modified" && "border-warning/30 bg-warning/5",
         emphasize === "added" && "border-info/30 bg-info/5",
         emphasize === "removed" && "border-danger/30 bg-danger-soft",
+        pressed && "ring-2 ring-accent-primary/30",
       )}
     >
       <p className="text-caption text-tertiary">{label}</p>
@@ -491,7 +642,7 @@ function StatCard({
       >
         {value}
       </p>
-    </div>
+    </button>
   );
 }
 
@@ -525,37 +676,57 @@ function ChangeDistribution({
   );
 }
 
-function RiskCountCard({ level, count }: { level: string; count: number }) {
+function RiskCountCard({
+  level,
+  count,
+  pressed = false,
+  onClick,
+}: {
+  level: string;
+  count: number;
+  pressed?: boolean;
+  onClick?: () => void;
+}) {
   const label = riskLevelLabel(level);
   const help = riskLevelHelp(level);
   return (
-    <div className={cn("rounded-md border px-3 py-2.5", riskToneClass(level))}>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={pressed}
+      className={cn(
+        "rounded-md border px-3 py-2.5 text-left",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
+        riskToneClass(level),
+        pressed && "ring-2 ring-accent-primary/30",
+      )}
+    >
       <p className="text-caption font-semibold uppercase tracking-wide">{label}</p>
       <p className="mt-1 text-h3 tabular-nums text-primary">{count}</p>
       <p className="mt-1 text-caption text-secondary">{help}</p>
-    </div>
+    </button>
   );
 }
 
 function PriorityChangeCard({
   clause,
   selected,
+  reviewStatus,
   onOpen,
+  onOpenEvidence,
 }: {
   clause: ContractClauseResult;
   selected: boolean;
+  reviewStatus: ComparisonReviewStatus;
   onOpen: () => void;
+  onOpenEvidence: () => void;
 }) {
   const risk = clauseRiskLevel(clause);
   const analysis = explanationText(clause);
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-pressed={selected}
+    <article
       className={cn(
-        "w-full rounded-md border px-3 py-3 text-left",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
+        "rounded-md border px-3 py-3",
         selected ? "border-accent-primary/40 bg-accent-primary/5" : "border-border-default bg-surface",
         risk === "CRITICAL" && !selected && "border-danger/25",
         risk === "HIGH" && !selected && "border-warning/25",
@@ -567,6 +738,7 @@ function PriorityChangeCard({
         </span>
         <StatusBadge status={String(clause.status)} />
         <RiskBadge level={risk} />
+        <ReviewBadge status={reviewStatus} />
       </div>
       <p className="mt-2 text-body-sm text-secondary">{shortChangeSummary(clause)}</p>
       {analysis ? (
@@ -578,63 +750,125 @@ function PriorityChangeCard({
       <p className="mt-2 text-caption text-tertiary">
         Bằng chứng: {evidenceLine(clause)}
       </p>
-      <span className="sr-only">Mở chi tiết điều khoản {displayClauseId(clause.clause_id)}</span>
-    </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-8 items-center rounded-md border border-border-default px-2.5 text-caption font-medium text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+        >
+          Mở đối chiếu
+        </button>
+        <button
+          type="button"
+          onClick={onOpenEvidence}
+          className="inline-flex h-8 items-center rounded-md border border-border-default px-2.5 text-caption font-medium text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+        >
+          Bằng chứng
+        </button>
+      </div>
+    </article>
   );
 }
 
 function ClauseRow({
   clause,
   selected,
+  reviewStatus,
+  commentCount: notes,
   onSelect,
+  onOpenEvidence,
 }: {
   clause: ContractClauseResult;
   selected: boolean;
+  reviewStatus: ComparisonReviewStatus;
+  commentCount: number;
   onSelect: () => void;
+  onOpenEvidence: () => void;
 }) {
   const status = String(clause.status).toUpperCase();
   const quiet = status === "UNCHANGED";
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-expanded={selected}
-      aria-controls="clause-detail-panel"
+    <div
       className={cn(
-        "w-full rounded-md border px-3 py-2 text-left",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
+        "flex items-stretch gap-1 rounded-md border",
         selected
           ? "border-accent-primary/40 bg-accent-primary/5"
           : quiet
-            ? "border-transparent bg-transparent hover:bg-elevated"
-            : "border-border-default bg-surface hover:bg-elevated",
+            ? "border-transparent bg-transparent"
+            : "border-border-default bg-surface",
       )}
     >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className={cn("text-body-sm font-medium", quiet ? "text-secondary" : "text-primary")}>
-          {displayClauseId(clause.clause_id)}
-        </span>
-        <StatusBadge status={status} />
-        <RiskBadge level={clauseRiskLevel(clause)} />
-      </div>
-      <p className={cn("mt-1 text-caption", quiet ? "text-tertiary" : "text-secondary")}>
-        {shortChangeSummary(clause)}
-      </p>
-      <p className="mt-0.5 text-caption text-tertiary">{evidenceLine(clause)}</p>
-    </button>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-expanded={selected}
+        aria-controls="clause-detail-panel"
+        className={cn(
+          "min-w-0 flex-1 px-3 py-2 text-left",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40",
+          !selected && quiet && "hover:bg-elevated",
+          !selected && !quiet && "hover:bg-elevated",
+        )}
+      >
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={cn("text-body-sm font-medium", quiet ? "text-secondary" : "text-primary")}>
+            {displayClauseId(clause.clause_id)}
+          </span>
+          <StatusBadge status={status} />
+          <RiskBadge level={clauseRiskLevel(clause)} />
+          <ReviewBadge status={reviewStatus} />
+          {notes > 0 ? (
+            <span className="text-caption text-tertiary">{commentCountLabel(notes)}</span>
+          ) : null}
+        </div>
+        <p className={cn("mt-1 text-caption", quiet ? "text-tertiary" : "text-secondary")}>
+          {shortChangeSummary(clause)}
+        </p>
+        <p className="mt-0.5 text-caption text-tertiary">{evidenceLine(clause)}</p>
+      </button>
+      <button
+        type="button"
+        onClick={onOpenEvidence}
+        className="shrink-0 self-center px-2 py-2 text-caption font-medium text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+        aria-label={`Xem bằng chứng điều ${displayClauseId(clause.clause_id)}`}
+      >
+        Bằng chứng
+      </button>
+    </div>
   );
 }
 
 function ClauseDetailPanel({
   clause,
-  workspaceId,
-  report,
   onOpen,
+  onOpenEvidence,
+  review,
+  comments,
+  canEdit,
+  reviewing,
+  commenting,
+  onReviewChange,
+  onCommentCreate,
+  onCommentUpdate,
+  onCommentDelete,
 }: {
   clause: ContractClauseResult | null;
-  workspaceId: string;
-  report: ContractComparisonReport;
   onOpen: () => void;
+  onOpenEvidence: (evidenceId?: string | null) => void;
+  review?: ReviewMap | null;
+  comments?: ComparisonComment[] | null;
+  canEdit: boolean;
+  reviewing: boolean;
+  commenting?: boolean;
+  onReviewChange?: (clauseId: string, status: ComparisonReviewStatus) => void;
+  onCommentCreate?: (
+    clauseId: string,
+    body: string,
+    targetType: ComparisonCommentTarget,
+    targetId?: string | null,
+  ) => void;
+  onCommentUpdate?: (commentId: string, body: string) => void;
+  onCommentDelete?: (commentId: string) => void;
 }) {
   if (!clause) {
     return (
@@ -652,8 +886,6 @@ function ClauseDetailPanel({
   const analysis = explanationText(clause);
   const diffs = clause.exact_differences ?? [];
   const evState = evidenceState(clause);
-  const v1Doc = report.metadata?.document_v1;
-  const v2Doc = report.metadata?.document_v2;
 
   return (
     <article
@@ -672,15 +904,48 @@ function ClauseDetailPanel({
           <StatusBadge status={status} />
           <RiskBadge level={risk} />
           <EvidenceStateBadge state={evState} />
+          <ReviewBadge status={reviewState(review, clause.clause_id)} />
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="mt-3 inline-flex h-9 items-center rounded-md border border-border-default px-3 text-caption font-medium text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
-      >
-        Mở đối chiếu V1 / V2
-      </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-9 items-center rounded-md border border-border-default px-3 text-caption font-medium text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+        >
+          Mở đối chiếu V1 / V2
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpenEvidence()}
+          className="inline-flex h-9 items-center rounded-md border border-border-default px-3 text-caption font-medium text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+        >
+          Xem bằng chứng
+        </button>
+      </div>
+      <div className="mt-4">
+        <ComparisonReviewActions
+          clauseId={clause.clause_id}
+          review={review}
+          canEdit={canEdit}
+          saving={reviewing}
+          onChange={(status) => onReviewChange?.(clause.clause_id, status)}
+        />
+      </div>
+
+      <div className="mt-4">
+        <ComparisonComments
+          clauseId={clause.clause_id}
+          comments={comments}
+          canEdit={canEdit}
+          saving={commenting}
+          onCreate={(body, targetType, targetId) =>
+            onCommentCreate?.(clause.clause_id, body, targetType, targetId)
+          }
+          onUpdate={(commentId, body) => onCommentUpdate?.(commentId, body)}
+          onDelete={(commentId) => onCommentDelete?.(commentId)}
+        />
+      </div>
 
       {risk ? (
         <p className="mt-2 text-caption text-secondary">{riskLevelHelp(risk)}</p>
@@ -710,6 +975,22 @@ function ClauseDetailPanel({
                       {[formatted.delta, formatted.percent].filter(Boolean).join(" · ")}
                     </p>
                   ) : null}
+                  <div className="mt-2">
+                    <ComparisonComments
+                      clauseId={clause.clause_id}
+                      comments={comments}
+                      canEdit={canEdit}
+                      saving={commenting}
+                      compact
+                      targetType="EXACT_DIFFERENCE"
+                      targetId={exactDifferenceTargetId(index)}
+                      onCreate={(body, targetType, targetId) =>
+                        onCommentCreate?.(clause.clause_id, body, targetType, targetId)
+                      }
+                      onUpdate={(commentId, body) => onCommentUpdate?.(commentId, body)}
+                      onDelete={(commentId) => onCommentDelete?.(commentId)}
+                    />
+                  </div>
                 </li>
               );
             })}
@@ -736,6 +1017,22 @@ function ClauseDetailPanel({
             Phân tích AI
           </p>
           <p className="mt-1 text-body-sm text-secondary">{analysis}</p>
+          {aiCitationRefs(clause).length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Trích dẫn trong phân tích AI">
+              {aiCitationRefs(clause).map((citation) => (
+                <li key={citation.evidenceId}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenEvidence(citation.evidenceId)}
+                    className="inline-flex items-center rounded-sm border border-border-default px-1.5 py-0.5 font-mono text-caption text-secondary hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+                    aria-label={`Mở bằng chứng nguồn ${citation.index}`}
+                  >
+                    [{citation.index}]
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <p className="mt-1 text-caption text-tertiary">
             Đây là diễn giải, không phải sự kiện pháp lý đã xác minh độc lập.
           </p>
@@ -751,9 +1048,7 @@ function ClauseDetailPanel({
             <EvidenceList
               label="V1"
               items={evidenceForSide(clause, "OLD")}
-              workspaceId={workspaceId}
-              fallbackDocumentId={v1Doc?.document_id}
-              fallbackVersionId={v1Doc?.document_version_id}
+              onOpenItem={onOpenEvidence}
             />
           ) : (
             <p className="text-caption text-tertiary">Thêm ở V2 — bằng chứng V1 không áp dụng.</p>
@@ -762,9 +1057,7 @@ function ClauseDetailPanel({
             <EvidenceList
               label="V2"
               items={evidenceForSide(clause, "NEW")}
-              workspaceId={workspaceId}
-              fallbackDocumentId={v2Doc?.document_id}
-              fallbackVersionId={v2Doc?.document_version_id}
+              onOpenItem={onOpenEvidence}
             />
           ) : (
             <p className="text-caption text-tertiary">Đã xoá khỏi V2 — bằng chứng V2 không áp dụng.</p>
@@ -801,15 +1094,11 @@ function ClauseTextColumn({
 function EvidenceList({
   label,
   items,
-  workspaceId,
-  fallbackDocumentId,
-  fallbackVersionId,
+  onOpenItem,
 }: {
   label: string;
   items: ContractEvidenceRef[];
-  workspaceId: string;
-  fallbackDocumentId?: string | null;
-  fallbackVersionId?: string | null;
+  onOpenItem: (evidenceId?: string | null) => void;
 }) {
   if (items.length === 0) {
     return (
@@ -824,28 +1113,19 @@ function EvidenceList({
       <p className="text-caption font-medium text-secondary">{label}</p>
       <ul className="mt-1 flex flex-col gap-1">
         {items.map((item, index) => {
-          const href = evidenceViewerHref(
-            workspaceId,
-            item,
-            fallbackDocumentId,
-            fallbackVersionId,
-          );
           const clause = item.clause_id ? displayClauseId(item.clause_id) : null;
           const page = item.page_number ? `Trang ${item.page_number}` : null;
-          const text = [clause ? `Điều ${clause}` : null, page].filter(Boolean).join(" · ") || "Mở nguồn";
+          const text = [clause ? `Điều ${clause}` : null, page].filter(Boolean).join(" · ") || "Xem bằng chứng";
           return (
             <li key={item.evidence_id ?? `${label}-${index}`}>
-              {href ? (
-                <Link
-                  href={href}
-                  className="inline-flex items-center gap-1 text-caption text-accent-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
-                >
-                  <FileText className="h-3 w-3" aria-hidden />
-                  {text}
-                </Link>
-              ) : (
-                <span className="text-caption text-tertiary">{text}</span>
-              )}
+              <button
+                type="button"
+                onClick={() => onOpenItem(item.evidence_id ?? null)}
+                className="inline-flex items-center gap-1 text-caption text-accent-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/40"
+              >
+                <FileText className="h-3 w-3" aria-hidden />
+                {text}
+              </button>
             </li>
           );
         })}

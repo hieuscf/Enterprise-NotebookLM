@@ -166,6 +166,14 @@ function filterClauses(clauses, filter, query, riskFilter = null) {
   const risk = riskFilter ? riskFilter.toUpperCase() : null;
   return clauses.filter((clause) => {
     const status = String(clause.status).toUpperCase();
+    if (
+      filter === "changed" &&
+      status !== "MODIFIED" &&
+      status !== "ADDED" &&
+      status !== "REMOVED"
+    ) {
+      return false;
+    }
     if (filter === "modified" && status !== "MODIFIED") return false;
     if (filter === "added" && status !== "ADDED") return false;
     if (filter === "removed" && status !== "REMOVED") return false;
@@ -325,6 +333,7 @@ const s1Clauses = flattenClauses(scenario1);
 assert(s1Clauses.length === 12, "flatten uses API buckets, not recounting UI rows as authority");
 assert(filterClauses(s1Clauses, "modified", "").length === 3, "filter modified");
 assert(filterClauses(s1Clauses, "added", "").length === 1, "filter added");
+assert(filterClauses(s1Clauses, "changed", "").length === 4, "filter changed = modified + added + removed");
 assert(filterClauses(s1Clauses, "removed", "").length === 0, "filter removed");
 assert(filterClauses(s1Clauses, "unchanged", "").length === 8, "filter unchanged");
 assert(filterClauses(s1Clauses, "all", "8.2").map((c) => c.clause_id).includes("CLAUSE:8.2"), "search clause number");

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,7 +48,9 @@ from app.ai.document_structure.quality_metrics import (
     reset_contract_comparison_metrics_for_tests,
 )
 from app.ai.document_structure.report_types import ReportStatus
-from app.models.enums import DocumentVersionStatus
+from app.api.comparisons import _comparison_response
+from app.models.enums import ComparisonStatus, DocumentVersionStatus
+from app.repositories.comparisons import ComparisonWithDocuments
 from app.schemas.comparisons import ComparisonResultPayload
 from app.services.document_structure.orchestrator import (
     ContractComparisonError,
@@ -496,10 +499,64 @@ def test_evidence_stays_in_compared_documents() -> None:
                 assert str(ws_id) == str(ws)
 
 
-def test_fr8_api_schema_unchanged() -> None:
+def test_fr8_api_schema_keeps_similarities_differences() -> None:
     payload = ComparisonResultPayload(similarities=["a"], differences=["b"])
     dumped = payload.model_dump()
-    assert set(dumped) == {"similarities", "differences"}
+    assert dumped["similarities"] == ["a"]
+    assert dumped["differences"] == ["b"]
+    assert dumped.get("contract_comparison") is None
+
+
+def test_fr8_api_schema_accepts_optional_contract_comparison() -> None:
+    report = {
+        "summary": {
+            "total_clauses": 1,
+            "unchanged": 1,
+            "modified": 0,
+            "added": 0,
+            "removed": 0,
+        }
+    }
+    payload = ComparisonResultPayload(
+        similarities=["a"],
+        differences=["b"],
+        contract_comparison=report,
+    )
+    dumped = payload.model_dump()
+    assert dumped["similarities"] == ["a"]
+    assert dumped["differences"] == ["b"]
+    assert dumped["contract_comparison"] == report
+
+
+def test_comparison_http_response_passes_through_contract_comparison() -> None:
+    report = {
+        "summary": {
+            "total_clauses": 2,
+            "unchanged": 1,
+            "modified": 1,
+            "added": 0,
+            "removed": 0,
+        }
+    }
+    row = ComparisonWithDocuments(
+        comparison=SimpleNamespace(
+            id=uuid.uuid4(),
+            workspace_id=uuid.uuid4(),
+            status=ComparisonStatus.completed,
+            result={
+                "similarities": ["same scope"],
+                "differences": ["payment changed"],
+                "contract_comparison": report,
+            },
+            created_at=datetime.now(UTC),
+        ),
+        document_ids=[uuid.uuid4(), uuid.uuid4()],
+    )
+    response = _comparison_response(row)
+    assert response.result is not None
+    assert response.result.similarities == ["same scope"]
+    assert response.result.differences == ["payment changed"]
+    assert response.result.contract_comparison == report
 
 
 def test_mapping_failure_is_recorded_as_failure_not_success() -> None:

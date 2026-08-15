@@ -75,6 +75,8 @@ export type {
 
 export type {
   Comparison,
+  ComparisonAuditEvent,
+  ComparisonAuditTrail,
   ComparisonCreateRequest,
   ComparisonResult,
   ComparisonStatus,

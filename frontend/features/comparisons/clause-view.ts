@@ -256,6 +256,8 @@ export function buildComparisonsHref(
 
 export function filterLabel(filter: string): string {
   switch (filter) {
+    case "changed":
+      return "Có thay đổi";
     case "modified":
       return "Đã sửa";
     case "added":
@@ -265,7 +267,7 @@ export function filterLabel(filter: string): string {
     case "unchanged":
       return "Không đổi";
     default:
-      return "Tất cả";
+      return filter.trim() ? filter : "Tất cả";
   }
 }
 

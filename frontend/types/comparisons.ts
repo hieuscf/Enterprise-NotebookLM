@@ -7,6 +7,7 @@
  * Responsibilities:
  *   - Align Comparison / status / result with backend schema
  *   - Optional contract_comparison (CMP-15/16) for clause-level summary UI
+ *   - CMP-23 audit events are fetched separately from Comparison payload
  * Dependencies:
  *   - docs/Enterprise_notebooklm_openapi.yaml Comparison schema
  * Public Exports:
@@ -111,15 +112,33 @@ export type ContractClauseExplanation = {
   unavailable?: boolean;
   output?: {
     explanation?: string | null;
+    evidence_ids?: string[] | null;
     [key: string]: unknown;
   } | null;
   [key: string]: unknown;
+};
+
+export type ContractEvidenceCheckStatus =
+  | "VALID"
+  | "INVALID"
+  | "MISSING"
+  | "MISMATCH"
+  | "UNAVAILABLE"
+  | string;
+
+export type ContractEvidenceVerification = {
+  evidence_id?: string | null;
+  side?: string | null;
+  status?: ContractEvidenceCheckStatus | null;
+  reasons?: string[] | null;
 };
 
 export type ContractClauseVerification = {
   status?: VerificationStatusValue | null;
   human_message?: string | null;
   verified_evidence_ids?: string[] | null;
+  invalid_evidence_ids?: string[] | null;
+  evidence_results?: ContractEvidenceVerification[] | null;
   absence_status?: string | null;
   reasons?: string[] | null;
   [key: string]: unknown;
@@ -199,13 +218,74 @@ export type ComparisonResult = {
   contract_comparison?: ContractComparisonReport | null;
 };
 
+export type ComparisonReviewStatus =
+  | "OPEN"
+  | "REVIEWED"
+  | "NEEDS_ATTENTION"
+  | "ACKNOWLEDGED"
+  | string;
+
+export type ComparisonReviewDecision = {
+  status: ComparisonReviewStatus;
+  reviewer_id?: string | null;
+  reviewer_name?: string | null;
+  reviewed_at?: string | null;
+};
+
+export type ComparisonCommentTarget =
+  | "CLAUSE"
+  | "FINDING"
+  | "EXACT_DIFFERENCE"
+  | "EVIDENCE"
+  | string;
+
+export type ComparisonComment = {
+  id: string;
+  clause_id: string;
+  target_type: ComparisonCommentTarget;
+  target_id?: string | null;
+  body: string;
+  author_id?: string | null;
+  author_name?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type Comparison = {
   id: string;
   workspace_id: string;
   document_ids: string[];
   status: ComparisonStatus;
   result: ComparisonResult | null;
+  review?: Record<string, ComparisonReviewDecision> | null;
+  comments?: ComparisonComment[] | null;
   created_at: string;
+};
+
+export type ComparisonAuditAction =
+  | "CLAUSE_OPENED"
+  | "REVIEW_STATUS_CHANGED"
+  | "COMMENT_ADDED"
+  | "COMMENT_EDITED"
+  | "COMMENT_DELETED"
+  | string;
+
+export type ComparisonAuditEvent = {
+  id: string;
+  action: ComparisonAuditAction;
+  clause_id?: string | null;
+  actor_id?: string | null;
+  actor_name?: string | null;
+  occurred_at: string;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  target_type?: string | null;
+  target_id?: string | null;
+  comment_id?: string | null;
+};
+
+export type ComparisonAuditTrail = {
+  events: ComparisonAuditEvent[];
 };
 
 export type ComparisonCreateRequest = {

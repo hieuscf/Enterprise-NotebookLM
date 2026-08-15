@@ -7,7 +7,8 @@
  * Responsibilities:
  *   - Normalize optional contract_comparison payload
  *   - Present summary/risk/status/evidence from backend fields only
- *   - Client-side filter/search/priority using existing API fields
+ *   - Client-side filter/search/priority using existing API fields (CMP-21
+ *     combined query lives in comparison-filter.ts and must not mutate the report)
  * Dependencies:
  *   - types/comparisons
  * Public Exports:
@@ -36,6 +37,7 @@ import type {
 
 export type ClauseFilter =
   | "all"
+  | "changed"
   | "modified"
   | "added"
   | "removed"
@@ -310,6 +312,14 @@ export function filterClauses(
   const risk = riskFilter ? riskFilter.toUpperCase() : null;
   return clauses.filter((clause) => {
     const status = String(clause.status).toUpperCase();
+    if (
+      filter === "changed" &&
+      status !== "MODIFIED" &&
+      status !== "ADDED" &&
+      status !== "REMOVED"
+    ) {
+      return false;
+    }
     if (filter === "modified" && status !== "MODIFIED") return false;
     if (filter === "added" && status !== "ADDED") return false;
     if (filter === "removed" && status !== "REMOVED") return false;
