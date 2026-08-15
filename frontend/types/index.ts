@@ -78,6 +78,8 @@ export type {
   ComparisonCreateRequest,
   ComparisonResult,
   ComparisonStatus,
+  ContractComparisonReport,
+  DocumentMeta,
 } from "./comparisons";
 
 export type {

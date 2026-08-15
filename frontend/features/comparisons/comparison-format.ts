@@ -16,7 +16,12 @@
  * =============================================================================
  */
 
-import type { Comparison, ComparisonResult, ComparisonStatus } from "@/types/comparisons";
+import { normalizeContractComparison } from "@/features/comparisons/comparison-summary";
+import type {
+  Comparison,
+  ComparisonResult,
+  ComparisonStatus,
+} from "@/types/comparisons";
 
 export function statusLabel(status: ComparisonStatus): string {
   switch (status) {
@@ -54,5 +59,8 @@ export function normalizeComparisonResult(
   const differences = Array.isArray(result.differences)
     ? result.differences.map((s) => String(s).trim()).filter(Boolean)
     : [];
-  return { similarities, differences };
+  const contract_comparison = normalizeContractComparison(
+    result.contract_comparison,
+  );
+  return { similarities, differences, contract_comparison };
 }

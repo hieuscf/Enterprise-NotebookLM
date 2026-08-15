@@ -14,15 +14,18 @@
  * Database/Table: N/A
  * Related Modules: app/workspaces/[id]/comparisons/page.tsx
  * Important Notes: POST is async 202; UI polls until completed|failed.
+ *   Deep-link: ?comparison=&clause= are identifiers only.
  * =============================================================================
  */
 
 "use client";
 
 import { AlertCircle, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { buildComparisonsHref } from "@/features/comparisons/clause-view";
 import { ComparisonHistory } from "@/features/comparisons/ComparisonHistory";
 import { ComparisonPicker } from "@/features/comparisons/ComparisonPicker";
 import { ComparisonResult } from "@/features/comparisons/ComparisonResult";
@@ -36,9 +39,16 @@ import type { Comparison } from "@/types/comparisons";
 
 type Props = {
   workspaceId: string;
+  initialComparisonId?: string | null;
+  initialClauseId?: string | null;
 };
 
-export function ComparisonsView({ workspaceId }: Props) {
+export function ComparisonsView({
+  workspaceId,
+  initialComparisonId = null,
+  initialClauseId = null,
+}: Props) {
+  const router = useRouter();
   const { user } = useAuth();
   const { isEditor, loading: roleLoading } = useWorkspaceRole(workspaceId);
   const {
@@ -57,13 +67,41 @@ export function ComparisonsView({ workspaceId }: Props) {
     fileType: null,
   });
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialComparisonId,
+  );
   const [pendingDelete, setPendingDelete] = useState<Comparison | null>(null);
+  const [clauseId, setClauseId] = useState<string | null>(initialClauseId);
+
+  const replaceQuery = useCallback(
+    (comparisonId: string | null, nextClauseId: string | null) => {
+      router.replace(buildComparisonsHref(workspaceId, comparisonId, nextClauseId), {
+        scroll: false,
+      });
+    },
+    [router, workspaceId],
+  );
+
+  useEffect(() => {
+    if (initialComparisonId) setSelectedId(initialComparisonId);
+  }, [initialComparisonId]);
+
+  useEffect(() => {
+    setClauseId(initialClauseId);
+  }, [initialClauseId]);
 
   const documentTitles = useMemo(() => {
     const map: Record<string, string> = {};
     for (const doc of documents) {
       map[doc.id] = doc.title;
+    }
+    return map;
+  }, [documents]);
+
+  const documentMeta = useMemo(() => {
+    const map: Record<string, { title: string; created_at?: string | null }> = {};
+    for (const doc of documents) {
+      map[doc.id] = { title: doc.title, created_at: doc.created_at };
     }
     return map;
   }, [documents]);
@@ -76,12 +114,17 @@ export function ComparisonsView({ workspaceId }: Props) {
   useEffect(() => {
     if (selectedId && !comparisons.some((c) => c.id === selectedId)) {
       setSelectedId(null);
+      setClauseId(null);
     }
   }, [comparisons, selectedId]);
 
   async function handleCompare(documentIds: string[], focus: string) {
     const row = await create(documentIds, focus || null);
-    if (row) setSelectedId(row.id);
+    if (row) {
+      setSelectedId(row.id);
+      setClauseId(null);
+      replaceQuery(row.id, null);
+    }
   }
 
   async function confirmDelete() {
@@ -89,14 +132,18 @@ export function ComparisonsView({ workspaceId }: Props) {
     const id = pendingDelete.id;
     const ok = await remove(id);
     if (ok) {
-      if (selectedId === id) setSelectedId(null);
+      if (selectedId === id) {
+        setSelectedId(null);
+        setClauseId(null);
+        replaceQuery(null, null);
+      }
       setPendingDelete(null);
     }
   }
 
   return (
     <AppShell active="comparisons" user={user} workspaceId={workspaceId}>
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-caption font-medium text-accent-primary">
@@ -104,7 +151,7 @@ export function ComparisonsView({ workspaceId }: Props) {
             </p>
             <h1 className="mt-1 text-h1 text-primary">So sánh tài liệu</h1>
             <p className="mt-1 text-body-sm text-secondary">
-              Đối chiếu điểm giống và khác giữa nhiều tài liệu trong workspace.
+              Đối chiếu thay đổi giữa các phiên bản hợp đồng và truy vết bằng chứng nguồn.
             </p>
           </div>
           <button
@@ -135,7 +182,7 @@ export function ComparisonsView({ workspaceId }: Props) {
           </div>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]">
           <div className="flex flex-col gap-6">
             <ComparisonPicker
               workspaceId={workspaceId}
@@ -168,7 +215,11 @@ export function ComparisonsView({ workspaceId }: Props) {
                   canDelete={isEditor && !roleLoading}
                   deletingId={deletingId}
                   documentTitles={documentTitles}
-                  onSelect={(row) => setSelectedId(row.id)}
+                  onSelect={(row) => {
+                    setSelectedId(row.id);
+                    setClauseId(null);
+                    replaceQuery(row.id, null);
+                  }}
                   onDelete={(row) => setPendingDelete(row)}
                 />
               )}
@@ -176,8 +227,20 @@ export function ComparisonsView({ workspaceId }: Props) {
           </div>
 
           <ComparisonResult
+            workspaceId={workspaceId}
             comparison={selected}
             documentTitles={documentTitles}
+            documentMeta={documentMeta}
+            initialClauseId={clauseId}
+            onClauseChange={(next) => {
+              setClauseId(next);
+              replaceQuery(selectedId, next);
+            }}
+            onRetry={
+              selected
+                ? () => void handleCompare(selected.document_ids, "")
+                : undefined
+            }
           />
         </div>
       </div>
