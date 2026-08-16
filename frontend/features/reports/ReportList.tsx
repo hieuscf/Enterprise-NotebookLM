@@ -6,13 +6,13 @@
  * Purpose: Workspace report history list with download / delete actions.
  * Responsibilities:
  *   - Render GET list rows: title, format, status, created_at
- *   - Trigger download when ready; delete via callback
+ *   - Open CMP-25 preview; trigger download when ready; delete via callback
  * Dependencies:
- *   - report-format, lucide-react
+ *   - report-format, lucide-react, next/link
  * Public Exports:
  *   - ReportList
  * Database/Table: N/A
- * Related Modules: ReportsView
+ * Related Modules: ReportsView, ComparisonReportPreview
  * Important Notes: Backend returns newest first — preserve order.
  * =============================================================================
  */
@@ -20,6 +20,7 @@
 "use client";
 
 import { Download, Loader2, Trash2 } from "lucide-react";
+import Link from "next/link";
 
 import {
   formatReportDateTime,
@@ -30,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { Report } from "@/types/reports";
 
 type Props = {
+  workspaceId: string;
   reports: Report[];
   canDelete: boolean;
   deletingId: string | null;
@@ -39,6 +41,7 @@ type Props = {
 };
 
 export function ReportList({
+  workspaceId,
   reports,
   canDelete,
   deletingId,
@@ -66,9 +69,12 @@ export function ReportList({
           >
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-body-sm font-medium text-primary">
+                <Link
+                  href={`/workspaces/${workspaceId}/reports/${item.id}`}
+                  className="truncate text-body-sm font-medium text-primary hover:underline"
+                >
                   {item.title}
-                </span>
+                </Link>
                 <span
                   className={cn(
                     "rounded-full px-2 py-0.5 text-caption font-semibold",

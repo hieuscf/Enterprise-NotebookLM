@@ -10,6 +10,7 @@
 #   - Pydantic, app.models.enums
 # Public Exports:
 #   - ReportItemInput, ReportCreateRequest, ReportResponse
+#   - Report preview is additive on GET detail (CMP-25); list may omit it.
 # Database/Table: reports, report_items (read mapping only)
 # Related Modules: app.api.reports, Enterprise_notebooklm_openapi.yaml
 # Important Notes:
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -47,6 +49,12 @@ class ReportCreateRequest(BaseModel):
         return cleaned
 
 
+class ReportSourceRef(BaseModel):
+    source_type: ReportSourceType
+    source_id: uuid.UUID
+    order_index: int = 0
+
+
 class ReportResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,3 +65,5 @@ class ReportResponse(BaseModel):
     status: ReportStatus
     file_url: str | None = None
     created_at: datetime
+    items: list[ReportSourceRef] = Field(default_factory=list)
+    preview: dict[str, Any] | None = None

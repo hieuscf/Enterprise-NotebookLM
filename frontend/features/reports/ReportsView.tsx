@@ -127,6 +127,7 @@ export function ReportsView({ workspaceId }: Props) {
             <p className="text-body-sm text-tertiary">Đang tải danh sách…</p>
           ) : (
             <ReportList
+              workspaceId={workspaceId}
               reports={reports}
               canDelete={isEditor && !roleLoading}
               deletingId={deletingId}

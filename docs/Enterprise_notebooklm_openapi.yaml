@@ -1080,7 +1080,7 @@ paths:
         schema: { type: string, format: uuid }
     get:
       tags: [Reports]
-      summary: Chi tiết báo cáo + trạng thái sinh file
+      summary: Chi tiết báo cáo + trạng thái sinh file + preview so sánh (CMP-25)
       responses:
         "200":
           description: OK
@@ -2093,6 +2093,17 @@ components:
         status: { type: string, enum: [pending, ready, failed] }
         file_url: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReportItemInput" }
+          description: Source refs for the report. Always present on GET detail.
+        preview:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >
+            Structured comparison preview (CMP-24/25). Present on GET detail when
+            a comparison source exists. Not a generated file. Null on list/create.
 
     QueryLog:
       type: object

@@ -179,6 +179,7 @@ class FakeAggregation:
                 content={"text": "Hello", "style": "short", "sections": None},
             )
         ]
+        self.preview_payload: dict[str, Any] | None = None
 
     async def aggregate(
         self, *, workspace_id: uuid.UUID, items: list[ReportItemInput]
@@ -192,6 +193,17 @@ class FakeAggregation:
                     status_code=404,
                 )
         return list(self.blocks)
+
+    async def preview_comparison(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        del workspace_id
+        if self.preview_payload is None:
+            return None
+        return {**self.preview_payload, "comparison_id": str(comparison_id)}
 
 
 def _mock_markdown_render(blocks: Any, **kwargs: Any) -> MarkdownRenderResult:
@@ -414,6 +426,8 @@ async def test_list_get_delete_and_export_lifecycle(
     detail = await client.get(f"/workspaces/{workspace_id}/reports/{report_id}")
     assert detail.status_code == 200
     assert detail.json()["status"] == "pending"
+    assert detail.json()["items"][0]["source_id"] == str(source_id)
+    assert detail.json()["preview"] is None
 
     not_ready = await client.get(f"/workspaces/{workspace_id}/reports/{report_id}/export")
     assert not_ready.status_code == 409
@@ -535,3 +549,66 @@ async def test_post_viewer_forbidden(
         json=_create_body(source_id, "markdown"),
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_report_includes_comparison_preview(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    source_id: uuid.UUID,
+    aggregation: FakeAggregation,
+) -> None:
+    _set_role(RoleName.editor)
+    aggregation.preview_payload = {
+        "has_contract_report": True,
+        "comparison_ready": True,
+        "comparison_report": {
+            "executive_summary": {
+                "total_clauses": 12,
+                "unchanged": 8,
+                "modified": 4,
+                "added": 2,
+                "removed": 0,
+            }
+        },
+    }
+    create = await client.post(
+        f"/workspaces/{workspace_id}/reports",
+        json={
+            "title": "Comparison preview",
+            "export_format": "markdown",
+            "items": [
+                {
+                    "source_type": "comparison",
+                    "source_id": str(source_id),
+                    "order_index": 0,
+                }
+            ],
+        },
+    )
+    assert create.status_code == 202
+    assert create.json()["preview"] is None
+    report_id = create.json()["id"]
+
+    listed = await client.get(f"/workspaces/{workspace_id}/reports")
+    listed_row = next(item for item in listed.json() if item["id"] == report_id)
+    assert listed_row["preview"] is None
+
+    detail = await client.get(f"/workspaces/{workspace_id}/reports/{report_id}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["items"][0]["source_type"] == "comparison"
+    assert body["preview"]["comparison_id"] == str(source_id)
+    assert body["preview"]["comparison_report"]["executive_summary"]["total_clauses"] == 12
+
+
+@pytest.mark.asyncio
+async def test_get_report_unknown_or_foreign_workspace(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    missing = await client.get(f"/workspaces/{workspace_id}/reports/{uuid.uuid4()}")
+    assert missing.status_code == 404
+    foreign = await client.get(f"/workspaces/{uuid.uuid4()}/reports/{uuid.uuid4()}")
+    assert foreign.status_code == 403

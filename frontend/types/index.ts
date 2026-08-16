@@ -85,6 +85,16 @@ export type {
 } from "./comparisons";
 
 export type {
+  Report,
+  ReportCreateRequest,
+  ReportExportFormat,
+  ReportItemInput,
+  ReportPreview,
+  ReportPreviewComparison,
+  ReportStatus,
+} from "./reports";
+
+export type {
   AgentTypeCostSummary,
   CostByModelItem,
   CostByRouteTypeItem,

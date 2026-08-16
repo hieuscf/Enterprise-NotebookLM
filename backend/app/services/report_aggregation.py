@@ -294,6 +294,42 @@ class ReportAggregationService:
             "created_at": created_at_str,
         }
 
+    async def preview_comparison(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+    ) -> dict[str, Any] | None:
+        """Project a stored comparison into the CMP-24 preview model. No LLM."""
+        wrapped = await self._comparisons.get(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+        )
+        if wrapped is None:
+            return None
+        row = wrapped.comparison if isinstance(wrapped, ComparisonWithDocuments) else wrapped
+        status_value = row.status.value if hasattr(row.status, "value") else str(row.status)
+        result = row.result if isinstance(row.result, dict) else {}
+        title = (row.title or "").strip() or "Comparison"
+        document_titles: dict[str, str] = {}
+        document_ids = list(wrapped.document_ids) if isinstance(wrapped, ComparisonWithDocuments) else []
+        for document_id in document_ids:
+            name = await self._document_title(workspace_id, document_id)
+            if name:
+                document_titles[str(document_id)] = name
+        content = build_comparison_report_content(
+            result=result,
+            comparison_id=row.id,
+            workspace_id=row.workspace_id,
+            title=title,
+            status=status_value,
+            created_at=row.created_at,
+            document_titles=document_titles,
+        )
+        content["comparison_id"] = str(row.id)
+        content["comparison_ready"] = status_value == ComparisonStatus.completed.value
+        return content
+
     @staticmethod
     def _raise_source_unavailable(
         source_type: ReportSourceType,

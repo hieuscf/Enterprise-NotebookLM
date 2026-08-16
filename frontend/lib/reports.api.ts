@@ -13,6 +13,8 @@
  * Database/Table: N/A
  * Related Modules: hooks/useReports, features/reports/*
  * Important Notes: POST returns 202 with status=pending — FE must poll.
+ *   GET detail may include structured preview (CMP-25). Do not download
+ *   export merely to render the preview.
  * =============================================================================
  */
 

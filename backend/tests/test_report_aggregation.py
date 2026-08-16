@@ -640,3 +640,94 @@ async def test_aggregate_invalid_source_type_raises_400() -> None:
         await service.aggregate(workspace_id=uuid.uuid4(), items=items)
     assert exc_info.value.status_code == 400
     assert exc_info.value.code == "invalid_source_type"
+
+
+@pytest.mark.asyncio
+async def test_preview_comparison_projects_stored_result() -> None:
+    workspace_id = uuid.uuid4()
+    comparison = _comparison(
+        workspace_id=workspace_id,
+        title="V1 vs V2",
+        result={
+            "similarities": ["theme"],
+            "differences": ["cap"],
+            "contract_comparison": {
+                "summary": {
+                    "total_clauses": 12,
+                    "unchanged": 8,
+                    "modified": 4,
+                    "added": 2,
+                    "removed": 0,
+                },
+                "clauses": {
+                    "modified": [
+                        {
+                            "clause_id": "CLAUSE:8.2",
+                            "status": "MODIFIED",
+                            "risk": {
+                                "risk_level": "CRITICAL",
+                                "risk_category": "LIABILITY",
+                            },
+                        }
+                    ],
+                    "added": [{"clause_id": "CLAUSE:8.3", "status": "ADDED"}],
+                    "removed": [],
+                    "unchanged": [],
+                    "unresolved": [],
+                },
+            },
+        },
+    )
+    service = _make_service(
+        comparisons=FakeComparisonRepo(
+            rows={
+                comparison.id: ComparisonWithDocuments(
+                    comparison=comparison, document_ids=[]
+                )
+            }
+        )
+    )
+    preview = await service.preview_comparison(
+        workspace_id=workspace_id,
+        comparison_id=comparison.id,
+    )
+    assert preview is not None
+    assert preview["comparison_id"] == str(comparison.id)
+    assert preview["comparison_ready"] is True
+    assert preview["has_contract_report"] is True
+    report = preview["comparison_report"]
+    assert report["executive_summary"]["total_clauses"] == 12
+    assert report["changed_clauses"][0]["clause_id"] == "CLAUSE:8.2"
+    assert report["added_clauses"][0]["status"] == "ADDED"
+    assert report["removed_clauses"] == []
+    assert report["generation_metadata"]["llm_calls_report"] == 0
+
+
+@pytest.mark.asyncio
+async def test_preview_comparison_missing_is_none() -> None:
+    service = _make_service()
+    preview = await service.preview_comparison(
+        workspace_id=uuid.uuid4(),
+        comparison_id=uuid.uuid4(),
+    )
+    assert preview is None
+
+
+@pytest.mark.asyncio
+async def test_preview_comparison_cross_workspace_is_none() -> None:
+    workspace_id = uuid.uuid4()
+    comparison = _comparison(workspace_id=workspace_id)
+    service = _make_service(
+        comparisons=FakeComparisonRepo(
+            rows={
+                comparison.id: ComparisonWithDocuments(
+                    comparison=comparison, document_ids=[]
+                )
+            }
+        )
+    )
+    preview = await service.preview_comparison(
+        workspace_id=uuid.uuid4(),
+        comparison_id=comparison.id,
+    )
+    assert preview is None

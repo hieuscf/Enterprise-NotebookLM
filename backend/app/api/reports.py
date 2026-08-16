@@ -38,7 +38,7 @@ from app.repositories.extractions import ExtractionRepository
 from app.repositories.reports import ReportRepository, ReportWithItems
 from app.repositories.summaries import SummaryRepository
 from app.schemas.common import ErrorResponse
-from app.schemas.reports import ReportCreateRequest, ReportResponse
+from app.schemas.reports import ReportCreateRequest, ReportResponse, ReportSourceRef
 from app.services.report_aggregation import (
     ReportAggregationService,
     ReportItemInput as AggregationItem,
@@ -71,8 +71,20 @@ def get_report_service(
     )
 
 
-def _report_response(row: ReportWithItems) -> ReportResponse:
+def _report_response(
+    row: ReportWithItems,
+    *,
+    preview: dict | None = None,
+) -> ReportResponse:
     report = row.report
+    items = [
+        ReportSourceRef(
+            source_type=item.source_type,
+            source_id=item.source_id,
+            order_index=item.order_index,
+        )
+        for item in row.items
+    ]
     return ReportResponse(
         id=report.id,
         workspace_id=report.workspace_id,
@@ -85,6 +97,8 @@ def _report_response(row: ReportWithItems) -> ReportResponse:
             status=report.status,
         ),
         created_at=report.created_at,
+        items=items,
+        preview=preview,
     )
 
 
@@ -185,7 +199,8 @@ async def get_report(
         )
     except ReportServiceError as exc:
         raise _http_error(exc) from exc
-    return _report_response(row)
+    preview = await service.comparison_preview(row)
+    return _report_response(row, preview=preview)
 
 
 @router.get(

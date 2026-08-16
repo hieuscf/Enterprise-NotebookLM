@@ -263,6 +263,39 @@ class ReportService:
             )
         return row
 
+    async def comparison_preview(
+        self,
+        row: ReportWithItems,
+    ) -> dict[str, Any] | None:
+        """Structured comparison preview for GET detail. Never generates files."""
+        comparison_item = next(
+            (
+                item
+                for item in row.items
+                if (
+                    item.source_type is ReportSourceType.comparison
+                    or str(item.source_type) == ReportSourceType.comparison.value
+                )
+            ),
+            None,
+        )
+        if comparison_item is None:
+            return None
+        preview_fn = getattr(self._aggregation, "preview_comparison", None)
+        if preview_fn is None:
+            return None
+        try:
+            return await preview_fn(
+                workspace_id=row.report.workspace_id,
+                comparison_id=comparison_item.source_id,
+            )
+        except Exception:
+            logger.exception(
+                "comparison_preview_failed",
+                report_id=str(row.report.id),
+            )
+            return None
+
     async def delete_report(
         self,
         *,
