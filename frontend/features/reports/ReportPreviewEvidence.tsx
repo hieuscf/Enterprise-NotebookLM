@@ -28,6 +28,7 @@ import { displayClauseId } from "@/features/comparisons/comparison-summary";
 import {
   emptyClauseMessage,
   exactSourceHref,
+  evidenceRowKey,
   evidenceVerificationLabel,
   isVerifiedEvidence,
   sourceLocationLabel,
@@ -74,7 +75,7 @@ export function ReportPreviewEvidence({
           const state = asEvidenceState(item.verification_state);
           return (
             <li
-              key={`${item.document_id ?? "ev"}-${item.clause_id ?? index}`}
+              key={evidenceRowKey(item, index)}
               className={cn(
                 "rounded-md border px-3 py-2.5",
                 verified

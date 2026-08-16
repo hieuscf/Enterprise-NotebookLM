@@ -166,7 +166,7 @@ function groupedEvidence(clause) {
   allEvidenceItems(clause).forEach((evidence, index) => {
     const side = evidenceSide(evidence);
     groups[side].push({
-      key: evidence.evidence_id || `${side}-${index}`,
+      key: `${evidence.evidence_id || "ev"}-${side}-${index}`,
       evidence,
       side,
       verification: itemVerificationState(clause, evidence),

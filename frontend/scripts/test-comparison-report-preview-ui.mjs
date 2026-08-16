@@ -197,6 +197,21 @@ function reportHttpMessage(status, rawMessage) {
   return "Không tải được báo cáo.";
 }
 
+function evidenceRowKey(item, index) {
+  const evidenceId = asString(item.evidence_id);
+  if (evidenceId) return evidenceId;
+  return [
+    item.document_id ?? "ev",
+    item.document_version_id ?? "ver",
+    item.side ?? "side",
+    item.clause_id ?? "clause",
+    item.chunk_id ?? "chunk",
+    item.page_number ?? "page",
+    item.role ?? "role",
+    index,
+  ].join("-");
+}
+
 function emptyClauseMessage(kind) {
   if (kind === "search") return "Không có kết quả khớp bộ lọc hoặc từ khoá.";
   if (kind === "risks") return "Không phát hiện thay đổi rủi ro cao.";
@@ -384,5 +399,17 @@ assert(
 );
 
 assert(unwrapComparisonReport({ has_contract_report: false }) === null, "no preview model");
+
+const sameDocEvidence = [
+  { document_id: "cd4af8ae-820a-4c92-91f9-45e3ac228706", clause_id: "clause-3-2", side: "OLD" },
+  { document_id: "cd4af8ae-820a-4c92-91f9-45e3ac228706", clause_id: "clause-3-2", side: "NEW" },
+];
+const evidenceKeys = sameDocEvidence.map((item, index) => evidenceRowKey(item, index));
+assert(new Set(evidenceKeys).size === evidenceKeys.length, "evidence keys stay unique");
+assert(
+  evidenceRowKey({ evidence_id: "ev-1", document_id: "d1", clause_id: "clause-3-2" }, 0) ===
+    "ev-1",
+  "prefer evidence_id",
+);
 
 console.log("test-comparison-report-preview-ui: ok");

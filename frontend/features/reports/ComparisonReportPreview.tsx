@@ -333,9 +333,9 @@ export function ComparisonReportPreview({
                     ) : null}
                     {unchangedOpen ? (
                       <ul className="mt-2 columns-2 gap-3 text-caption text-tertiary sm:columns-3">
-                        {(comparison.unchanged_clauses?.clause_ids ?? []).map((id) =>
+                        {(comparison.unchanged_clauses?.clause_ids ?? []).map((id, index) =>
                           id ? (
-                            <li key={id} className="break-inside-avoid">
+                            <li key={`${id}-${index}`} className="break-inside-avoid">
                               {displayClauseId(id)}
                             </li>
                           ) : null,

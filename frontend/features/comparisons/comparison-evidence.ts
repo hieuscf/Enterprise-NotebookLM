@@ -230,7 +230,7 @@ export function groupedEvidence(
   allEvidenceItems(clause).forEach((evidence, index) => {
     const side = evidenceSide(evidence);
     const item: EvidenceListItem = {
-      key: evidence.evidence_id || `${side}-${index}`,
+      key: `${evidence.evidence_id || "ev"}-${side}-${index}`,
       evidence,
       side,
       verification: itemVerificationState(clause, evidence),

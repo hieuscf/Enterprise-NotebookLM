@@ -399,8 +399,8 @@ export function ComparisonSummaryView({
             Thay đổi ưu tiên
           </h3>
           <ul className="flex flex-col gap-2">
-            {priority.map((clause) => (
-              <li key={clause.clause_id}>
+            {priority.map((clause, index) => (
+              <li key={`${clause.clause_id}-${index}`}>
                 <PriorityChangeCard
                   clause={clause}
                   selected={selectedId === clause.clause_id}
@@ -447,8 +447,8 @@ export function ComparisonSummaryView({
                 ) : null}
               </li>
             ) : (
-              visible.map((clause) => (
-                <li key={clause.clause_id}>
+              visible.map((clause, index) => (
+                <li key={`${clause.clause_id}-${index}`}>
                   <ClauseRow
                     clause={clause}
                     selected={selectedId === clause.clause_id}

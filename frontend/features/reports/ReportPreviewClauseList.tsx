@@ -56,7 +56,7 @@ export function ReportPreviewClauseList({
           {clauses.map((clause, index) => {
             const clauseId = clause.clause_id ?? clause.display_id ?? `${kind}-${index}`;
             return (
-              <li key={clauseId}>
+              <li key={`${kind}-${clauseId}-${index}`}>
                 <ReportPreviewClauseCard
                   clause={clause}
                   selected={selectedId === clause.clause_id || selectedId === clause.display_id}

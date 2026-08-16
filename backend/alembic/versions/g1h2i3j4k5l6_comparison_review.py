@@ -40,7 +40,7 @@ def upgrade() -> None:
         "comparisons",
         sa.Column(
             "review",
-            postgresql.JSONB(asuuid=False),
+            postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),

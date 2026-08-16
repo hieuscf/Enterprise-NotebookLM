@@ -12,7 +12,7 @@
  *   - types/reports, comparison-summary display labels
  * Public Exports:
  *   - unwrapComparisonReport, executiveCounts, reportNavSections,
- *     filterReportClauses, exactSourceHref, exportEnabled, …
+ *     filterReportClauses, evidenceRowKey, exactSourceHref, exportEnabled, …
  * Database/Table: N/A
  * Related Modules: ComparisonReportPreview, useReportPreview
  * Important Notes: Presentation only. Do not remap, rescore, or infer
@@ -413,6 +413,34 @@ export function emptyClauseMessage(
     default:
       return "Không có bằng chứng được đính kèm.";
   }
+}
+
+export function evidenceRowKey(
+  item: Pick<
+    ReportPreviewEvidence,
+    | "evidence_id"
+    | "document_id"
+    | "document_version_id"
+    | "clause_id"
+    | "side"
+    | "chunk_id"
+    | "page_number"
+    | "role"
+  >,
+  index: number,
+): string {
+  const evidenceId = asString(item.evidence_id);
+  if (evidenceId) return evidenceId;
+  return [
+    item.document_id ?? "ev",
+    item.document_version_id ?? "ver",
+    item.side ?? "side",
+    item.clause_id ?? "clause",
+    item.chunk_id ?? "chunk",
+    item.page_number ?? "page",
+    item.role ?? "role",
+    index,
+  ].join("-");
 }
 
 export function allEvidenceRows(

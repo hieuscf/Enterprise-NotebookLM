@@ -375,11 +375,13 @@ def _project_evidence(row: dict[str, Any]) -> list[dict[str, Any]]:
         )
         out.append(
             {
+                "evidence_id": evidence_id,
                 "side": _upper(item.get("side")) or None,
                 "document_title": None,
                 "document_id": _as_text(item.get("document_id")),
                 "document_version_id": _as_text(item.get("document_version_id")),
                 "clause_id": _as_text(item.get("clause_id")) or _as_text(row.get("clause_id")),
+                "chunk_id": _as_text(item.get("chunk_id")),
                 "page_number": item.get("page_number"),
                 "display_text": _original_text(item.get("display_text")),
                 "source_type": _as_text(item.get("source_type")),

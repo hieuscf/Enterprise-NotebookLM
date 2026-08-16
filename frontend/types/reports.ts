@@ -62,6 +62,7 @@ export type ReportPreviewExactDifference = {
 };
 
 export type ReportPreviewEvidence = {
+  evidence_id?: string | null;
   side?: string | null;
   document_title?: string | null;
   document_id?: string | null;

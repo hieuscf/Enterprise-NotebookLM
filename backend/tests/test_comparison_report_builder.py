@@ -182,6 +182,8 @@ def test_unverified_evidence_is_never_labelled_verified() -> None:
     assert by_side["OLD"]["verification_state"] == "verified"
     assert by_side["NEW"]["verification_state"] == "unverified"
     assert by_side["NEW"]["page_number"] == 13
+    assert by_side["OLD"]["evidence_id"] == "ev-1"
+    assert by_side["NEW"]["evidence_id"] == "ev-2"
 
 
 def test_added_clause_uses_conservative_absence_message() -> None:
