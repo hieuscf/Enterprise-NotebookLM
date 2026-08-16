@@ -176,7 +176,7 @@ class Comparison(Base):
     comments: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default="[]", default=list
     )
-    # CMP-23 append-only audit trail — never mixed into result / review / comments.
+    # CMP-23/27 append-only audit trail — never mixed into result / review / comments.
     audit: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, nullable=False, server_default="[]", default=list
     )

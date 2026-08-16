@@ -52,6 +52,7 @@ from app.schemas.comparisons import (
     ComparisonReviewDecision,
     ComparisonReviewUpdateRequest,
 )
+from app.services.comparison.audit import AUDIT_ACTIONS
 from app.services.comparison.comparison_service import (
     ComparisonService,
     ComparisonServiceError,
@@ -174,13 +175,7 @@ def _audit_payload(raw: object) -> list[ComparisonAuditEvent]:
         occurred_at = _parse_iso(item.get("occurred_at"))
         if not event_id or not occurred_at:
             continue
-        if action not in {
-            "CLAUSE_OPENED",
-            "REVIEW_STATUS_CHANGED",
-            "COMMENT_ADDED",
-            "COMMENT_EDITED",
-            "COMMENT_DELETED",
-        }:
+        if action not in AUDIT_ACTIONS:
             continue
         actor_id = item.get("actor_id")
         parsed_id = None
@@ -191,6 +186,10 @@ def _audit_payload(raw: object) -> list[ComparisonAuditEvent]:
                 parsed_id = None
         before = item.get("before")
         after = item.get("after")
+        metadata = item.get("metadata")
+        status = str(item.get("status") or "").strip().upper() or None
+        if status not in {"STARTED", "COMPLETED", "FAILED", "CANCELLED"}:
+            status = None
         out.append(
             ComparisonAuditEvent(
                 id=event_id,
@@ -204,6 +203,8 @@ def _audit_payload(raw: object) -> list[ComparisonAuditEvent]:
                 target_type=str(item.get("target_type") or "").strip() or None,
                 target_id=str(item.get("target_id") or "").strip() or None,
                 comment_id=str(item.get("comment_id") or "").strip() or None,
+                status=status,  # type: ignore[arg-type]
+                metadata=dict(metadata) if isinstance(metadata, dict) else None,
             )
         )
     return out
@@ -512,7 +513,7 @@ async def get_comparison_audit(
     access: WorkspaceAccess = Depends(require_workspace_member_rl),
     service: ComparisonService = Depends(get_comparison_service),
 ) -> ComparisonAuditTrailResponse:
-    """Return the append-only review audit trail. Does not modify analysis."""
+    """Return the append-only comparison audit trail. Does not modify analysis."""
     del workspaceId
     try:
         events = await service.list_audit(

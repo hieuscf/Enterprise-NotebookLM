@@ -24,6 +24,7 @@ import { useMemo, useState } from "react";
 
 import {
   auditActionLabel,
+  auditActorLabel,
   auditChangeText,
   eventsForClause,
   formatAuditTime,
@@ -63,8 +64,8 @@ export function ComparisonAuditTrail({
             Nhật ký kiểm toán
           </h3>
           <p className="mt-1 text-caption text-tertiary">
-            Ghi nhận người thực hiện, hành động, điều khoản và thay đổi. Đây là
-            nhật ký tuân thủ, không phải luồng trao đổi.
+            Ghi nhận vòng đời so sánh, người thực hiện, hành động và thay đổi.
+            Đây là nhật ký tuân thủ, không phải luồng trao đổi.
           </p>
         </div>
         <label className="inline-flex items-center gap-2 text-caption text-secondary">
@@ -83,7 +84,7 @@ export function ComparisonAuditTrail({
         <p className="mt-3 text-caption text-tertiary">Đang tải nhật ký…</p>
       ) : rows.length === 0 ? (
         <p className="mt-3 text-caption text-tertiary">
-          Chưa có hành động rà soát nào được ghi nhận.
+          Chưa có sự kiện kiểm toán nào được ghi nhận.
         </p>
       ) : (
         <ol className="mt-3 max-h-72 overflow-y-auto border-t border-border-default">
@@ -108,7 +109,7 @@ export function ComparisonAuditTrail({
                 <div className="min-w-0">
                   <p className="text-caption text-primary">
                     <span className="font-medium">
-                      {(event.actor_name || "Reviewer").trim()}
+                      {auditActorLabel(event)}
                     </span>
                     <span className="text-tertiary"> · </span>
                     {auditActionLabel(event.action)}

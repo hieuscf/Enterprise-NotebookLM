@@ -18,6 +18,7 @@
 #   - review / comments are optional CMP-20/22 metadata on the comparison row,
 #     never inside result. Analysis fields stay immutable.
 #   - audit is served on a dedicated GET; it is not part of ComparisonResponse.
+#   - CMP-27 extends the trail with lifecycle milestones and optional metadata.
 # =============================================================================
 
 from __future__ import annotations
@@ -138,7 +139,22 @@ ComparisonAuditActionName = Literal[
     "COMMENT_ADDED",
     "COMMENT_EDITED",
     "COMMENT_DELETED",
+    "COMPARISON_CREATED",
+    "COMPARISON_STARTED",
+    "STRUCTURE_EXTRACTION_COMPLETED",
+    "CLAUSE_NORMALIZATION_COMPLETED",
+    "CLAUSE_MAPPING_COMPLETED",
+    "DIFF_COMPLETED",
+    "RISK_DETECTION_COMPLETED",
+    "LLM_EXPLANATION_COMPLETED",
+    "CITATION_VERIFICATION_COMPLETED",
+    "COMPARISON_COMPLETED",
+    "COMPARISON_FAILED",
+    "COMPARISON_CANCELLED",
+    "COMPARISON_REPORT_CREATED",
+    "COMPARISON_EXPORTED",
 ]
+ComparisonAuditStatusName = Literal["STARTED", "COMPLETED", "FAILED", "CANCELLED"]
 
 
 class ComparisonAuditCreateRequest(BaseModel):
@@ -166,6 +182,8 @@ class ComparisonAuditEvent(BaseModel):
     target_type: str | None = None
     target_id: str | None = None
     comment_id: str | None = None
+    status: ComparisonAuditStatusName | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ComparisonAuditTrailResponse(BaseModel):

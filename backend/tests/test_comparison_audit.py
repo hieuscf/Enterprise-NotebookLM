@@ -2,7 +2,7 @@
 # File: test_comparison_audit.py
 # Module/Service: Comparison Service (TASK-CMP-23)
 # Layer: Service
-# Purpose: Unit tests for append-only comparison audit helpers.
+# Purpose: Unit tests for append-only comparison review + lifecycle audit helpers.
 # Responsibilities:
 #   - Append never mutates prior events; debounce CLAUSE_OPENED
 #   - Review no-op detection via review_status_of
@@ -26,11 +26,16 @@ from app.services.comparison.audit import (
     AuditError,
     MAX_EVENTS,
     append_event,
+    has_action,
+    is_one_shot,
     make_event,
     normalize_audit,
+    pipeline_milestones,
     review_status_of,
+    sanitize_metadata,
     should_debounce_open,
     snapshot_text,
+    stage_for_error_code,
 )
 
 
@@ -134,3 +139,137 @@ def test_audit_limit() -> None:
         )
     assert exc.value.code == "audit_limit"
     assert len(rows) == MAX_EVENTS
+
+
+def test_lifecycle_event_allows_system_actor_and_metadata() -> None:
+    event = make_event(
+        action="DIFF_COMPLETED",
+        occurred_at=datetime(2026, 8, 16, tzinfo=UTC),
+        status="COMPLETED",
+        metadata={
+            "modified_count": 3,
+            "api_key": "sk-secret",
+            "prompt": "full prompt",
+            "stack_trace": "traceback",
+        },
+    )
+    assert event["actor_id"] is None
+    assert event["actor_name"] == "system"
+    assert event["status"] == "COMPLETED"
+    assert event["metadata"]["modified_count"] == 3
+    assert "api_key" not in event["metadata"]
+    assert "prompt" not in event["metadata"]
+    assert "stack_trace" not in event["metadata"]
+
+
+def test_review_event_requires_actor() -> None:
+    with pytest.raises(AuditError) as exc:
+        make_event(
+            action="CLAUSE_OPENED",
+            occurred_at=datetime(2026, 8, 16, tzinfo=UTC),
+            clause_id="CLAUSE:8.2",
+        )
+    assert exc.value.code == "invalid_audit_actor"
+
+
+def test_sanitize_metadata_and_idempotency_helpers() -> None:
+    cleaned = sanitize_metadata(
+        {
+            "document_count": 2,
+            "access_token": "abc",
+            "authorization": "Bearer x",
+            "nested": {"password": "p", "clause_count": 4},
+        }
+    )
+    assert cleaned is not None
+    assert cleaned["document_count"] == 2
+    assert "access_token" not in cleaned
+    assert "authorization" not in cleaned
+    assert cleaned["nested"] == {"clause_count": 4}
+    assert is_one_shot("DIFF_COMPLETED")
+    assert not is_one_shot("COMPARISON_EXPORTED")
+    assert not is_one_shot("CLAUSE_OPENED")
+    existing = [{"action": "COMPARISON_CREATED"}]
+    assert has_action(existing, "COMPARISON_CREATED")
+    assert not has_action(existing, "COMPARISON_FAILED")
+    assert stage_for_error_code("llm_not_configured") == "llm"
+    assert stage_for_error_code("???") == "processing"
+
+
+def test_normalize_keeps_lifecycle_and_skips_unknown() -> None:
+    created = make_event(
+        action="COMPARISON_CREATED",
+        actor_id=uuid4(),
+        actor_name="Alex",
+        occurred_at=datetime(2026, 8, 16, tzinfo=UTC),
+        status="COMPLETED",
+        metadata={"document_count": 2},
+    )
+    raw = [
+        created,
+        {
+            "id": "x",
+            "action": "UNKNOWN_STAGE",
+            "occurred_at": "2026-08-16T00:00:00+00:00",
+        },
+    ]
+    out = normalize_audit(raw)
+    assert [item["action"] for item in out] == ["COMPARISON_CREATED"]
+    assert out[0]["metadata"]["document_count"] == 2
+    assert created["action"] == "COMPARISON_CREATED"
+
+
+def test_pipeline_milestones_from_persisted_report_only() -> None:
+    assert pipeline_milestones(None) == []
+    assert pipeline_milestones({"similarities": ["a"], "differences": ["b"]}) == []
+    report = {
+        "contract_comparison": {
+            "metadata": {
+                "document_v1": {
+                    "document_id": "d1",
+                    "document_version_id": "v1",
+                },
+                "document_v2": {
+                    "document_id": "d2",
+                    "document_version_id": "v2",
+                },
+            },
+            "summary": {
+                "total_clauses": 12,
+                "unchanged": 8,
+                "modified": 3,
+                "added": 1,
+                "removed": 0,
+            },
+            "statistics": {
+                "mapped_clauses": 12,
+                "risk_counts": {"critical": 2, "high": 1, "medium": 0, "low": 1},
+                "llm_calls": 0,
+                "citation_verification_rate": 0.875,
+            },
+            "citations": [
+                {"status": "VERIFIED"},
+                {"status": "UNVERIFIED"},
+            ],
+        }
+    }
+    actions = [item[0] for item in pipeline_milestones(report)]
+    assert "LLM_EXPLANATION_COMPLETED" not in actions
+    assert actions == [
+        "STRUCTURE_EXTRACTION_COMPLETED",
+        "CLAUSE_NORMALIZATION_COMPLETED",
+        "CLAUSE_MAPPING_COMPLETED",
+        "DIFF_COMPLETED",
+        "RISK_DETECTION_COMPLETED",
+        "CITATION_VERIFICATION_COMPLETED",
+    ]
+    with_llm = dict(report)
+    inner = dict(report["contract_comparison"])
+    stats = dict(inner["statistics"])
+    stats["llm_calls"] = 2
+    inner["statistics"] = stats
+    with_llm["contract_comparison"] = inner
+    assert "LLM_EXPLANATION_COMPLETED" in [item[0] for item in pipeline_milestones(with_llm)]
+    diff_meta = next(item[1] for item in pipeline_milestones(report) if item[0] == "DIFF_COMPLETED")
+    assert "does not exist" not in str(diff_meta).lower()
+    assert diff_meta["modified_count"] == 3

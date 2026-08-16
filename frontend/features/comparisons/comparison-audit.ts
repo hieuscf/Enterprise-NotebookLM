@@ -3,14 +3,14 @@
  * File: comparison-audit.ts
  * Module/Service: Comparison Service (Web App)
  * Layer: UI
- * Purpose: Pure helpers for TASK-CMP-23 comparison audit trail display.
+ * Purpose: Pure helpers for TASK-CMP-23/27 comparison audit trail display.
  * Responsibilities:
- *   - Label actions and summarize before/after without inventing analysis
+ *   - Label actions and summarize before/after/metadata without inventing analysis
  *   - Filter trail by clause; newest-first for scanning
  * Dependencies:
  *   - types/comparisons, comparison-review labels
  * Public Exports:
- *   - auditActionLabel, auditChangeText, eventsForClause, newestFirst
+ *   - auditActionLabel, auditActorLabel, auditChangeText, eventsForClause, newestFirst
  * Database/Table: N/A
  * Related Modules: ComparisonAuditTrail
  * Important Notes: Display-only. The trail is an audit log, not a chat feed.
@@ -36,9 +36,44 @@ export function auditActionLabel(action: ComparisonAuditAction): string {
       return "Sửa ghi chú";
     case "COMMENT_DELETED":
       return "Xoá ghi chú";
+    case "COMPARISON_CREATED":
+      return "Tạo so sánh";
+    case "COMPARISON_STARTED":
+      return "Bắt đầu xử lý";
+    case "STRUCTURE_EXTRACTION_COMPLETED":
+      return "Hoàn tất trích xuất cấu trúc";
+    case "CLAUSE_NORMALIZATION_COMPLETED":
+      return "Hoàn tất chuẩn hoá điều khoản";
+    case "CLAUSE_MAPPING_COMPLETED":
+      return "Hoàn tất ánh xạ điều khoản";
+    case "DIFF_COMPLETED":
+      return "Hoàn tất so sánh khác biệt";
+    case "RISK_DETECTION_COMPLETED":
+      return "Hoàn tất phát hiện rủi ro";
+    case "LLM_EXPLANATION_COMPLETED":
+      return "Hoàn tất giải thích LLM";
+    case "CITATION_VERIFICATION_COMPLETED":
+      return "Hoàn tất xác minh trích dẫn";
+    case "COMPARISON_COMPLETED":
+      return "Hoàn tất so sánh";
+    case "COMPARISON_FAILED":
+      return "So sánh thất bại";
+    case "COMPARISON_CANCELLED":
+      return "Đã huỷ so sánh";
+    case "COMPARISON_REPORT_CREATED":
+      return "Tạo báo cáo so sánh";
+    case "COMPARISON_EXPORTED":
+      return "Xuất báo cáo so sánh";
     default:
       return String(action);
   }
+}
+
+export function auditActorLabel(event: ComparisonAuditEvent): string {
+  const name = String(event.actor_name ?? "").trim();
+  if (name && name.toLowerCase() !== "system") return name;
+  if (event.actor_id) return "Người dùng";
+  return "Hệ thống";
 }
 
 function asStatus(value: unknown): ComparisonReviewStatus {
@@ -81,7 +116,41 @@ export function auditChangeText(event: ComparisonAuditEvent): string | null {
     const body = excerpt(snapshotField(event.before, "body"));
     return body || null;
   }
-  return null;
+  return metadataSummary(event.metadata);
+}
+
+function metadataSummary(
+  metadata: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const parts: string[] = [];
+  const stage = metadata.stage;
+  const errorCode = metadata.error_code;
+  if (stage) parts.push(`Giai đoạn: ${String(stage)}`);
+  if (errorCode) parts.push(`Mã: ${String(errorCode)}`);
+  const counts: Array<[string, string]> = [
+    ["document_count", "tài liệu"],
+    ["clause_count", "điều khoản"],
+    ["modified_count", "sửa"],
+    ["added_count", "thêm"],
+    ["removed_count", "xoá"],
+    ["unchanged_count", "không đổi"],
+    ["risk_count", "rủi ro"],
+    ["critical_count", "critical"],
+    ["high_count", "high"],
+    ["total_citations", "trích dẫn"],
+    ["verified", "đã xác minh"],
+    ["unverified", "chưa xác minh"],
+    ["llm_calls", "lần gọi LLM"],
+  ];
+  for (const [key, label] of counts) {
+    const value = metadata[key];
+    if (typeof value === "number") parts.push(`${label} ${value}`);
+  }
+  if (metadata.has_contract_report === false) {
+    parts.push("Không có báo cáo điều khoản");
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 export function eventsForClause(

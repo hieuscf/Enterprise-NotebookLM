@@ -29,9 +29,30 @@ function auditActionLabel(action) {
       return "Sửa ghi chú";
     case "COMMENT_DELETED":
       return "Xoá ghi chú";
+    case "COMPARISON_CREATED":
+      return "Tạo so sánh";
+    case "COMPARISON_STARTED":
+      return "Bắt đầu xử lý";
+    case "DIFF_COMPLETED":
+      return "Hoàn tất so sánh khác biệt";
+    case "COMPARISON_COMPLETED":
+      return "Hoàn tất so sánh";
+    case "COMPARISON_FAILED":
+      return "So sánh thất bại";
+    case "COMPARISON_REPORT_CREATED":
+      return "Tạo báo cáo so sánh";
+    case "COMPARISON_EXPORTED":
+      return "Xuất báo cáo so sánh";
     default:
       return String(action);
   }
+}
+
+function auditActorLabel(event) {
+  const name = String(event.actor_name ?? "").trim();
+  if (name && name.toLowerCase() !== "system") return name;
+  if (event.actor_id) return "Người dùng";
+  return "Hệ thống";
 }
 
 function excerpt(value, limit = 80) {
@@ -65,7 +86,15 @@ function auditChangeText(event) {
   if (action === "COMMENT_DELETED") {
     return excerpt(snapshotField(event.before, "body")) || null;
   }
-  return null;
+  const metadata = event.metadata;
+  if (!metadata || typeof metadata !== "object") return null;
+  const parts = [];
+  if (metadata.stage) parts.push(`Giai đoạn: ${String(metadata.stage)}`);
+  if (metadata.error_code) parts.push(`Mã: ${String(metadata.error_code)}`);
+  if (typeof metadata.modified_count === "number") {
+    parts.push(`sửa ${metadata.modified_count}`);
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 function eventsForClause(events, clauseId) {
@@ -127,6 +156,27 @@ assert(auditChangeText(trail[0]) === null, "open has no before/after text");
 assert(
   auditActionLabel("COMMENT_DELETED") === "Xoá ghi chú",
   "delete is not a chat resolve action",
+);
+assert(auditActionLabel("COMPARISON_CREATED") === "Tạo so sánh", "created label");
+assert(auditActionLabel("DIFF_COMPLETED") === "Hoàn tất so sánh khác biệt", "diff label");
+assert(auditActorLabel({ actor_name: "system" }) === "Hệ thống", "system actor");
+assert(
+  auditActorLabel({ actor_id: "u1", actor_name: "" }) === "Người dùng",
+  "user without name",
+);
+assert(
+  auditChangeText({
+    action: "COMPARISON_FAILED",
+    metadata: { stage: "llm", error_code: "llm_not_configured" },
+  }) === "Giai đoạn: llm · Mã: llm_not_configured",
+  "failure metadata",
+);
+assert(
+  auditChangeText({
+    action: "DIFF_COMPLETED",
+    metadata: { modified_count: 3 },
+  }) === "sửa 3",
+  "diff metadata",
 );
 
 console.log("test-comparison-audit-ui: ok");

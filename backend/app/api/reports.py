@@ -57,10 +57,11 @@ router = APIRouter(prefix="/workspaces", tags=["Reports"])
 def get_report_service(
     session: AsyncSession = Depends(get_db_session),
 ) -> ReportService:
+    comparisons = ComparisonRepository(session)
     aggregation = ReportAggregationService(
         summaries=SummaryRepository(session),
         extractions=ExtractionRepository(session),
-        comparisons=ComparisonRepository(session),
+        comparisons=comparisons,
         chat_sessions=ChatSessionRepository(session),
         chat_messages=ChatMessageRepository(session),
         documents=DocumentRepository(session),
@@ -70,6 +71,7 @@ def get_report_service(
         reports=ReportRepository(session),
         aggregation=aggregation,
         storage=get_minio_storage(),
+        comparisons=comparisons,
     )
 
 

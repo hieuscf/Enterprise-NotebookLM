@@ -268,7 +268,27 @@ export type ComparisonAuditAction =
   | "COMMENT_ADDED"
   | "COMMENT_EDITED"
   | "COMMENT_DELETED"
+  | "COMPARISON_CREATED"
+  | "COMPARISON_STARTED"
+  | "STRUCTURE_EXTRACTION_COMPLETED"
+  | "CLAUSE_NORMALIZATION_COMPLETED"
+  | "CLAUSE_MAPPING_COMPLETED"
+  | "DIFF_COMPLETED"
+  | "RISK_DETECTION_COMPLETED"
+  | "LLM_EXPLANATION_COMPLETED"
+  | "CITATION_VERIFICATION_COMPLETED"
+  | "COMPARISON_COMPLETED"
+  | "COMPARISON_FAILED"
+  | "COMPARISON_CANCELLED"
+  | "COMPARISON_REPORT_CREATED"
+  | "COMPARISON_EXPORTED"
   | string;
+
+export type ComparisonAuditStatus =
+  | "STARTED"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
 
 export type ComparisonAuditEvent = {
   id: string;
@@ -282,6 +302,8 @@ export type ComparisonAuditEvent = {
   target_type?: string | null;
   target_id?: string | null;
   comment_id?: string | null;
+  status?: ComparisonAuditStatus | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type ComparisonAuditTrail = {

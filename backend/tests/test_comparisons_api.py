@@ -506,7 +506,6 @@ def _complete_with_clause_report(
     item.comparison.result = result
     item.comparison.review = {}
     item.comparison.comments = []
-    item.comparison.audit = []
     return result
 
 
@@ -735,16 +734,24 @@ async def test_audit_trail_records_review_and_comments_without_mutating_analysis
         json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
     )
     assert opened.status_code == 200
-    assert opened.json()["events"][0]["action"] == "CLAUSE_OPENED"
-    first_id = opened.json()["events"][0]["id"]
+    opened_actions = [item["action"] for item in opened.json()["events"]]
+    assert "COMPARISON_CREATED" in opened_actions
+    opened_row = next(
+        item for item in opened.json()["events"] if item["action"] == "CLAUSE_OPENED"
+    )
+    first_id = opened_row["id"]
 
     debounced = await client.post(
         f"{base}/audit",
         json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
     )
     assert debounced.status_code == 200
-    assert len(debounced.json()["events"]) == 1
-    assert debounced.json()["events"][0]["id"] == first_id
+    opened_ids = [
+        item["id"]
+        for item in debounced.json()["events"]
+        if item["action"] == "CLAUSE_OPENED"
+    ]
+    assert opened_ids == [first_id]
 
     reviewed = await client.patch(
         f"{base}/review",
@@ -778,17 +785,23 @@ async def test_audit_trail_records_review_and_comments_without_mutating_analysis
     trail = await client.get(f"{base}/audit")
     assert trail.status_code == 200
     actions = [item["action"] for item in trail.json()["events"]]
-    assert actions == [
+    assert actions[0] == "COMPARISON_CREATED"
+    assert "CLAUSE_MAPPING_COMPLETED" not in actions
+    assert actions[-5:] == [
         "CLAUSE_OPENED",
         "REVIEW_STATUS_CHANGED",
         "COMMENT_ADDED",
         "COMMENT_EDITED",
         "COMMENT_DELETED",
     ]
-    review_event = trail.json()["events"][1]
+    review_event = next(
+        item for item in trail.json()["events"] if item["action"] == "REVIEW_STATUS_CHANGED"
+    )
     assert review_event["before"]["status"] == "OPEN"
     assert review_event["after"]["status"] == "REVIEWED"
-    assert trail.json()["events"][0]["id"] == first_id
+    assert next(
+        item["id"] for item in trail.json()["events"] if item["action"] == "CLAUSE_OPENED"
+    ) == first_id
 
     stored = comparisons_repo.rows[comparison_id].comparison
     assert stored.result == original
@@ -825,14 +838,14 @@ async def test_audit_viewer_can_read_and_record_open_but_not_mutate(
 
     listing = await client.get(f"{base}/audit")
     assert listing.status_code == 200
-    assert listing.json()["events"] == []
+    assert [item["action"] for item in listing.json()["events"]] == ["COMPARISON_CREATED"]
 
     opened = await client.post(
         f"{base}/audit",
         json={"action": "CLAUSE_OPENED", "clause_id": "CLAUSE:8.2"},
     )
     assert opened.status_code == 200
-    assert opened.json()["events"][0]["action"] == "CLAUSE_OPENED"
+    assert [item["action"] for item in opened.json()["events"]][-1] == "CLAUSE_OPENED"
 
     forbidden_review = await client.patch(
         f"{base}/review",
@@ -847,4 +860,38 @@ async def test_audit_viewer_can_read_and_record_open_but_not_mutate(
     stored = comparisons_repo.rows[comparison_id].comparison
     assert stored.review == {}
     assert stored.comments == []
+
+
+@pytest.mark.asyncio
+async def test_audit_non_member_cannot_read_other_workspace(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    comparisons_repo: FakeComparisonRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    doc_a = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="A"
+    )
+    doc_b = _seed_document(
+        docs_repo, summaries_repo, workspace_id=workspace_id, user_id=user_id, title="B"
+    )
+    created = await client.post(
+        f"/workspaces/{workspace_id}/comparisons",
+        json={"document_ids": [str(doc_a.id), str(doc_b.id)]},
+    )
+    comparison_id = uuid.UUID(created.json()["id"])
+    other_workspace = uuid.uuid4()
+    resp = await client.get(
+        f"/workspaces/{other_workspace}/comparisons/{comparison_id}/audit"
+    )
+    assert resp.status_code == 403
+    own = await client.get(
+        f"/workspaces/{workspace_id}/comparisons/{comparison_id}/audit"
+    )
+    assert own.status_code == 200
+    assert [item["action"] for item in own.json()["events"]] == ["COMPARISON_CREATED"]
+    assert own.json()["events"][0]["metadata"]["document_count"] == 2
 

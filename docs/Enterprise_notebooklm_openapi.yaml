@@ -1031,6 +1031,64 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /workspaces/{workspaceId}/comparisons/{comparisonId}/audit:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceId" }
+      - name: comparisonId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Comparisons]
+      summary: Nhật ký kiểm toán comparison (rà soát + lifecycle)
+      description: >
+        Append-only audit trail scoped to the operating workspace.
+        Includes lifecycle milestones (create/start/stages/complete/fail)
+        and reviewer actions. Does not include comparison.result.
+        Events are returned in append order (chronological).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComparisonAuditTrail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Comparisons]
+      summary: Ghi nhận CLAUSE_OPENED (thành viên workspace)
+      description: >
+        Only CLAUSE_OPENED is accepted from clients. Review, comment,
+        report, export, and pipeline events are written server-side.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ComparisonAuditCreate" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ComparisonAuditTrail" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Audit trail is full (audit_limit)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
   # ---------------------------------------------------------------------
   # REPORTS (FR9)
   # ---------------------------------------------------------------------
@@ -2101,6 +2159,79 @@ components:
             similarities: { type: array, items: { type: string } }
             differences: { type: array, items: { type: string } }
         created_at: { type: string, format: date-time }
+
+    ComparisonAuditAction:
+      type: string
+      enum:
+        - CLAUSE_OPENED
+        - REVIEW_STATUS_CHANGED
+        - COMMENT_ADDED
+        - COMMENT_EDITED
+        - COMMENT_DELETED
+        - COMPARISON_CREATED
+        - COMPARISON_STARTED
+        - STRUCTURE_EXTRACTION_COMPLETED
+        - CLAUSE_NORMALIZATION_COMPLETED
+        - CLAUSE_MAPPING_COMPLETED
+        - DIFF_COMPLETED
+        - RISK_DETECTION_COMPLETED
+        - LLM_EXPLANATION_COMPLETED
+        - CITATION_VERIFICATION_COMPLETED
+        - COMPARISON_COMPLETED
+        - COMPARISON_FAILED
+        - COMPARISON_CANCELLED
+        - COMPARISON_REPORT_CREATED
+        - COMPARISON_EXPORTED
+
+    ComparisonAuditCreate:
+      type: object
+      required: [action, clause_id]
+      properties:
+        action:
+          type: string
+          enum: [CLAUSE_OPENED]
+        clause_id: { type: string }
+
+    ComparisonAuditEvent:
+      type: object
+      required: [id, action, occurred_at]
+      properties:
+        id: { type: string }
+        action: { $ref: "#/components/schemas/ComparisonAuditAction" }
+        clause_id: { type: string, nullable: true }
+        actor_id: { type: string, format: uuid, nullable: true }
+        actor_name: { type: string, nullable: true }
+        occurred_at: { type: string, format: date-time }
+        before:
+          type: object
+          additionalProperties: true
+          nullable: true
+        after:
+          type: object
+          additionalProperties: true
+          nullable: true
+        target_type: { type: string, nullable: true }
+        target_id: { type: string, nullable: true }
+        comment_id: { type: string, nullable: true }
+        status:
+          type: string
+          nullable: true
+          enum: [STARTED, COMPLETED, FAILED, CANCELLED]
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Small deterministic counts and references only. No prompts,
+            secrets, stack traces, or full contract text.
+
+    ComparisonAuditTrail:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ComparisonAuditEvent" }
 
     ReportItemInput:
       type: object

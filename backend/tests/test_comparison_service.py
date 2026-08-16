@@ -621,3 +621,241 @@ async def test_create_comparison_rejects_fewer_than_two_documents() -> None:
             created_by=uuid.uuid4(),
         )
     assert exc.value.code == "too_few_documents"
+
+
+def _audit_actions(row: Comparison) -> list[str]:
+    return [str(item.get("action")) for item in (row.audit or []) if isinstance(item, dict)]
+
+
+@pytest.mark.asyncio
+async def test_create_comparison_records_fr8_lifecycle_without_invented_stages() -> None:
+    workspace_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    doc_a, ver_a = _ready_doc(workspace_id=workspace_id, title="Alpha")
+    doc_b, ver_b = _ready_doc(workspace_id=workspace_id, title="Beta")
+    comparisons = FakeComparisonRepo()
+
+    async def fake_llm(**kwargs: Any) -> StructuredLlmResult:
+        return StructuredLlmResult(
+            data={"similarities": ["Both cover onboarding"], "differences": ["Cap differs"]},
+            model=kwargs["model"],
+            input_tokens=10,
+            output_tokens=20,
+            estimated_cost_usd=0.01,
+        )
+
+    service = ComparisonService(
+        settings=Settings(
+            chat_llm_provider="anthropic",
+            anthropic_api_key="test-key",
+            chat_answer_strong_model="claude-sonnet-test",
+        ),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(  # type: ignore[arg-type]
+            documents={doc_a.id: doc_a, doc_b.id: doc_b},
+            versions={ver_a.id: ver_a, ver_b.id: ver_b},
+        ),
+        retrieval=FakeRetrievalRepo(),  # type: ignore[arg-type]
+        summaries=FakeSummaryRepo(  # type: ignore[arg-type]
+            by_version={
+                ver_a.id: Summary(
+                    id=uuid.uuid4(),
+                    document_id=doc_a.id,
+                    created_by=user_id,
+                    source_version_id=ver_a.id,
+                    type=SummaryType.short,
+                    status=SummaryStatus.completed,
+                    content="Alpha covers onboarding.",
+                    sections=None,
+                    model_used="test",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=0,
+                    latency_ms=1,
+                    created_at=datetime.now(UTC),
+                ),
+                ver_b.id: Summary(
+                    id=uuid.uuid4(),
+                    document_id=doc_b.id,
+                    created_by=user_id,
+                    source_version_id=ver_b.id,
+                    type=SummaryType.short,
+                    status=SummaryStatus.completed,
+                    content="Beta covers onboarding.",
+                    sections=None,
+                    model_used="test",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=0,
+                    latency_ms=1,
+                    created_at=datetime.now(UTC),
+                ),
+            }
+        ),
+        comparisons=comparisons,  # type: ignore[arg-type]
+        llm_call=fake_llm,
+    )
+    outcome = await service.create_comparison(
+        workspace_id=workspace_id,
+        document_ids=[doc_a.id, doc_b.id],
+        created_by=user_id,
+    )
+    actions = _audit_actions(outcome.comparison)
+    assert actions == [
+        "COMPARISON_CREATED",
+        "COMPARISON_STARTED",
+        "COMPARISON_COMPLETED",
+    ]
+    assert "CLAUSE_MAPPING_COMPLETED" not in actions
+    assert "LLM_EXPLANATION_COMPLETED" not in actions
+    created = next(
+        item for item in outcome.comparison.audit if item["action"] == "COMPARISON_CREATED"
+    )
+    assert created["actor_id"] == str(user_id)
+    assert "prompt" not in str(created.get("metadata") or {})
+
+    again = await service.process_comparison(outcome.comparison.id)
+    assert again is not None
+    assert _audit_actions(again.comparison) == actions
+
+
+@pytest.mark.asyncio
+async def test_process_comparison_failure_records_failed_event() -> None:
+    workspace_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    doc_a, ver_a = _ready_doc(workspace_id=workspace_id, title="A")
+    doc_b, ver_b = _ready_doc(workspace_id=workspace_id, title="B")
+    comparisons = FakeComparisonRepo()
+
+    async def boom(**kwargs: Any) -> StructuredLlmResult:
+        del kwargs
+        raise ComparisonServiceError(
+            "llm_failed",
+            "Comparison generation failed",
+            status_code=502,
+        )
+
+    service = ComparisonService(
+        settings=Settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(  # type: ignore[arg-type]
+            documents={doc_a.id: doc_a, doc_b.id: doc_b},
+            versions={ver_a.id: ver_a, ver_b.id: ver_b},
+        ),
+        retrieval=FakeRetrievalRepo(),  # type: ignore[arg-type]
+        summaries=FakeSummaryRepo(  # type: ignore[arg-type]
+            by_version={
+                ver_a.id: Summary(
+                    id=uuid.uuid4(),
+                    document_id=doc_a.id,
+                    created_by=user_id,
+                    source_version_id=ver_a.id,
+                    type=SummaryType.short,
+                    status=SummaryStatus.completed,
+                    content="A",
+                    sections=None,
+                    model_used="test",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=0,
+                    latency_ms=1,
+                    created_at=datetime.now(UTC),
+                ),
+                ver_b.id: Summary(
+                    id=uuid.uuid4(),
+                    document_id=doc_b.id,
+                    created_by=user_id,
+                    source_version_id=ver_b.id,
+                    type=SummaryType.short,
+                    status=SummaryStatus.completed,
+                    content="B",
+                    sections=None,
+                    model_used="test",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                    cost_usd=0,
+                    latency_ms=1,
+                    created_at=datetime.now(UTC),
+                ),
+            }
+        ),
+        comparisons=comparisons,  # type: ignore[arg-type]
+        llm_call=boom,
+        enqueue=False,
+    )
+    created = await service.request_comparison(
+        workspace_id=workspace_id,
+        document_ids=[doc_a.id, doc_b.id],
+        created_by=user_id,
+    )
+    failed = await service.process_comparison(created.comparison.id)
+    assert failed is not None
+    assert failed.comparison.status == ComparisonStatus.failed
+    actions = _audit_actions(failed.comparison)
+    assert actions == [
+        "COMPARISON_CREATED",
+        "COMPARISON_STARTED",
+        "COMPARISON_FAILED",
+    ]
+    event = next(
+        item for item in failed.comparison.audit if item["action"] == "COMPARISON_FAILED"
+    )
+    assert event["status"] == "FAILED"
+    assert event["metadata"]["error_code"] == "llm_failed"
+    assert event["metadata"]["stage"] == "llm"
+    assert "traceback" not in str(event["metadata"]).lower()
+
+    retry = await service.process_comparison(created.comparison.id)
+    assert retry is not None
+    assert _audit_actions(retry.comparison) == actions
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_one_shot_events_are_idempotent() -> None:
+    workspace_id = uuid.uuid4()
+    comparison_id = uuid.uuid4()
+    row = Comparison(
+        id=comparison_id,
+        workspace_id=workspace_id,
+        created_by=uuid.uuid4(),
+        title="T",
+        focus=None,
+        status=ComparisonStatus.completed,
+        result={"similarities": [], "differences": []},
+        review={},
+        comments=[],
+        audit=[],
+        created_at=datetime.now(UTC),
+    )
+    comparisons = FakeComparisonRepo()
+    comparisons.created.append(ComparisonWithDocuments(comparison=row, document_ids=[]))
+    service = ComparisonService(
+        settings=Settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(),  # type: ignore[arg-type]
+        retrieval=FakeRetrievalRepo(),  # type: ignore[arg-type]
+        summaries=FakeSummaryRepo(),  # type: ignore[arg-type]
+        comparisons=comparisons,  # type: ignore[arg-type]
+        llm_call=None,
+        enqueue=False,
+    )
+    await service._try_append_lifecycle_batch(
+        workspace_id=workspace_id,
+        comparison_id=comparison_id,
+        events=[
+            ("DIFF_COMPLETED", {"modified_count": 1}, "COMPLETED"),
+            ("COMPARISON_COMPLETED", {"has_contract_report": False}, "COMPLETED"),
+        ],
+    )
+    await service._try_append_lifecycle_batch(
+        workspace_id=workspace_id,
+        comparison_id=comparison_id,
+        events=[
+            ("DIFF_COMPLETED", {"modified_count": 9}, "COMPLETED"),
+            ("COMPARISON_COMPLETED", {"has_contract_report": True}, "COMPLETED"),
+        ],
+    )
+    actions = _audit_actions(row)
+    assert actions == ["DIFF_COMPLETED", "COMPARISON_COMPLETED"]
+    diff = next(item for item in row.audit if item["action"] == "DIFF_COMPLETED")
+    assert diff["metadata"]["modified_count"] == 1

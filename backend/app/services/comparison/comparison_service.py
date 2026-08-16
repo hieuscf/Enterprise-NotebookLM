@@ -21,6 +21,8 @@
 #   - Exactly one LLM call per comparison (FR8); never invent beyond provided context.
 #   - Optional CMP-15 enrichment (LLMTask.NONE) attaches contract_comparison
 #     for exactly 2 documents; failure is non-fatal and omits the field.
+#   - CMP-27 lifecycle audit is append-only on comparisons.audit. Audit
+#     persistence failure never fails comparison generation.
 # =============================================================================
 
 from __future__ import annotations
@@ -53,11 +55,15 @@ from app.services.chat.model_tiering import (
 from app.services.comparison.audit import (
     AuditError,
     append_event,
+    has_action,
+    is_one_shot,
     make_event,
     normalize_audit,
+    pipeline_milestones,
     review_status_of,
     should_debounce_open,
     snapshot_text,
+    stage_for_error_code,
 )
 from app.services.comparison.comments import (
     CommentError,
@@ -135,6 +141,7 @@ class ComparisonService:
         created_by: uuid.UUID,
         focus: str | None = None,
         title: str | None = None,
+        actor_name: str | None = None,
     ) -> ComparisonWithDocuments:
         """Create processing Comparison, commit, enqueue Celery — no LLM in-request."""
         ordered_ids = self._normalize_document_ids(document_ids)
@@ -177,6 +184,19 @@ class ComparisonService:
             focus=focus_term,
             title=derived_title[:512] if derived_title else None,
         )
+        await self._try_append_lifecycle(
+            workspace_id=workspace_id,
+            comparison_id=outcome.comparison.id,
+            action="COMPARISON_CREATED",
+            actor_id=created_by,
+            actor_name=actor_name,
+            status="COMPLETED",
+            metadata={
+                "document_count": len(ordered_ids),
+                "document_ids": [str(item) for item in ordered_ids],
+                "source_version_ids": [str(version.id) for _, version in resolved],
+            },
+        )
         await self._session.commit()
 
         try:
@@ -187,6 +207,16 @@ class ComparisonService:
                 comparison_id=str(outcome.comparison.id),
             )
             await self._comparisons.mark_failed(comparison_id=outcome.comparison.id)
+            await self._try_append_lifecycle(
+                workspace_id=workspace_id,
+                comparison_id=outcome.comparison.id,
+                action="COMPARISON_FAILED",
+                status="FAILED",
+                metadata={
+                    "stage": stage_for_error_code("enqueue_failed"),
+                    "error_code": "enqueue_failed",
+                },
+            )
             await self._session.commit()
             raise ComparisonServiceError(
                 "enqueue_failed",
@@ -227,6 +257,21 @@ class ComparisonService:
         document_ids = await self._comparisons.list_document_ids(row.id)
         if len(document_ids) < 2:
             await self._comparisons.mark_failed(comparison_id=row.id)
+            await self._try_append_lifecycle_batch(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+                events=[
+                    ("COMPARISON_STARTED", {"document_count": len(document_ids)}, "STARTED"),
+                    (
+                        "COMPARISON_FAILED",
+                        {
+                            "stage": stage_for_error_code("too_few_documents"),
+                            "error_code": "too_few_documents",
+                        },
+                        "FAILED",
+                    ),
+                ],
+            )
             return await self._comparisons.get(
                 workspace_id=row.workspace_id,
                 comparison_id=row.id,
@@ -256,6 +301,12 @@ class ComparisonService:
                 code=exc.code,
             )
             await self._comparisons.mark_failed(comparison_id=row.id)
+            await self._record_comparison_failed(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+                document_count=len(document_ids),
+                error_code=exc.code,
+            )
             return await self._comparisons.get(
                 workspace_id=row.workspace_id,
                 comparison_id=row.id,
@@ -263,6 +314,12 @@ class ComparisonService:
         except Exception:  # noqa: BLE001
             logger.exception("comparison_generation_unexpected", comparison_id=str(row.id))
             await self._comparisons.mark_failed(comparison_id=row.id)
+            await self._record_comparison_failed(
+                workspace_id=row.workspace_id,
+                comparison_id=row.id,
+                document_count=len(document_ids),
+                error_code="processing_failed",
+            )
             return await self._comparisons.get(
                 workspace_id=row.workspace_id,
                 comparison_id=row.id,
@@ -279,6 +336,12 @@ class ComparisonService:
                 comparison_id=row.id,
             )
 
+        await self._record_comparison_completed(
+            workspace_id=row.workspace_id,
+            comparison_id=row.id,
+            document_count=len(document_ids),
+            result=result_payload,
+        )
         final = await self._comparisons.get(
             workspace_id=row.workspace_id,
             comparison_id=row.id,
@@ -647,6 +710,28 @@ class ComparisonService:
         )
         return normalize_audit(getattr(row.comparison, "audit", None))
 
+    async def record_lifecycle_event(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        action: str,
+        actor_id: uuid.UUID | None = None,
+        actor_name: str | None = None,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Best-effort lifecycle/user-action event. Never raises to callers."""
+        await self._try_append_lifecycle(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            action=action,
+            actor_id=actor_id,
+            actor_name=actor_name,
+            status=status,
+            metadata=metadata,
+        )
+
     async def record_clause_opened(
         self,
         *,
@@ -768,6 +853,132 @@ class ComparisonService:
                 status_code=404,
             )
         return updated
+
+    async def _record_comparison_completed(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        document_count: int,
+        result: dict[str, Any] | None,
+    ) -> None:
+        has_report = unwrap_contract_report(result) is not None
+        events: list[tuple[str, dict[str, Any] | None, str | None]] = [
+            ("COMPARISON_STARTED", {"document_count": document_count}, "STARTED"),
+            *pipeline_milestones(result),
+            (
+                "COMPARISON_COMPLETED",
+                {
+                    "document_count": document_count,
+                    "has_contract_report": has_report,
+                },
+                "COMPLETED",
+            ),
+        ]
+        await self._try_append_lifecycle_batch(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            events=events,
+        )
+
+    async def _record_comparison_failed(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        document_count: int,
+        error_code: str,
+    ) -> None:
+        await self._try_append_lifecycle_batch(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            events=[
+                ("COMPARISON_STARTED", {"document_count": document_count}, "STARTED"),
+                (
+                    "COMPARISON_FAILED",
+                    {
+                        "stage": stage_for_error_code(error_code),
+                        "error_code": error_code,
+                    },
+                    "FAILED",
+                ),
+            ],
+        )
+
+    async def _try_append_lifecycle(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        action: str,
+        actor_id: uuid.UUID | None = None,
+        actor_name: str | None = None,
+        status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        await self._try_append_lifecycle_batch(
+            workspace_id=workspace_id,
+            comparison_id=comparison_id,
+            events=[(action, metadata, status)],
+            actor_id=actor_id,
+            actor_name=actor_name,
+        )
+
+    async def _try_append_lifecycle_batch(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        comparison_id: uuid.UUID,
+        events: list[tuple[str, dict[str, Any] | None, str | None]],
+        actor_id: uuid.UUID | None = None,
+        actor_name: str | None = None,
+    ) -> None:
+        """Persist lifecycle facts. Audit failure never fails comparison."""
+        try:
+            row = await self._comparisons.get(
+                workspace_id=workspace_id,
+                comparison_id=comparison_id,
+            )
+            if row is None:
+                return
+            existing = getattr(row.comparison, "audit", None)
+            next_events = (
+                [dict(item) for item in existing if isinstance(item, dict)]
+                if isinstance(existing, list)
+                else []
+            )
+            occurred_at = datetime.now(UTC)
+            changed = False
+            for action, metadata, status in events:
+                if is_one_shot(action) and has_action(next_events, action):
+                    continue
+                event = make_event(
+                    action=action,
+                    actor_id=actor_id,
+                    actor_name=actor_name,
+                    occurred_at=occurred_at,
+                    status=status,
+                    metadata=metadata,
+                )
+                next_events = append_event(next_events, event)
+                changed = True
+            if not changed:
+                return
+            updated = await self._comparisons.append_audit(
+                workspace_id=workspace_id,
+                comparison_id=comparison_id,
+                audit=next_events,
+            )
+            if updated is None:
+                logger.warning(
+                    "comparison_audit_missing_row",
+                    comparison_id=str(comparison_id),
+                )
+        except Exception:  # noqa: BLE001 — audit must not fail comparison
+            logger.exception(
+                "comparison_audit_persist_failed",
+                comparison_id=str(comparison_id),
+            )
 
     # ------------------------------------------------------------------
     # Internals

@@ -16,6 +16,7 @@
 # Important Notes:
 #   - HTTP path must not render files; generation runs in process_report only.
 #   - Schema v1 has no reports.error — failures set status=failed and log detail.
+#   - CMP-27: comparison report create/export appends best-effort audit events.
 #   - DB column ``format`` maps to OpenAPI ``export_format``;
 #     ``file_path`` (MinIO key) maps to response ``file_url`` (export route).
 # =============================================================================
@@ -24,6 +25,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import UTC, datetime
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,7 +37,14 @@ from app.adapters.minio_storage import MinioStorageAdapter
 from app.core.logging import get_logger
 from app.models.artifacts import Report
 from app.models.enums import ReportFormat, ReportSourceType, ReportStatus
+from app.repositories.comparisons import ComparisonRepository
 from app.repositories.reports import ReportItemSpec, ReportRepository, ReportWithItems
+from app.services.comparison.audit import (
+    append_event,
+    has_action,
+    is_one_shot,
+    make_event,
+)
 from app.services.report_aggregation import (
     AggregatedReportBlock,
     ReportAggregationError,
@@ -105,10 +114,12 @@ class ReportService:
         docx_render_fn: DocxRenderFn | None = None,
         pdf_render_fn: PdfRenderFn | None = None,
         staging_dir: Path | None = None,
+        comparisons: ComparisonRepository | None = None,
     ) -> None:
         self._session = session
         self._reports = reports
         self._aggregation = aggregation
+        self._comparisons = comparisons
         self._storage = storage
         self._enqueue = enqueue
         self._enqueue_fn = enqueue_fn
@@ -183,6 +194,17 @@ class ReportService:
         refreshed = await self._reports.get(
             workspace_id=workspace_id,
             report_id=outcome.report.id,
+        )
+        await self._try_audit_comparison_sources(
+            workspace_id=workspace_id,
+            items=items,
+            action="COMPARISON_REPORT_CREATED",
+            actor_id=created_by,
+            status="COMPLETED",
+            metadata={
+                "report_id": str(outcome.report.id),
+                "export_format": export_format.value,
+            },
         )
         return refreshed or outcome
 
@@ -527,6 +549,12 @@ class ReportService:
             result="ok",
             started=started,
         )
+        await self._try_audit_exported_report(
+            workspace_id=workspace_id,
+            report_id=report_id,
+            actor_id=actor_id,
+            export_format=fmt.value,
+        )
         return ReportExportPayload(
             iterator=iterator,
             content_type=export_content_type(fmt),
@@ -534,6 +562,94 @@ class ReportService:
             content_disposition=content_disposition_attachment(filename),
             content_length=content_length,
         )
+
+    async def _try_audit_exported_report(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        report_id: uuid.UUID,
+        actor_id: uuid.UUID | None,
+        export_format: str,
+    ) -> None:
+        if self._comparisons is None:
+            return
+        try:
+            items = await self._reports.list_items(report_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "comparison_export_audit_items_failed",
+                report_id=str(report_id),
+            )
+            return
+        await self._try_audit_comparison_sources(
+            workspace_id=workspace_id,
+            items=items,
+            action="COMPARISON_EXPORTED",
+            actor_id=actor_id,
+            status="COMPLETED",
+            metadata={
+                "report_id": str(report_id),
+                "export_format": export_format,
+            },
+        )
+
+    async def _try_audit_comparison_sources(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        items: list[Any],
+        action: str,
+        actor_id: uuid.UUID | None,
+        status: str | None,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Best-effort comparison audit. Never fails report create/export."""
+        if self._comparisons is None:
+            return
+        try:
+            occurred_at = datetime.now(UTC)
+            wrote = False
+            for item in items:
+                source_type = getattr(item, "source_type", None)
+                if (
+                    source_type is not ReportSourceType.comparison
+                    and str(source_type) != ReportSourceType.comparison.value
+                ):
+                    continue
+                comparison_id = getattr(item, "source_id", None)
+                if comparison_id is None:
+                    continue
+                row = await self._comparisons.get(
+                    workspace_id=workspace_id,
+                    comparison_id=comparison_id,
+                )
+                if row is None:
+                    continue
+                existing = getattr(row.comparison, "audit", None)
+                if is_one_shot(action) and has_action(existing, action):
+                    continue
+                event = make_event(
+                    action=action,
+                    actor_id=actor_id,
+                    occurred_at=occurred_at,
+                    status=status,
+                    metadata=metadata,
+                )
+                next_events = append_event(existing, event)
+                updated = await self._comparisons.append_audit(
+                    workspace_id=workspace_id,
+                    comparison_id=comparison_id,
+                    audit=next_events,
+                )
+                wrote = wrote or updated is not None
+            if wrote:
+                await self._session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "comparison_lifecycle_audit_failed",
+                action=action,
+                workspace_id=str(workspace_id),
+            )
 
     def _iter_artifact(self, object_key: str) -> Iterator[bytes]:
         iter_fn = getattr(self._storage, "iter_object", None)
