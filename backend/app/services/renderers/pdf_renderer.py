@@ -52,6 +52,7 @@ body {
 h1 { font-size: 20pt; margin: 0 0 16pt 0; }
 h2 { font-size: 14pt; margin: 18pt 0 8pt 0; }
 h3 { font-size: 12pt; margin: 14pt 0 6pt 0; }
+h4 { font-size: 11pt; margin: 12pt 0 4pt 0; }
 p { margin: 0 0 8pt 0; }
 ul { margin: 0 0 10pt 18pt; padding: 0; }
 li { margin: 0 0 4pt 0; }

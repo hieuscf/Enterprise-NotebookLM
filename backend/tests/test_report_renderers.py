@@ -276,3 +276,128 @@ def test_markdown_to_html_keeps_headings_table_and_code() -> None:
     assert "<table>" in html_out and "<th>A</th>" in html_out
     assert "<pre><code" in html_out
     assert "<b>User:</b> hi" in html_out
+
+
+def _contract_block() -> AggregatedReportBlock:
+    from app.services.report.comparison_report_builder import build_comparison_report_content
+
+    content = build_comparison_report_content(
+        result={
+            "similarities": ["Same parties"],
+            "differences": ["Cap changed"],
+            "contract_comparison": {
+                "summary": {
+                    "total_clauses": 2,
+                    "unchanged": 1,
+                    "modified": 1,
+                    "added": 0,
+                    "removed": 0,
+                },
+                "clauses": {
+                    "modified": [
+                        {
+                            "clause_id": "CLAUSE:8.2",
+                            "status": "MODIFIED",
+                            "v1_text": "Cap 480,000,000",
+                            "v2_text": "Cap 600,000,000",
+                            "exact_differences": [
+                                {
+                                    "value_type": "MONEY",
+                                    "old": {"raw": "480,000,000"},
+                                    "new": {"raw": "600,000,000"},
+                                    "delta": "+120,000,000",
+                                }
+                            ],
+                            "risk": {
+                                "risk_level": "CRITICAL",
+                                "risk_category": "LIABILITY",
+                            },
+                            "evidence": [
+                                {
+                                    "evidence_id": "ev-1",
+                                    "side": "OLD",
+                                    "page_number": 12,
+                                    "display_text": "Cap 480,000,000",
+                                }
+                            ],
+                            "verification": {
+                                "status": "UNVERIFIED",
+                                "evidence_results": [
+                                    {"evidence_id": "ev-1", "status": "MISMATCH"}
+                                ],
+                            },
+                        }
+                    ],
+                    "unchanged": [{"clause_id": "CLAUSE:1.1", "status": "UNCHANGED"}],
+                    "added": [],
+                    "removed": [],
+                    "unresolved": [],
+                },
+            },
+        },
+        title="Contract comparison",
+        status="completed",
+    )
+    return AggregatedReportBlock(
+        order_index=0,
+        source_type=ReportSourceType.comparison,
+        title="Contract comparison",
+        content=content,
+    )
+
+
+def test_markdown_contract_comparison_renders_sections(staging_root: Path) -> None:
+    result = render_markdown(
+        [_contract_block()],
+        report_title="Legal Report",
+        report_id=uuid.uuid4(),
+        workspace_id=uuid.uuid4(),
+        output_dir=staging_root,
+    )
+    text = result.markdown
+    assert "### Executive Summary" in text
+    assert "### Changed Clauses" in text
+    assert "8.2" in text
+    assert "CRITICAL" in text
+    assert "480,000,000" in text
+    assert "Unverified" in text
+    assert " — Verified" not in text.split("**Evidence**")[-1]
+    assert "1 clauses remained unchanged." in text
+    assert result.local_path.is_file()
+
+
+def test_docx_and_pdf_contract_comparison(staging_root: Path) -> None:
+    blocks = [_contract_block()]
+    report_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    md = render_markdown(
+        blocks,
+        report_title="Legal Report",
+        report_id=report_id,
+        workspace_id=workspace_id,
+        output_dir=staging_root,
+    )
+    docx = render_docx(
+        blocks,
+        report_title="Legal Report",
+        report_id=report_id,
+        workspace_id=workspace_id,
+        output_dir=staging_root,
+    )
+    pdf = render_pdf(
+        md.markdown,
+        report_title="Legal Report",
+        report_id=report_id,
+        workspace_id=workspace_id,
+        output_dir=staging_root,
+    )
+    document = Document(str(docx.local_path))
+    docx_text = "\n".join(p.text for p in document.paragraphs)
+    assert "Executive Summary" in docx_text
+    assert "8.2" in docx_text
+    assert docx.local_path.stat().st_size > 0
+    assert pdf.local_path.is_file()
+    with fitz.open(str(pdf.local_path)) as doc:
+        pdf_text = "\n".join(page.get_text() for page in doc)
+    assert "Executive Summary" in pdf_text
+    assert "8.2" in pdf_text

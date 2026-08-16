@@ -7,6 +7,7 @@
 # Responsibilities:
 #   - Validate every source_id belongs to the operating workspace_id
 #   - Load source payloads via repositories (no direct ORM in this layer)
+#   - Project comparison sources through CMP-24 builder (no remapping / LLM)
 #   - Return sorted AggregatedReportBlock list ({order_index, source_type, title, content})
 # Dependencies:
 #   - SummaryRepository, ExtractionRepository, ComparisonRepository,
@@ -20,6 +21,7 @@
 # Important Notes:
 #   - Does NOT generate PDF/DOCX/Markdown — Single Responsibility (aggregation only).
 #   - Cross-workspace / missing source → 404 (do not leak existence across tenants).
+#   - Incomplete comparison → comparison_not_ready (409).
 # =============================================================================
 
 from __future__ import annotations
@@ -30,13 +32,14 @@ from datetime import datetime
 from typing import Any
 
 from app.models.chat import ChatMessage
-from app.models.enums import ReportSourceType
+from app.models.enums import ComparisonStatus, ReportSourceType
 from app.repositories.chat_messages import ChatMessageRepository
 from app.repositories.chat_sessions import ChatSessionRepository
 from app.repositories.comparisons import ComparisonRepository, ComparisonWithDocuments
 from app.repositories.documents import DocumentRepository
 from app.repositories.extractions import ExtractionRepository
 from app.repositories.summaries import SummaryRepository
+from app.services.report.comparison_report_builder import build_comparison_report_content
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,18 +215,35 @@ class ReportAggregationService:
             self._raise_source_unavailable(ReportSourceType.comparison, item.source_id)
 
         row = wrapped.comparison if isinstance(wrapped, ComparisonWithDocuments) else wrapped
+        status_value = row.status.value if hasattr(row.status, "value") else str(row.status)
+        if status_value != ComparisonStatus.completed.value:
+            raise ReportAggregationError(
+                "comparison_not_ready",
+                "Comparison must be completed before a report can be generated",
+                status_code=409,
+            )
         result = row.result if isinstance(row.result, dict) else {}
-        similarities = list(result.get("similarities") or [])
-        differences = list(result.get("differences") or [])
         title = (row.title or "").strip() or "Comparison"
+        document_titles: dict[str, str] = {}
+        document_ids = list(wrapped.document_ids) if isinstance(wrapped, ComparisonWithDocuments) else []
+        for document_id in document_ids:
+            name = await self._document_title(workspace_id, document_id)
+            if name:
+                document_titles[str(document_id)] = name
+        content = build_comparison_report_content(
+            result=result,
+            comparison_id=row.id,
+            workspace_id=row.workspace_id,
+            title=title,
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            created_at=row.created_at,
+            document_titles=document_titles,
+        )
         return AggregatedReportBlock(
             order_index=item.order_index,
             source_type=ReportSourceType.comparison,
             title=title,
-            content={
-                "similarities": similarities,
-                "differences": differences,
-            },
+            content=content,
         )
 
     async def _from_chat_session(

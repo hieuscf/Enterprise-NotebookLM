@@ -193,15 +193,23 @@ def _extraction(*, document_id: uuid.UUID) -> Extraction:
     )
 
 
-def _comparison(*, workspace_id: uuid.UUID, title: str | None = "Cmp") -> Comparison:
+def _comparison(
+    *,
+    workspace_id: uuid.UUID,
+    title: str | None = "Cmp",
+    status: ComparisonStatus = ComparisonStatus.completed,
+    result: dict | None = None,
+) -> Comparison:
     return Comparison(
         id=uuid.uuid4(),
         workspace_id=workspace_id,
         created_by=uuid.uuid4(),
         title=title,
         focus=None,
-        status=ComparisonStatus.completed,
-        result={
+        status=status,
+        result=result
+        if result is not None
+        else {
             "similarities": ["same theme"],
             "differences": ["diff scope"],
         },
@@ -474,6 +482,98 @@ async def test_aggregate_comparison_block() -> None:
     assert block.title == "Q1 vs Q2"
     assert block.content["similarities"] == ["same theme"]
     assert block.content["differences"] == ["diff scope"]
+    assert block.content["has_contract_report"] is False
+    assert block.content["comparison_report"] is None
+
+
+@pytest.mark.asyncio
+async def test_aggregate_comparison_includes_contract_report() -> None:
+    workspace_id = uuid.uuid4()
+    comparison = _comparison(
+        workspace_id=workspace_id,
+        title="V1 vs V2",
+        result={
+            "similarities": ["theme"],
+            "differences": ["cap"],
+            "contract_comparison": {
+                "summary": {
+                    "total_clauses": 1,
+                    "unchanged": 0,
+                    "modified": 1,
+                    "added": 0,
+                    "removed": 0,
+                },
+                "clauses": {
+                    "modified": [
+                        {
+                            "clause_id": "CLAUSE:8.2",
+                            "status": "MODIFIED",
+                            "risk": {"risk_level": "CRITICAL", "risk_category": "LIABILITY"},
+                        }
+                    ],
+                    "added": [],
+                    "removed": [],
+                    "unchanged": [],
+                    "unresolved": [],
+                },
+            },
+        },
+    )
+    service = _make_service(
+        comparisons=FakeComparisonRepo(
+            rows={
+                comparison.id: ComparisonWithDocuments(
+                    comparison=comparison, document_ids=[]
+                )
+            }
+        )
+    )
+    blocks = await service.aggregate(
+        workspace_id=workspace_id,
+        items=[
+            ReportItemInput(
+                source_type=ReportSourceType.comparison,
+                source_id=comparison.id,
+                order_index=0,
+            )
+        ],
+    )
+    report = blocks[0].content["comparison_report"]
+    assert blocks[0].content["has_contract_report"] is True
+    assert report["changed_clauses"][0]["clause_id"] == "CLAUSE:8.2"
+    assert report["generation_metadata"]["llm_calls_report"] == 0
+
+
+@pytest.mark.asyncio
+async def test_aggregate_processing_comparison_is_not_ready() -> None:
+    workspace_id = uuid.uuid4()
+    comparison = _comparison(
+        workspace_id=workspace_id,
+        status=ComparisonStatus.processing,
+        result=None,
+    )
+    service = _make_service(
+        comparisons=FakeComparisonRepo(
+            rows={
+                comparison.id: ComparisonWithDocuments(
+                    comparison=comparison, document_ids=[]
+                )
+            }
+        )
+    )
+    with pytest.raises(ReportAggregationError) as exc_info:
+        await service.aggregate(
+            workspace_id=workspace_id,
+            items=[
+                ReportItemInput(
+                    source_type=ReportSourceType.comparison,
+                    source_id=comparison.id,
+                    order_index=0,
+                )
+            ],
+        )
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "comparison_not_ready"
 
 
 @pytest.mark.asyncio
