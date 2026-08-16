@@ -77,6 +77,21 @@ class FakeStorage:
             raise FileNotFoundError(object_key)
         return self.objects[object_key]
 
+    def iter_object(self, object_key: str, chunk_size: int = 65536):
+        data = self.download_bytes(object_key)
+        if not data:
+            return
+            yield
+        for index in range(0, len(data), chunk_size):
+            yield data[index : index + chunk_size]
+
+    def object_exists(self, object_key: str) -> bool:
+        return object_key in self.objects
+
+    def object_size(self, object_key: str) -> int | None:
+        data = self.objects.get(object_key)
+        return None if data is None else len(data)
+
     def delete_object(self, object_key: str) -> None:
         self.deleted.append(object_key)
         self.objects.pop(object_key, None)
@@ -123,6 +138,12 @@ class FakeReportRepo:
         if wrapped is None or wrapped.report.workspace_id != workspace_id:
             return None
         return wrapped
+
+    async def get_row(
+        self, *, workspace_id: uuid.UUID, report_id: uuid.UUID
+    ) -> Report | None:
+        wrapped = await self.get(workspace_id=workspace_id, report_id=report_id)
+        return wrapped.report if wrapped else None
 
     async def list_for_workspace(
         self,
@@ -460,6 +481,11 @@ async def test_list_get_delete_and_export_lifecycle(
     exported = await client.get(f"/workspaces/{workspace_id}/reports/{report_id}/export")
     assert exported.status_code == 200
     assert "text/markdown" in exported.headers["content-type"]
+    assert exported.headers["cache-control"] == "private, no-store"
+    assert exported.headers["x-content-type-options"] == "nosniff"
+    assert "attachment" in exported.headers["content-disposition"]
+    assert "filename=" in exported.headers["content-disposition"]
+    assert ".." not in exported.headers["content-disposition"]
     assert exported.content.startswith(b"# Mock")
 
     deleted = await client.delete(f"/workspaces/{workspace_id}/reports/{report_id}")
@@ -612,3 +638,280 @@ async def test_get_report_unknown_or_foreign_workspace(
     assert missing.status_code == 404
     foreign = await client.get(f"/workspaces/{uuid.uuid4()}/reports/{uuid.uuid4()}")
     assert foreign.status_code == 403
+
+
+async def _ready_report(
+    *,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+    export_format: ReportFormat = ReportFormat.markdown,
+    title: str = "Report markdown",
+) -> Report:
+    aggregation.allowed.add(source_id)
+    created = await reports_repo.create_pending(
+        workspace_id=workspace_id,
+        created_by=user_id,
+        title=title,
+        format_=export_format,
+        items=[
+            ReportItemSpec(
+                source_type=ReportSourceType.summary,
+                source_id=source_id,
+                order_index=0,
+            )
+        ],
+    )
+    service = ReportService(
+        session=FakeSession(),  # type: ignore[arg-type]
+        reports=reports_repo,  # type: ignore[arg-type]
+        aggregation=aggregation,  # type: ignore[arg-type]
+        storage=storage,  # type: ignore[arg-type]
+        enqueue=False,
+        markdown_render_fn=_mock_markdown_render,
+        docx_render_fn=_mock_docx_render,
+        pdf_render_fn=_mock_pdf_render,
+        staging_dir=staging_dir,
+    )
+    outcome = await service.process_report(created.report.id)
+    assert outcome is not None
+    assert outcome.status == ReportStatus.ready
+    return outcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("export_format", "mime", "magic"),
+    [
+        (ReportFormat.markdown, "text/markdown", b"# Mock"),
+        (
+            ReportFormat.docx,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            b"PK\x03\x04",
+        ),
+        (ReportFormat.pdf, "application/pdf", b"%PDF"),
+    ],
+)
+async def test_export_ready_report_mime_and_bytes(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+    export_format: ReportFormat,
+    mime: str,
+    magic: bytes,
+) -> None:
+    _set_role(RoleName.editor)
+    row = await _ready_report(
+        reports_repo=reports_repo,
+        aggregation=aggregation,
+        storage=storage,
+        staging_dir=staging_dir,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source_id=source_id,
+        export_format=export_format,
+        title=f"Contract Comparison {export_format.value}",
+    )
+    resp = await client.get(f"/workspaces/{workspace_id}/reports/{row.id}/export")
+    assert resp.status_code == 200
+    assert mime in resp.headers["content-type"]
+    assert resp.content.startswith(magic)
+    disposition = resp.headers["content-disposition"]
+    assert "attachment" in disposition
+    assert disposition.lower().count("filename") >= 1
+    if export_format is ReportFormat.markdown:
+        assert ".md" in disposition
+    elif export_format is ReportFormat.docx:
+        assert ".docx" in disposition
+    else:
+        assert ".pdf" in disposition
+
+
+@pytest.mark.asyncio
+async def test_export_failed_report_is_controlled_error(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    created = await reports_repo.create_pending(
+        workspace_id=workspace_id,
+        created_by=user_id,
+        title="Failed report",
+        format_=ReportFormat.pdf,
+        items=[
+            ReportItemSpec(
+                source_type=ReportSourceType.summary,
+                source_id=source_id,
+                order_index=0,
+            )
+        ],
+    )
+    await reports_repo.mark_failed(report_id=created.report.id)
+    resp = await client.get(
+        f"/workspaces/{workspace_id}/reports/{created.report.id}/export"
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "generation_failed"
+    assert "traceback" not in resp.json()["detail"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_export_missing_artifact_is_file_not_found(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    row = await _ready_report(
+        reports_repo=reports_repo,
+        aggregation=aggregation,
+        storage=storage,
+        staging_dir=staging_dir,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source_id=source_id,
+    )
+    assert row.file_path is not None
+    storage.objects.pop(row.file_path)
+    resp = await client.get(f"/workspaces/{workspace_id}/reports/{row.id}/export")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "file_not_found"
+
+
+@pytest.mark.asyncio
+async def test_export_rejects_injected_storage_url(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    created = await reports_repo.create_pending(
+        workspace_id=workspace_id,
+        created_by=user_id,
+        title="Injected",
+        format_=ReportFormat.pdf,
+        items=[
+            ReportItemSpec(
+                source_type=ReportSourceType.summary,
+                source_id=source_id,
+                order_index=0,
+            )
+        ],
+    )
+    created.report.status = ReportStatus.ready
+    created.report.file_path = "s3://other-bucket/secret.pdf"
+    resp = await client.get(
+        f"/workspaces/{workspace_id}/reports/{created.report.id}/export"
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "file_not_found"
+
+
+@pytest.mark.asyncio
+async def test_export_sanitizes_path_traversal_title(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    row = await _ready_report(
+        reports_repo=reports_repo,
+        aggregation=aggregation,
+        storage=storage,
+        staging_dir=staging_dir,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source_id=source_id,
+        title="../../secret",
+    )
+    resp = await client.get(f"/workspaces/{workspace_id}/reports/{row.id}/export")
+    assert resp.status_code == 200
+    disposition = resp.headers["content-disposition"]
+    assert ".." not in disposition
+    assert "/" not in disposition.split("filename=")[-1].replace("UTF-8''", "")
+
+
+@pytest.mark.asyncio
+async def test_export_foreign_workspace_is_forbidden(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    row = await _ready_report(
+        reports_repo=reports_repo,
+        aggregation=aggregation,
+        storage=storage,
+        staging_dir=staging_dir,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source_id=source_id,
+    )
+    resp = await client.get(f"/workspaces/{uuid.uuid4()}/reports/{row.id}/export")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_export_other_report_in_workspace_is_404(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+) -> None:
+    _set_role(RoleName.editor)
+    resp = await client.get(f"/workspaces/{workspace_id}/reports/{uuid.uuid4()}/export")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_export_viewer_can_download_ready_report(
+    client: AsyncClient,
+    reports_repo: FakeReportRepo,
+    aggregation: FakeAggregation,
+    storage: FakeStorage,
+    staging_dir: Path,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    source_id: uuid.UUID,
+) -> None:
+    row = await _ready_report(
+        reports_repo=reports_repo,
+        aggregation=aggregation,
+        storage=storage,
+        staging_dir=staging_dir,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source_id=source_id,
+    )
+    _set_role(RoleName.viewer)
+    resp = await client.get(f"/workspaces/{workspace_id}/reports/{row.id}/export")
+    assert resp.status_code == 200
+    assert resp.content.startswith(b"# Mock")

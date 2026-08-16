@@ -6,7 +6,7 @@
 # Responsibilities:
 #   - request_report: validate sources, create pending row, enqueue Celery
 #   - process_report: aggregate blocks, render by export_format, upload MinIO
-#   - list / get / delete / export for HTTP API
+#   - list / get / delete / export (CMP-26 artifact delivery, 0 LLM)
 # Dependencies:
 #   - ReportRepository, ReportAggregationService, renderers, MinioStorageAdapter
 # Public Exports:
@@ -22,8 +22,9 @@
 
 from __future__ import annotations
 
+import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,13 @@ from app.services.report_aggregation import (
     ReportAggregationError,
     ReportAggregationService,
     ReportItemInput as AggregationItem,
+)
+from app.services.report.export import (
+    artifact_key_is_owned,
+    content_disposition_attachment,
+    export_content_type,
+    resolve_export_format,
+    sanitize_export_filename,
 )
 from app.services.renderers.docx_renderer import DocxRenderResult, render_docx
 from app.services.renderers.markdown_renderer import MarkdownRenderResult, render_markdown
@@ -64,9 +72,11 @@ PdfRenderFn = Callable[..., PdfRenderResult]
 
 @dataclass(frozen=True, slots=True)
 class ReportExportPayload:
-    data: bytes
+    iterator: Iterator[bytes]
     content_type: str
     filename: str
+    content_disposition: str
+    content_length: int | None = None
 
 
 class ReportServiceError(Exception):
@@ -214,6 +224,13 @@ class ReportService:
                 report=row,
                 blocks=blocks,
             )
+            exists_fn = getattr(self._storage, "object_exists", None)
+            if callable(exists_fn) and not exists_fn(object_key):
+                raise ReportServiceError(
+                    "storage_error",
+                    "Uploaded report artifact is missing",
+                    status_code=500,
+                )
             updated = await self._reports.mark_ready(
                 report_id=row.id,
                 file_path=object_key,
@@ -328,40 +345,225 @@ class ReportService:
         *,
         workspace_id: uuid.UUID,
         report_id: uuid.UUID,
+        actor_id: uuid.UUID | None = None,
     ) -> ReportExportPayload:
-        wrapped = await self.get_report(workspace_id=workspace_id, report_id=report_id)
-        report = wrapped.report
-        if report.status != ReportStatus.ready:
+        """Deliver the stored artifact. Never regenerate or call an LLM."""
+        started = time.perf_counter()
+        get_row = getattr(self._reports, "get_row", None)
+        if callable(get_row):
+            report = await get_row(workspace_id=workspace_id, report_id=report_id)
+        else:
+            wrapped = await self.get_report(
+                workspace_id=workspace_id,
+                report_id=report_id,
+            )
+            report = wrapped.report
+        if report is None:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                result="not_found",
+                started=started,
+            )
+            raise ReportServiceError(
+                "not_found",
+                "Report not found",
+                status_code=404,
+            )
+
+        status_value = (
+            report.status.value if hasattr(report.status, "value") else str(report.status)
+        )
+        fmt = resolve_export_format(report.format)
+        if report.status is ReportStatus.pending or status_value == ReportStatus.pending.value:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value if fmt else None,
+                status=status_value,
+                result="not_ready",
+                started=started,
+            )
             raise ReportServiceError(
                 "not_ready",
-                f"Report is not ready for export (status={report.status.value})",
+                "Report is not ready for export.",
                 status_code=409,
             )
-        if not report.file_path:
+        if report.status is ReportStatus.failed or status_value == ReportStatus.failed.value:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value if fmt else None,
+                status=status_value,
+                result="generation_failed",
+                started=started,
+            )
             raise ReportServiceError(
-                "file_missing",
-                "Report is ready but file_path is empty",
+                "generation_failed",
+                "The report could not be exported because generation failed.",
                 status_code=409,
             )
+        if report.status is not ReportStatus.ready:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value if fmt else None,
+                status=status_value,
+                result="not_ready",
+                started=started,
+            )
+            raise ReportServiceError(
+                "not_ready",
+                "Report is not ready for export.",
+                status_code=409,
+            )
+        if fmt is None:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                status=status_value,
+                result="unsupported_format",
+                started=started,
+            )
+            raise ReportServiceError(
+                "unsupported_format",
+                "Unsupported export format.",
+                status_code=422,
+            )
+        if not artifact_key_is_owned(
+            report.file_path,
+            workspace_id=report.workspace_id,
+            report_id=report.id,
+        ):
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value,
+                status=status_value,
+                result="file_not_found",
+                started=started,
+            )
+            raise ReportServiceError(
+                "file_not_found",
+                "The generated report file is no longer available.",
+                status_code=404,
+            )
+
+        object_key = str(report.file_path)
+        size_fn = getattr(self._storage, "object_size", None)
+        content_length = size_fn(object_key) if callable(size_fn) else None
+        exists_fn = getattr(self._storage, "object_exists", None)
+        missing = (
+            (callable(exists_fn) and not exists_fn(object_key))
+            or content_length == 0
+        )
+        if missing:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value,
+                status=status_value,
+                result="file_not_found",
+                started=started,
+            )
+            raise ReportServiceError(
+                "file_not_found",
+                "The generated report file is no longer available.",
+                status_code=404,
+            )
+
         try:
-            data = self._storage.download_bytes(report.file_path)
+            iterator = self._iter_artifact(object_key)
+        except FileNotFoundError as exc:
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value,
+                status=status_value,
+                result="file_not_found",
+                started=started,
+            )
+            raise ReportServiceError(
+                "file_not_found",
+                "The generated report file is no longer available.",
+                status_code=404,
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             logger.exception(
-                "report_export_download_failed",
+                "report_export_storage_failed",
+                workspace_id=str(workspace_id),
                 report_id=str(report_id),
-                file_path=report.file_path,
+            )
+            self._log_export(
+                workspace_id=workspace_id,
+                report_id=report_id,
+                actor_id=actor_id,
+                export_format=fmt.value,
+                status=status_value,
+                result="storage_error",
+                started=started,
             )
             raise ReportServiceError(
-                "file_unavailable",
+                "storage_error",
                 "Failed to download report file",
-                status_code=503,
+                status_code=500,
             ) from exc
 
-        filename = Path(report.file_path).name
+        filename = sanitize_export_filename(report.title, fmt)
+        self._log_export(
+            workspace_id=workspace_id,
+            report_id=report_id,
+            actor_id=actor_id,
+            export_format=fmt.value,
+            status=status_value,
+            result="ok",
+            started=started,
+        )
         return ReportExportPayload(
-            data=data,
-            content_type=CONTENT_TYPES[report.format],
+            iterator=iterator,
+            content_type=export_content_type(fmt),
             filename=filename,
+            content_disposition=content_disposition_attachment(filename),
+            content_length=content_length,
+        )
+
+    def _iter_artifact(self, object_key: str) -> Iterator[bytes]:
+        iter_fn = getattr(self._storage, "iter_object", None)
+        if callable(iter_fn):
+            return iter_fn(object_key)
+        data = self._storage.download_bytes(object_key)
+        if not data:
+            raise FileNotFoundError(object_key)
+        return iter((data,))
+
+    def _log_export(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        report_id: uuid.UUID,
+        actor_id: uuid.UUID | None,
+        result: str,
+        started: float,
+        export_format: str | None = None,
+        status: str | None = None,
+    ) -> None:
+        logger.info(
+            "report_export",
+            workspace_id=str(workspace_id),
+            report_id=str(report_id),
+            user_id=str(actor_id) if actor_id else None,
+            export_format=export_format,
+            status=status,
+            result=result,
+            latency_ms=int((time.perf_counter() - started) * 1000),
         )
 
     # ------------------------------------------------------------------

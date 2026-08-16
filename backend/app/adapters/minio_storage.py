@@ -9,7 +9,7 @@
 # Dependencies:
 #   - minio SDK, app.core.config.Settings
 # Public Exports:
-#   - MinioStorageAdapter, get_minio_storage
+#   - MinioStorageAdapter, ObjectNotFoundError, get_minio_storage
 # Database/Table: N/A (paths stored on document_versions.storage_path)
 # Related Modules: app.services.documents, app.workers.pipeline
 # Important Notes: documents table never stores file bytes — only storage_path on versions.
@@ -21,10 +21,18 @@ import io
 from functools import lru_cache
 from typing import Any
 
+from collections.abc import Iterator
+
 from minio import Minio
 from minio.error import S3Error
 
 from app.core.config import Settings, get_settings
+
+_MISSING_OBJECT_CODES = frozenset({"NoSuchKey", "NoSuchObject", "NoSuchBucket"})
+
+
+class ObjectNotFoundError(FileNotFoundError):
+    """Object key is missing from the configured bucket."""
 
 
 class MinioStorageAdapter:
@@ -75,12 +83,39 @@ class MinioStorageAdapter:
         return object_key
 
     def download_bytes(self, object_key: str) -> bytes:
-        response = self._client.get_object(self._bucket, object_key)
+        response = self._open_object(object_key)
         try:
             return response.read()
         finally:
             response.close()
             response.release_conn()
+
+    def iter_object(self, object_key: str, chunk_size: int = 65536) -> Iterator[bytes]:
+        """Yield object bytes in chunks. Closes the MinIO connection when exhausted."""
+        response = self._open_object(object_key)
+        try:
+            yield from response.stream(chunk_size)
+        finally:
+            response.close()
+            response.release_conn()
+
+    def object_size(self, object_key: str) -> int | None:
+        try:
+            stat = self._client.stat_object(self._bucket, object_key)
+        except S3Error as exc:
+            if exc.code in _MISSING_OBJECT_CODES:
+                return None
+            raise
+        size = getattr(stat, "size", None)
+        return int(size) if size is not None else None
+
+    def _open_object(self, object_key: str) -> Any:
+        try:
+            return self._client.get_object(self._bucket, object_key)
+        except S3Error as exc:
+            if exc.code in _MISSING_OBJECT_CODES:
+                raise ObjectNotFoundError(object_key) from exc
+            raise
 
     def object_exists(self, object_key: str) -> bool:
         """Return True if ``object_key`` exists in the bucket."""

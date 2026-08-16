@@ -60,7 +60,7 @@ export function ReportPreviewExportMenu({
       ) : (
         <Download className="h-4 w-4" aria-hidden />
       )}
-      Xuất {reportFormatLabel(format)}
+      {exporting ? "Đang chuẩn bị tải…" : `Xuất ${reportFormatLabel(format)}`}
     </button>
   );
 }

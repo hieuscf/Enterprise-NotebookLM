@@ -18,6 +18,7 @@
  * =============================================================================
  */
 
+import { filenameFromContentDisposition } from "@/features/reports/report-export";
 import { apiFetch, parseApiError } from "@/lib/api-client";
 import type { Report, ReportCreateRequest } from "@/types/reports";
 
@@ -100,9 +101,10 @@ export async function downloadReportExport(
 
   const contentType =
     response.headers.get("Content-Type") ?? "application/octet-stream";
-  const disposition = response.headers.get("Content-Disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition);
-  const filename = matched?.[1]?.trim() || `report_${reportId}`;
+  const filename = filenameFromContentDisposition(
+    response.headers.get("Content-Disposition"),
+    `report_${reportId}`,
+  );
   const blob = await response.blob();
   return { blob, filename, contentType };
 }

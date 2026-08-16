@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { reportHttpMessage, retryPayload } from "@/features/reports/comparison-report-preview";
+import { exportErrorMessage } from "@/features/reports/report-export";
 import { ApiClientError } from "@/lib/api-client";
 import { downloadBlob } from "@/lib/download";
 import {
@@ -56,14 +57,20 @@ export function useReportPreview(workspaceId: string, reportId: string) {
     }
   }, []);
 
-  const applyError = useCallback((err: unknown) => {
+  const applyError = useCallback((err: unknown, kind: "load" | "export" = "load") => {
     if (err instanceof ApiClientError) {
       setErrorStatus(err.status);
-      setError(reportHttpMessage(err.status, err.message));
+      setError(
+        kind === "export"
+          ? exportErrorMessage(err.status, err.code, err.message)
+          : reportHttpMessage(err.status, err.message),
+      );
       return;
     }
     setErrorStatus(null);
-    setError("Không tải được báo cáo.");
+    setError(
+      kind === "export" ? exportErrorMessage(0) : "Không tải được báo cáo.",
+    );
   }, []);
 
   const load = useCallback(async (): Promise<Report | null> => {
@@ -133,7 +140,7 @@ export function useReportPreview(workspaceId: string, reportId: string) {
       downloadBlob(file.blob, file.filename);
       return true;
     } catch (err) {
-      if (mountedRef.current) applyError(err);
+      if (mountedRef.current) applyError(err, "export");
       return false;
     } finally {
       if (mountedRef.current) setExporting(false);

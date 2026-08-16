@@ -95,10 +95,23 @@ class ReportRepository:
             Report.id == report_id,
             Report.workspace_id == workspace_id,
         )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
+        row = await self.get_row(workspace_id=workspace_id, report_id=report_id)
         if row is None:
             return None
         return ReportWithItems(report=row, items=await self._list_items(row.id))
+
+    async def get_row(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        report_id: uuid.UUID,
+    ) -> Report | None:
+        """Workspace-scoped report row only — no items / comparison payload."""
+        stmt = select(Report).where(
+            Report.id == report_id,
+            Report.workspace_id == workspace_id,
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
 
     async def list_for_workspace(
         self,

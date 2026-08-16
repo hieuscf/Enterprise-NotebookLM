@@ -4,8 +4,9 @@
 # Layer: Presentation
 # Purpose: FastAPI routes for async Report CRUD + export (FR9 / UC8).
 # Responsibilities:
-#   - POST 202 pending; GET list/detail; GET export binary; DELETE 204
+#   - POST 202 pending; GET list/detail; GET export stream; DELETE 204
 #   - RBAC: member read/export; editor+ mutate; map domain errors to ErrorResponse
+#   - Export streams the stored artifact (CMP-26); never regenerates content
 # Dependencies:
 #   - require_workspace_*_rl, ReportService, Pydantic Report schemas
 # Public Exports:
@@ -20,7 +21,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.minio_storage import get_minio_storage
@@ -206,12 +208,20 @@ async def get_report(
 @router.get(
     "/{workspaceId}/reports/{reportId}/export",
     responses={
-        status.HTTP_200_OK: {"content": {"application/pdf": {}, "text/markdown": {}}},
+        status.HTTP_200_OK: {
+            "content": {
+                "application/pdf": {},
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+                "text/markdown": {},
+            }
+        },
         status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
         status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
         status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
         status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"model": ErrorResponse},
         status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {"model": ErrorResponse},
     },
 )
 async def export_report(
@@ -219,21 +229,27 @@ async def export_report(
     reportId: uuid.UUID,
     access: WorkspaceAccess = Depends(require_workspace_member_rl),
     service: ReportService = Depends(get_report_service),
-) -> Response:
+) -> StreamingResponse:
     del workspaceId
     try:
         payload = await service.export_report(
             workspace_id=access.workspace_id,
             report_id=reportId,
+            actor_id=access.user_id,
         )
     except ReportServiceError as exc:
         raise _http_error(exc) from exc
-    return Response(
-        content=payload.data,
+    headers = {
+        "Content-Disposition": payload.content_disposition,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if payload.content_length is not None:
+        headers["Content-Length"] = str(payload.content_length)
+    return StreamingResponse(
+        payload.iterator,
         media_type=payload.content_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{payload.filename}"',
-        },
+        headers=headers,
     )
 
 

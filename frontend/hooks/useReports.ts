@@ -23,6 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { exportErrorMessage } from "@/features/reports/report-export";
 import { ApiClientError } from "@/lib/api-client";
 import { downloadBlob } from "@/lib/download";
 import {
@@ -211,8 +212,8 @@ export function useReports(workspaceId: string) {
         if (mountedRef.current) {
           setError(
             err instanceof ApiClientError
-              ? err.message
-              : "Không tải được file báo cáo.",
+              ? exportErrorMessage(err.status, err.code, err.message)
+              : exportErrorMessage(0),
           );
         }
         return false;

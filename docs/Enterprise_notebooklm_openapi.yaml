@@ -1102,7 +1102,10 @@ paths:
         schema: { type: string, format: uuid }
     get:
       tags: [Reports]
-      summary: Tải file báo cáo (PDF/DOCX/Markdown)
+      summary: Tải file báo cáo đã sinh (PDF/DOCX/Markdown) — CMP-26
+      description: >
+        Delivers the stored report artifact. Does not regenerate content.
+        Only status=ready succeeds. file_url is this route, not an object-storage URL.
       responses:
         "200":
           description: Binary file
@@ -1111,6 +1114,31 @@ paths:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema: { type: string, format: binary }
             text/markdown: { schema: { type: string, format: binary } }
+        "401":
+          description: Unauthenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Workspace access denied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Report or artifact not found (not_found / file_not_found)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Not ready or generation failed (not_ready / generation_failed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Unsupported export format
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------------------------------------------------------------
   # ADMIN / OBSERVABILITY (FR12, FR13)
