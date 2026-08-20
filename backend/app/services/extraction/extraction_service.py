@@ -51,6 +51,7 @@ from app.models.enums import (
     ExtractionOutputFormat,
     ExtractionStatus,
     ExtractionType,
+    TargetLanguage,
 )
 from app.repositories.documents import DocumentRepository
 from app.repositories.extractions import ExtractionRepository
@@ -138,6 +139,7 @@ class ExtractionService:
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat = ExtractionOutputFormat.json,
         created_by: uuid.UUID,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> Extraction:
         """Create processing Extraction, commit, enqueue Celery — no LLM in-request."""
         if extraction_type not in ExtractionType:
@@ -166,6 +168,7 @@ class ExtractionService:
             source_version_id=source_version_id,
             extraction_type=extraction_type,
             output_format=output_format,
+            target_language=target_language,
         )
         # Commit before enqueue so the worker can see the row (documents pattern).
         await self._session.commit()
@@ -275,6 +278,7 @@ class ExtractionService:
                 source_version_id=row.source_version_id,
                 extraction_type=row.extraction_type,
                 output_format=row.output_format,
+                target_language=row.target_language,
                 entity_mode=entity_mode,
             )
         except ExtractionServiceError as exc:
@@ -323,6 +327,7 @@ class ExtractionService:
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat = ExtractionOutputFormat.json,
         created_by: uuid.UUID,
+        target_language: TargetLanguage = TargetLanguage.vi,
         entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
     ) -> Extraction:
         """In-process create+process (tests / sync callers). Still one Extraction row."""
@@ -349,6 +354,7 @@ class ExtractionService:
             source_version_id=version.id,
             extraction_type=extraction_type,
             output_format=output_format,
+            target_language=target_language,
         )
         await self._session.flush()
         final = await self.process_extraction(row.id, entity_mode=entity_mode)
@@ -422,6 +428,7 @@ class ExtractionService:
         source_version_id: uuid.UUID,
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat,
+        target_language: TargetLanguage = TargetLanguage.vi,
         entity_mode: EntityExtractionMode = EntityExtractionMode.REUSE_EXISTING_ENTITIES,
     ) -> dict[str, Any]:
         """Dispatch type strategy for a pinned source_version_id (no Extraction insert)."""
@@ -453,6 +460,7 @@ class ExtractionService:
                     extraction_type=ExtractionType.entities,
                     document_title=document_title,
                     chunks=chunks,
+                    target_language=target_language,
                 )
             else:
                 raise ExtractionServiceError(
@@ -465,18 +473,21 @@ class ExtractionService:
                 extraction_type=ExtractionType.table,
                 document_title=document_title,
                 chunks=chunks,
+                target_language=target_language,
             )
         elif extraction_type == ExtractionType.figures:
             canonical, meta = await self._extract_via_llm(
                 extraction_type=ExtractionType.figures,
                 document_title=document_title,
                 chunks=chunks,
+                target_language=target_language,
             )
         elif extraction_type == ExtractionType.timeline:
             canonical, meta = await self._extract_via_llm(
                 extraction_type=ExtractionType.timeline,
                 document_title=document_title,
                 chunks=chunks,
+                target_language=target_language,
             )
         else:
             raise ExtractionServiceError(
@@ -540,6 +551,7 @@ class ExtractionService:
         extraction_type: ExtractionType,
         document_title: str,
         chunks: list[ChunkHydrationRow],
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         if resolve_chat_llm(self._settings) is None and self._llm_call is None:
             raise ExtractionServiceError(
@@ -559,6 +571,7 @@ class ExtractionService:
             model=model,
             extraction_type=extraction_type,
             document_title=document_title,
+            target_language=target_language,
         )
         if not batches:
             raise ExtractionServiceError(
@@ -580,6 +593,7 @@ class ExtractionService:
                 document_title=document_title,
                 chunks=batch,
                 model=model,
+                target_language=target_language,
             )
             model_used = llm.model
             prompt_tokens += int(llm.input_tokens)
@@ -610,9 +624,14 @@ class ExtractionService:
         document_title: str,
         chunks: list[ChunkHydrationRow],
         model: str,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> StructuredLlmResult:
         builder = self._prompt_builder(extraction_type)
-        system, user = builder(document_title=document_title, chunks=chunks)
+        system, user = builder(
+            document_title=document_title,
+            chunks=chunks,
+            target_language=target_language,
+        )
         call_kwargs = {
             "system": system,
             "user": user,
@@ -792,6 +811,7 @@ class ExtractionService:
         model: str,
         extraction_type: ExtractionType,
         document_title: str,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> list[list[ChunkHydrationRow]]:
         """Split chunks into batches that fit the model context window."""
         window = model_context_window(self._settings, model=model)
@@ -804,7 +824,11 @@ class ExtractionService:
 
         # Approximate overhead of instructions for the type.
         builder = self._prompt_builder(extraction_type)
-        empty_system, empty_user = builder(document_title=document_title, chunks=[])
+        empty_system, empty_user = builder(
+            document_title=document_title,
+            chunks=[],
+            target_language=target_language,
+        )
         overhead = count_tokens(empty_system) + count_tokens(empty_user)
 
         for chunk in chunks:

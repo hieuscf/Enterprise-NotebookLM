@@ -9,18 +9,20 @@
  * Dependencies:
  *   - docs/Enterprise_notebooklm_openapi.yaml Summary schema
  * Public Exports:
- *   - SummaryStyle, SummaryStatus, SummaryTopicSection, Summary,
+ *   - SummaryStyle, SummaryStatus, TargetLanguage, SummaryTopicSection, Summary,
  *     SummaryCreateRequest
  * Database/Table: summaries
  * Related Modules: lib/summaries.api, features/summaries/*
  * Important Notes: source_version_id is public (FE current-vs-old UX).
- *   sections is set for by_topic only.
+ *   sections is set for by_topic only. target_language defaults to vi.
  * =============================================================================
  */
 
 export type SummaryStyle = "short" | "detailed" | "by_topic" | "bullet_points";
 
 export type SummaryStatus = "processing" | "completed" | "failed";
+
+export type TargetLanguage = "vi" | "en";
 
 export type SummaryTopicSection = {
   topic_id: string | null;
@@ -33,6 +35,7 @@ export type Summary = {
   document_id: string;
   source_version_id: string;
   style: SummaryStyle;
+  target_language: TargetLanguage;
   status: SummaryStatus;
   content: string | null;
   sections: SummaryTopicSection[] | null;
@@ -41,4 +44,5 @@ export type Summary = {
 
 export type SummaryCreateRequest = {
   style: SummaryStyle;
+  target_language?: TargetLanguage;
 };

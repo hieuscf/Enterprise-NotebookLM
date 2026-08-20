@@ -30,8 +30,9 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SummaryLanguageSelector } from "@/features/summaries/SummaryLanguageSelector";
 import { ExtractionContent } from "@/features/extractions/ExtractionContent";
 import { ExtractionControls } from "@/features/extractions/ExtractionControls";
 import { ExtractionHistory } from "@/features/extractions/ExtractionHistory";
@@ -54,6 +55,7 @@ import type {
   Extraction,
   ExtractionOutputFormat,
   ExtractionType,
+  TargetLanguage,
 } from "@/types/extractions";
 
 type Props = {
@@ -82,8 +84,15 @@ export function ExtractionSection({
 
   const [extractionType, setExtractionType] = useState<ExtractionType>("table");
   const [outputFormat, setOutputFormat] = useState<ExtractionOutputFormat>("json");
+  const [selectedLanguage, setSelectedLanguage] = useState<TargetLanguage>("vi");
   const [historySelection, setHistorySelection] = useState<Extraction | null>(null);
   const [showOldHint, setShowOldHint] = useState(false);
+  const [awaitingLanguage, setAwaitingLanguage] = useState(false);
+
+  const requestSeqRef = useRef(0);
+  const selectedLanguageRef = useRef(selectedLanguage);
+  const prevLanguageRef = useRef(selectedLanguage);
+  selectedLanguageRef.current = selectedLanguage;
 
   const currentCompleted = useMemo(
     () =>
@@ -92,8 +101,9 @@ export function ExtractionSection({
         currentVersionId,
         extractionType,
         outputFormat,
+        selectedLanguage,
       ),
-    [extractions, currentVersionId, extractionType, outputFormat],
+    [extractions, currentVersionId, extractionType, outputFormat, selectedLanguage],
   );
   const processing = useMemo(
     () =>
@@ -102,8 +112,9 @@ export function ExtractionSection({
         currentVersionId,
         extractionType,
         outputFormat,
+        selectedLanguage,
       ),
-    [extractions, currentVersionId, extractionType, outputFormat],
+    [extractions, currentVersionId, extractionType, outputFormat, selectedLanguage],
   );
   const failed = useMemo(
     () =>
@@ -112,8 +123,9 @@ export function ExtractionSection({
         currentVersionId,
         extractionType,
         outputFormat,
+        selectedLanguage,
       ),
-    [extractions, currentVersionId, extractionType, outputFormat],
+    [extractions, currentVersionId, extractionType, outputFormat, selectedLanguage],
   );
 
   const oldForSelection = useMemo(() => {
@@ -123,6 +135,7 @@ export function ExtractionSection({
         e.status === "completed" &&
         e.extraction_type === extractionType &&
         e.output_format === outputFormat &&
+        (e.target_language ?? "vi") === selectedLanguage &&
         e.source_version_id !== currentVersionId,
     );
     if (olds.length === 0) return null;
@@ -135,20 +148,66 @@ export function ExtractionSection({
     currentCompleted,
     extractionType,
     outputFormat,
+    selectedLanguage,
   ]);
 
   useEffect(() => {
     setHistorySelection(null);
     setShowOldHint(Boolean(oldForSelection) && !currentCompleted);
-  }, [extractionType, outputFormat, currentCompleted, oldForSelection, currentVersionId]);
+  }, [
+    extractionType,
+    outputFormat,
+    selectedLanguage,
+    currentCompleted,
+    oldForSelection,
+    currentVersionId,
+  ]);
+
+  useEffect(() => {
+    if (currentCompleted || processing || failed) {
+      setAwaitingLanguage(false);
+    }
+  }, [currentCompleted, processing, failed]);
+
+  useEffect(() => {
+    const prev = prevLanguageRef.current;
+    if (prev === selectedLanguage) return;
+    prevLanguageRef.current = selectedLanguage;
+
+    if (!canEdit || !currentVersionId || loading) return;
+    if (currentCompleted || processing) {
+      setAwaitingLanguage(false);
+      return;
+    }
+
+    setAwaitingLanguage(true);
+    const seq = ++requestSeqRef.current;
+    const lang = selectedLanguage;
+    const type = extractionType;
+    const format = outputFormat;
+    void (async () => {
+      const row = await createExtraction(type, format, lang);
+      if (seq !== requestSeqRef.current) return;
+      if (selectedLanguageRef.current !== lang) return;
+      if (!row) {
+        setAwaitingLanguage(false);
+        onCreateError?.(
+          "Unable to generate extraction in the selected language. Please try again.",
+        );
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLanguage]);
 
   const displayed: Extraction | null =
-    historySelection ??
-    processing ??
-    currentCompleted ??
-    (failed && !currentCompleted ? failed : null);
+    historySelection &&
+    (historySelection.target_language ?? "vi") === selectedLanguage
+      ? historySelection
+      : processing ??
+        currentCompleted ??
+        (failed && !currentCompleted ? failed : null);
 
-  const busy = creating || Boolean(processing);
+  const busy = creating || Boolean(processing) || awaitingLanguage;
   const canExport =
     Boolean(displayed) &&
     displayed?.status === "completed" &&
@@ -157,9 +216,16 @@ export function ExtractionSection({
 
   async function handleCreate() {
     if (!canEdit || busy) return;
-    const row = await createExtraction(extractionType, outputFormat);
+    const seq = ++requestSeqRef.current;
+    const lang = selectedLanguage;
+    const row = await createExtraction(extractionType, outputFormat, lang);
+    if (seq !== requestSeqRef.current || selectedLanguageRef.current !== lang) {
+      return;
+    }
     if (!row && onCreateError) {
-      onCreateError("Không tạo được trích xuất.");
+      onCreateError(
+        "Unable to generate extraction in the selected language. Please try again.",
+      );
     }
     setHistorySelection(null);
   }
@@ -216,24 +282,38 @@ export function ExtractionSection({
         <div>
           <h2 className="text-h3 text-primary">Trích xuất thông tin</h2>
           <p className="mt-0.5 text-body-sm text-secondary">
-            Chọn loại và định dạng. Kết quả đã có cho phiên bản hiện tại sẽ được dùng lại
-            (không gọi AI lại).
+            Chọn loại, định dạng và ngôn ngữ đầu ra. Kết quả đã có cho phiên bản hiện tại
+            sẽ được dùng lại (không gọi AI lại).
           </p>
         </div>
-        {canEdit && currentCompleted && !busy ? (
-          <button
-            type="button"
-            onClick={() => void handleCreate()}
-            className={cn(
-              "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
-              "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
-            )}
-            aria-label={`Tạo lại trích xuất ${typeLabel(extractionType)} ${formatLabel(outputFormat)}`}
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden />
-            Tạo lại
-          </button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <SummaryLanguageSelector
+            id="extraction-output-language"
+            value={selectedLanguage}
+            onChange={(next) => {
+              if (next === selectedLanguage) return;
+              requestSeqRef.current += 1;
+              setAwaitingLanguage(true);
+              setSelectedLanguage(next);
+              setHistorySelection(null);
+            }}
+            disabled={creating && !processing}
+          />
+          {canEdit && currentCompleted && !busy ? (
+            <button
+              type="button"
+              onClick={() => void handleCreate()}
+              className={cn(
+                "inline-flex h-9 items-center gap-2 rounded-md border border-border-default px-3.5",
+                "text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary",
+              )}
+              aria-label={`Tạo lại trích xuất ${typeLabel(extractionType)} ${formatLabel(outputFormat)}`}
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden />
+              Tạo lại
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <ExtractionControls
@@ -283,9 +363,10 @@ export function ExtractionSection({
           >
             <Loader2 className="h-4 w-4 animate-spin text-warning" aria-hidden />
             <div>
-              <p className="font-medium text-primary">Đang trích xuất thông tin…</p>
+              <p className="font-medium text-primary">Generating extraction…</p>
               <p className="text-caption text-tertiary">
-                Bạn có thể tiếp tục đọc tài liệu trong lúc chờ.
+                Output language:{" "}
+                {selectedLanguage === "en" ? "English" : "Tiếng Việt"}
               </p>
             </div>
           </div>

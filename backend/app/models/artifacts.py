@@ -40,6 +40,7 @@ from app.models.enums import (
     ReportStatus,
     SummaryStatus,
     SummaryType,
+    TargetLanguage,
 )
 from app.models.types import (
     comparison_status_enum,
@@ -52,6 +53,7 @@ from app.models.types import (
     report_status_enum,
     summary_status_enum,
     summary_type_enum,
+    target_language_enum,
     uuid_pk,
 )
 
@@ -80,6 +82,12 @@ class Summary(Base):
         nullable=False,
     )
     type: Mapped[SummaryType] = mapped_column(summary_type_enum, nullable=False)
+    target_language: Mapped[TargetLanguage] = mapped_column(
+        target_language_enum,
+        nullable=False,
+        default=TargetLanguage.vi,
+        server_default=TargetLanguage.vi.value,
+    )
     status: Mapped[SummaryStatus] = mapped_column(
         summary_status_enum,
         nullable=False,
@@ -127,6 +135,12 @@ class Extraction(Base):
         extraction_output_format_enum,
         nullable=False,
         server_default=ExtractionOutputFormat.json.value,
+    )
+    target_language: Mapped[TargetLanguage] = mapped_column(
+        target_language_enum,
+        nullable=False,
+        default=TargetLanguage.vi,
+        server_default=TargetLanguage.vi.value,
     )
     status: Mapped[ExtractionStatus] = mapped_column(
         extraction_status_enum,

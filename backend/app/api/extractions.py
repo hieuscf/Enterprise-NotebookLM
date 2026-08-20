@@ -32,6 +32,7 @@ from app.dependencies.rate_limit import (
 )
 from app.dependencies.rbac import WorkspaceAccess
 from app.models.artifacts import Extraction
+from app.models.enums import TargetLanguage
 from app.repositories.documents import DocumentRepository
 from app.repositories.extractions import ExtractionRepository
 from app.repositories.retrieval import RetrievalRepository
@@ -59,12 +60,14 @@ def get_extraction_service(
 
 def _extraction_response(row: Extraction) -> ExtractionResponse:
     result: dict[str, Any] | None = row.result_json
+    language = row.target_language or TargetLanguage.vi
     return ExtractionResponse(
         id=row.id,
         document_id=row.document_id,
         source_version_id=row.source_version_id,
         extraction_type=row.extraction_type,
         output_format=row.output_format,
+        target_language=language,
         status=row.status,
         result=result,
         created_at=row.created_at,
@@ -132,6 +135,7 @@ async def create_document_extraction(
             document_id=documentId,
             extraction_type=body.extraction_type,
             output_format=body.output_format,
+            target_language=body.target_language,
             created_by=access.user_id,
         )
     except ExtractionServiceError as exc:

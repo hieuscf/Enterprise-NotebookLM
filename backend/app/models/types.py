@@ -51,6 +51,7 @@ from app.models.enums import (
     RouteType,
     SummaryStatus,
     SummaryType,
+    TargetLanguage,
     UserStatus,
     VectorStore,
 )
@@ -106,6 +107,7 @@ finish_reason_enum = pg_enum(FinishReason, "finish_reason")
 retrieval_method_enum = pg_enum(RetrievalMethod, "retrieval_method")
 summary_type_enum = pg_enum(SummaryType, "summary_type")
 summary_status_enum = pg_enum(SummaryStatus, "summary_status")
+target_language_enum = pg_enum(TargetLanguage, "target_language")
 extraction_type_enum = pg_enum(ExtractionType, "extraction_type")
 extraction_status_enum = pg_enum(ExtractionStatus, "extraction_status")
 extraction_output_format_enum = pg_enum(ExtractionOutputFormat, "extraction_output_format")

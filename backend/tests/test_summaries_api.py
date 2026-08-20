@@ -42,6 +42,7 @@ from app.models.enums import (
     RoleName,
     SummaryStatus,
     SummaryType,
+    TargetLanguage,
 )
 from app.repositories.retrieval import ChunkHydrationRow
 from app.repositories.workspace_members import WorkspaceMemberRepository
@@ -120,6 +121,7 @@ class FakeSummaryRepo:
             created_by=kwargs["created_by"],
             source_version_id=kwargs["source_version_id"],
             type=kwargs["type_"],
+            target_language=kwargs.get("target_language", TargetLanguage.vi),
             status=SummaryStatus.processing,
             content=None,
             model_used=None,
@@ -722,3 +724,66 @@ async def test_celery_run_summary_generation_completed(
     assert summaries.rows[row.id].completion_tokens == 4
     assert summaries.rows[row.id].cost_usd == Decimal("0.002")
     assert summaries.rows[row.id].source_version_id == version.id
+
+
+@pytest.mark.asyncio
+async def test_post_summary_default_target_language_vi(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    document, _ = _seed_document(docs_repo, workspace_id=workspace_id, user_id=user_id)
+    resp = await client.post(
+        f"/workspaces/{workspace_id}/documents/{document.id}/summaries",
+        json={"style": "short"},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["target_language"] == "vi"
+    row = next(iter(summaries_repo.rows.values()))
+    assert row.target_language == TargetLanguage.vi
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["vi", "en"])
+async def test_post_summary_target_language(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+    summaries_repo: FakeSummaryRepo,
+    lang: str,
+) -> None:
+    _set_role(RoleName.editor)
+    document, _ = _seed_document(docs_repo, workspace_id=workspace_id, user_id=user_id)
+    resp = await client.post(
+        f"/workspaces/{workspace_id}/documents/{document.id}/summaries",
+        json={"style": "detailed", "target_language": lang},
+    )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["target_language"] == lang
+    assert body["style"] == "detailed"
+    assert body["status"] == "processing"
+    row = next(iter(summaries_repo.rows.values()))
+    assert row.target_language.value == lang
+
+
+@pytest.mark.asyncio
+async def test_post_summary_invalid_target_language(
+    client: AsyncClient,
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    docs_repo: FakeDocumentRepo,
+) -> None:
+    _set_role(RoleName.editor)
+    document, _ = _seed_document(docs_repo, workspace_id=workspace_id, user_id=user_id)
+    resp = await client.post(
+        f"/workspaces/{workspace_id}/documents/{document.id}/summaries",
+        json={"style": "short", "target_language": "fr"},
+    )
+    # Project validation contract uses 422 (OpenAPI ValidationError).
+    assert resp.status_code == 422

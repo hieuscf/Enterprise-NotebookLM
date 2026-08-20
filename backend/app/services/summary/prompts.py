@@ -5,58 +5,86 @@
 # Purpose: Style-specific system/user prompt builders for AI Summary.
 # Responsibilities:
 #   - Map SummaryStyle → system instructions
+#   - Inject allowlisted target_language labels into prompts
 #   - Assemble user payload from document chunks / topic hierarchy
 # Dependencies:
-#   - app.models.enums.SummaryType
+#   - app.models.enums.SummaryType, TargetLanguage, target_language_label
 # Public Exports:
 #   - build_summary_prompts, STYLE_SYSTEM_PROMPTS
 # Database/Table: N/A
 # Related Modules: summary_service
 # Important Notes: LLM must return JSON object ``{"summary": "..."}``.
-#   Summary body text must be Vietnamese (Tiếng Việt).
+#   Output language comes from TargetLanguage enum labels only (no raw strings).
 # =============================================================================
 
 from __future__ import annotations
 
-from app.models.enums import SummaryType
+from app.models.enums import SummaryType, TargetLanguage, target_language_label
 from app.repositories.retrieval import ChunkHydrationRow
 from app.repositories.summaries import TopicContextRow
 
-_VI_LANG = (
-    "Write the summary content in Vietnamese (Tiếng Việt). "
-    "Keep proper nouns, product names, and citations as in the source when needed."
-)
 
-STYLE_SYSTEM_PROMPTS: dict[SummaryType, str] = {
-    SummaryType.short: (
-        "You are an enterprise document summarizer. Produce a concise short "
-        "summary (3–6 sentences) covering only the main thesis and key facts. "
-        f"{_VI_LANG} "
-        "Respond with a JSON object: {\"summary\": \"...\"}."
-    ),
-    SummaryType.detailed: (
-        "You are an enterprise document summarizer. Produce a detailed summary "
-        "that preserves structure, important figures, decisions, and caveats. "
-        f"{_VI_LANG} "
-        "Respond with a JSON object: {\"summary\": \"...\"}."
-    ),
-    SummaryType.by_topic: (
-        "You are an enterprise document summarizer. Organize the summary by "
-        "topics/themes. Prefer the provided topic hierarchy when present; "
-        "otherwise infer coherent topic sections. "
-        f"{_VI_LANG} "
-        "Section titles and content must also be in Vietnamese. "
-        "Respond with a JSON object: "
-        "{\"sections\": [{\"topic_id\": null, \"title\": \"...\", \"content\": \"...\"}], "
-        "\"summary\": \"optional flat markdown for copy\"}. "
-        "When a provided topic has an id, set topic_id to that UUID string."
-    ),
-    SummaryType.bullet_points: (
+def _language_block(language: TargetLanguage) -> str:
+    label = target_language_label(language)
+    return (
+        f"Output language: {label}\n"
+        "Requirements:\n"
+        "- Generate the summary directly in the requested output language.\n"
+        "- Do not translate an already generated summary.\n"
+        "- Preserve factual meaning from the provided context.\n"
+        "- Do not invent facts.\n"
+        "- Preserve names, identifiers, numbers, dates, percentages, "
+        "units, formulas and technical terms accurately.\n"
+        "- Do not modify citation references "
+        "(e.g. [1], [2]) — keep them pointing to the same evidence.\n"
+        "- Citation references must continue to point to the original evidence."
+    )
+
+
+def _style_system_prompt(style: SummaryType, language: TargetLanguage) -> str:
+    label = target_language_label(language)
+    lang_line = (
+        f"Write the summary content in {label}. "
+        "Keep proper nouns, product names, and citations as in the source when needed."
+    )
+    if style == SummaryType.short:
+        return (
+            "You are an enterprise document summarizer. Produce a concise short "
+            "summary (3–6 sentences) covering only the main thesis and key facts. "
+            f"{lang_line} "
+            'Respond with a JSON object: {"summary": "..."}.'
+        )
+    if style == SummaryType.detailed:
+        return (
+            "You are an enterprise document summarizer. Produce a detailed summary "
+            "that preserves structure, important figures, decisions, and caveats. "
+            f"{lang_line} "
+            'Respond with a JSON object: {"summary": "..."}.'
+        )
+    if style == SummaryType.by_topic:
+        return (
+            "You are an enterprise document summarizer. Organize the summary by "
+            "topics/themes. Prefer the provided topic hierarchy when present; "
+            "otherwise infer coherent topic sections. "
+            f"{lang_line} "
+            f"Section titles and content must also be in {label}. "
+            "Respond with a JSON object: "
+            '{"sections": [{"topic_id": null, "title": "...", "content": "..."}], '
+            '"summary": "optional flat markdown for copy"}. '
+            "When a provided topic has an id, set topic_id to that UUID string."
+        )
+    # bullet_points
+    return (
         "You are an enterprise document summarizer. Produce a bullet-point "
         "summary (markdown list) of the most important takeaways. "
-        f"{_VI_LANG} "
-        "Respond with a JSON object: {\"summary\": \"...\"}."
-    ),
+        f"{lang_line} "
+        'Respond with a JSON object: {"summary": "..."}.'
+    )
+
+
+# Kept for tests / introspection — default Vietnamese prompts (style keys only).
+STYLE_SYSTEM_PROMPTS: dict[SummaryType, str] = {
+    style: _style_system_prompt(style, TargetLanguage.vi) for style in SummaryType
 }
 
 
@@ -66,12 +94,13 @@ def build_summary_prompts(
     document_title: str,
     chunks: list[ChunkHydrationRow],
     topics: list[TopicContextRow] | None = None,
+    target_language: TargetLanguage = TargetLanguage.vi,
 ) -> tuple[str, str]:
     """Return (system, user) prompts for one summary LLM call."""
-    system = STYLE_SYSTEM_PROMPTS[style]
+    system = _style_system_prompt(style, target_language)
     body_parts: list[str] = [
         f"Document title: {document_title or '(untitled)'}",
-        "Output language: Vietnamese (Tiếng Việt).",
+        _language_block(target_language),
     ]
 
     if style == SummaryType.by_topic and topics:

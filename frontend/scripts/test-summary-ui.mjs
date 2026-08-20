@@ -19,12 +19,13 @@ function isOldVersion(summary, currentVersionId) {
   return summary.source_version_id !== currentVersionId;
 }
 
-function getCurrentSummary(summaries, currentVersionId, selectedStyle) {
+function getCurrentSummary(summaries, currentVersionId, selectedStyle, selectedLanguage = "vi") {
   if (!currentVersionId) return null;
   const matches = summaries.filter(
     (s) =>
       s.status === "completed" &&
       s.style === selectedStyle &&
+      (s.target_language ?? "vi") === selectedLanguage &&
       s.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -64,6 +65,7 @@ const summaries = [
     style: "short",
     status: "completed",
     source_version_id: V1,
+    target_language: "vi",
     created_at: "2026-08-01T10:00:00Z",
     content: "old short",
     sections: null,
@@ -73,6 +75,7 @@ const summaries = [
     style: "short",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-02T10:00:00Z",
     content: "new short",
     sections: null,
@@ -82,6 +85,7 @@ const summaries = [
     style: "detailed",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-03T10:00:00Z",
     content: "detailed v2",
     sections: null,
@@ -91,14 +95,33 @@ const summaries = [
     style: "short",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-04T10:00:00Z",
     content: "newer short",
+    sections: null,
+  },
+  {
+    id: "e",
+    style: "short",
+    status: "completed",
+    source_version_id: V2,
+    target_language: "en",
+    created_at: "2026-08-05T10:00:00Z",
+    content: "english short [1]",
     sections: null,
   },
 ];
 
 const current = getCurrentSummary(summaries, V2, "short");
-assert(current && current.id === "d", "Picks newest completed short for V2");
+assert(current && current.id === "d", "Picks newest completed short for V2 (vi default)");
+assert(
+  getCurrentSummary(summaries, V2, "short", "en")?.id === "e",
+  "Picks English short separately from Vietnamese",
+);
+assert(
+  getCurrentSummary(summaries, V2, "short", "en")?.content.includes("[1]"),
+  "Citation marker preserved in English selection",
+);
 assert(
   getCurrentSummary(summaries, V2, "detailed")?.id === "c",
   "Picks detailed for V2",
@@ -111,6 +134,17 @@ assert(
   getCurrentSummary(summaries, V2, "by_topic") === null,
   "Missing by_topic on V2 → null",
 );
+assert(
+  getCurrentSummary(summaries, V2, "detailed", "en") === null,
+  "No English detailed → null (does not show Vietnamese under English)",
+);
+
+// Race: older VI response must not replace newer EN selection key
+const selectedLanguage = "en";
+const displayed = getCurrentSummary(summaries, V2, "short", selectedLanguage);
+assert(displayed?.id === "e", "Race-safe selection uses selected language key");
+assert(displayed?.target_language === "en", "generatedLanguage matches selectedLanguage");
+
 
 // --- old-version badge -----------------------------------------------------
 assert(isOldVersion({ source_version_id: V1 }, V2) === true, "V1 is old vs V2");

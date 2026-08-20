@@ -33,6 +33,7 @@ import type {
   Extraction,
   ExtractionOutputFormat,
   ExtractionType,
+  TargetLanguage,
 } from "@/types/extractions";
 
 const DEFAULT_INTERVAL_MS = 2500;
@@ -135,14 +136,15 @@ export function useDocumentExtractions(workspaceId: string, documentId: string) 
     async (
       extractionType: ExtractionType,
       outputFormat: ExtractionOutputFormat,
+      targetLanguage: TargetLanguage = "vi",
     ): Promise<Extraction | null> => {
-      if (creating) return null;
       setCreating(true);
       setError(null);
       try {
         const row = await createDocumentExtraction(workspaceId, documentId, {
           extraction_type: extractionType,
           output_format: outputFormat,
+          target_language: targetLanguage,
         });
         if (!mountedRef.current) return row;
         upsertExtraction(row);
@@ -158,7 +160,7 @@ export function useDocumentExtractions(workspaceId: string, documentId: string) 
           setError(
             err instanceof ApiClientError
               ? err.message
-              : "Không tạo được trích xuất.",
+              : "Unable to generate extraction in the selected language. Please try again.",
           );
         }
         return null;
@@ -166,15 +168,7 @@ export function useDocumentExtractions(workspaceId: string, documentId: string) 
         if (mountedRef.current) setCreating(false);
       }
     },
-    [
-      creating,
-      documentId,
-      pollOnce,
-      startPoll,
-      stopPoll,
-      upsertExtraction,
-      workspaceId,
-    ],
+    [documentId, pollOnce, startPoll, stopPoll, upsertExtraction, workspaceId],
   );
 
   return {

@@ -30,6 +30,7 @@ from app.dependencies.rate_limit import (
 )
 from app.dependencies.rbac import WorkspaceAccess
 from app.models.artifacts import Summary
+from app.models.enums import TargetLanguage
 from app.repositories.documents import DocumentRepository
 from app.repositories.retrieval import RetrievalRepository
 from app.repositories.summaries import SummaryRepository
@@ -75,11 +76,13 @@ def _summary_response(row: Summary) -> SummaryResponse:
                 )
             )
         sections = parsed or None
+    language = row.target_language or TargetLanguage.vi
     return SummaryResponse(
         id=row.id,
         document_id=row.document_id,
         source_version_id=row.source_version_id,
         style=row.type,  # ORM ``type`` → OpenAPI ``style``
+        target_language=language,
         status=row.status,
         content=row.content,
         sections=sections,
@@ -147,6 +150,7 @@ async def create_document_summary(
             workspace_id=access.workspace_id,
             document_id=documentId,
             style=body.style,
+            target_language=body.target_language,
             created_by=access.user_id,
         )
     except SummaryServiceError as exc:

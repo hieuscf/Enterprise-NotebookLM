@@ -38,6 +38,7 @@ from app.models.enums import (
     ExtractionStatus,
     ExtractionType,
     FileType,
+    TargetLanguage,
 )
 from app.repositories.extractions import EntityReuseRow
 from app.repositories.retrieval import ChunkHydrationRow
@@ -132,6 +133,7 @@ class FakeExtractionRepo:
             source_version_id=kwargs["source_version_id"],
             extraction_type=kwargs["extraction_type"],
             output_format=kwargs["output_format"],
+            target_language=kwargs.get("target_language", TargetLanguage.vi),
             status=ExtractionStatus.processing,
             result_json=None,
             model_used=None,

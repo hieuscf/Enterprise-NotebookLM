@@ -29,7 +29,7 @@ import {
   listDocumentSummaries,
 } from "@/lib/summaries.api";
 import { ApiClientError } from "@/lib/api-client";
-import type { Summary, SummaryStyle } from "@/types/summaries";
+import type { Summary, SummaryStyle, TargetLanguage } from "@/types/summaries";
 
 const DEFAULT_INTERVAL_MS = 2500;
 
@@ -126,12 +126,17 @@ export function useDocumentSummaries(workspaceId: string, documentId: string) {
   }, [reload, stopAllPolls]);
 
   const createSummary = useCallback(
-    async (style: SummaryStyle): Promise<Summary | null> => {
-      if (creating) return null;
+    async (
+      style: SummaryStyle,
+      targetLanguage: TargetLanguage = "vi",
+    ): Promise<Summary | null> => {
       setCreating(true);
       setError(null);
       try {
-        const row = await createDocumentSummary(workspaceId, documentId, { style });
+        const row = await createDocumentSummary(workspaceId, documentId, {
+          style,
+          target_language: targetLanguage,
+        });
         if (!mountedRef.current) return row;
         upsertSummary(row);
         if (row.status === "processing") {
@@ -145,7 +150,9 @@ export function useDocumentSummaries(workspaceId: string, documentId: string) {
       } catch (err) {
         if (mountedRef.current) {
           setError(
-            err instanceof ApiClientError ? err.message : "Không tạo được tóm tắt.",
+            err instanceof ApiClientError
+              ? err.message
+              : "Unable to generate summary in the selected language. Please try again.",
           );
         }
         return null;
@@ -153,7 +160,7 @@ export function useDocumentSummaries(workspaceId: string, documentId: string) {
         if (mountedRef.current) setCreating(false);
       }
     },
-    [creating, documentId, pollOnce, startPoll, stopPoll, upsertSummary, workspaceId],
+    [documentId, pollOnce, startPoll, stopPoll, upsertSummary, workspaceId],
   );
 
   return {

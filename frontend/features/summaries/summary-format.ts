@@ -18,7 +18,7 @@
  * =============================================================================
  */
 
-import type { Summary, SummaryStyle, SummaryStatus } from "@/types/summaries";
+import type { Summary, SummaryStyle, SummaryStatus, TargetLanguage } from "@/types/summaries";
 
 export const SUMMARY_STYLE_OPTIONS: ReadonlyArray<{
   style: SummaryStyle;
@@ -59,21 +59,24 @@ export function isOldVersion(
  * Selection priority:
  * 1. completed
  * 2. matching selected style
- * 3. matching current_version_id
- * 4. newest created_at
+ * 3. matching target_language
+ * 4. matching current_version_id
+ * 5. newest created_at
  *
- * Returns null when no current-version completed Summary exists for the style.
+ * Returns null when no current-version completed Summary exists for the style+language.
  */
 export function getCurrentSummary(
   summaries: readonly Summary[],
   currentVersionId: string | null,
   selectedStyle: SummaryStyle,
+  selectedLanguage: TargetLanguage = "vi",
 ): Summary | null {
   if (!currentVersionId) return null;
   const matches = summaries.filter(
     (s) =>
       s.status === "completed" &&
       s.style === selectedStyle &&
+      (s.target_language ?? "vi") === selectedLanguage &&
       s.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -82,17 +85,19 @@ export function getCurrentSummary(
   )[0];
 }
 
-/** Latest processing summary for style + current version (if any). */
+/** Latest processing summary for style + language + current version (if any). */
 export function getProcessingSummary(
   summaries: readonly Summary[],
   currentVersionId: string | null,
   selectedStyle: SummaryStyle,
+  selectedLanguage: TargetLanguage = "vi",
 ): Summary | null {
   if (!currentVersionId) return null;
   const matches = summaries.filter(
     (s) =>
       s.status === "processing" &&
       s.style === selectedStyle &&
+      (s.target_language ?? "vi") === selectedLanguage &&
       s.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -101,17 +106,19 @@ export function getProcessingSummary(
   )[0];
 }
 
-/** Latest failed summary for style + current version (if any). */
+/** Latest failed summary for style + language + current version (if any). */
 export function getFailedSummary(
   summaries: readonly Summary[],
   currentVersionId: string | null,
   selectedStyle: SummaryStyle,
+  selectedLanguage: TargetLanguage = "vi",
 ): Summary | null {
   if (!currentVersionId) return null;
   const matches = summaries.filter(
     (s) =>
       s.status === "failed" &&
       s.style === selectedStyle &&
+      (s.target_language ?? "vi") === selectedLanguage &&
       s.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;

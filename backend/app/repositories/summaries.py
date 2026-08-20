@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifacts import Summary
 from app.models.documents import Document
-from app.models.enums import SummaryStatus, SummaryType
+from app.models.enums import SummaryStatus, SummaryType, TargetLanguage
 from app.models.knowledge import DocumentChunk, Topic, TopicChunk
 
 
@@ -58,6 +58,7 @@ class SummaryRepository:
         created_by: uuid.UUID,
         source_version_id: uuid.UUID,
         type_: SummaryType,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> Summary:
         """Insert a processing Summary with null content (POST / 202 path)."""
         row = Summary(
@@ -65,6 +66,7 @@ class SummaryRepository:
             created_by=created_by,
             source_version_id=source_version_id,
             type=type_,
+            target_language=target_language,
             status=SummaryStatus.processing,
             content=None,
             sections=None,

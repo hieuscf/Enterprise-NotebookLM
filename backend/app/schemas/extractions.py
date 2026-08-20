@@ -16,6 +16,7 @@
 #   - Exposes source_version_id + status for async FE polling (Summary convention).
 #   - result is null while processing/failed; structured object when completed.
 #   - Cost/token fields are internal (not in public OpenAPI response).
+#   - target_language defaults to vi (backward compatible).
 # =============================================================================
 
 from __future__ import annotations
@@ -24,14 +25,20 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import ExtractionOutputFormat, ExtractionStatus, ExtractionType
+from app.models.enums import (
+    ExtractionOutputFormat,
+    ExtractionStatus,
+    ExtractionType,
+    TargetLanguage,
+)
 
 
 class ExtractionCreateRequest(BaseModel):
     extraction_type: ExtractionType
     output_format: ExtractionOutputFormat = ExtractionOutputFormat.json
+    target_language: TargetLanguage = Field(default=TargetLanguage.vi)
 
 
 class ExtractionResponse(BaseModel):
@@ -42,6 +49,7 @@ class ExtractionResponse(BaseModel):
     source_version_id: uuid.UUID
     extraction_type: ExtractionType
     output_format: ExtractionOutputFormat
+    target_language: TargetLanguage
     status: ExtractionStatus
     result: dict[str, Any] | None = None
     created_at: datetime

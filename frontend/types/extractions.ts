@@ -9,12 +9,12 @@
  * Dependencies:
  *   - docs/Enterprise_notebooklm_openapi.yaml Extraction schema
  * Public Exports:
- *   - ExtractionType, ExtractionOutputFormat, ExtractionStatus, Extraction,
- *     ExtractionCreateRequest, TableResultPayload
+ *   - ExtractionType, ExtractionOutputFormat, ExtractionStatus, TargetLanguage,
+ *     Extraction, ExtractionCreateRequest, TableResultPayload
  * Database/Table: extractions
  * Related Modules: lib/extractions.api, features/extractions/*
  * Important Notes: result is null while processing/failed; structured when completed.
- *   Cost/token fields are not public API.
+ *   Cost/token fields are not public API. target_language defaults to vi.
  * =============================================================================
  */
 
@@ -23,6 +23,8 @@ export type ExtractionType = "table" | "figures" | "entities" | "timeline";
 export type ExtractionOutputFormat = "json" | "table";
 
 export type ExtractionStatus = "processing" | "completed" | "failed";
+
+export type TargetLanguage = "vi" | "en";
 
 /** Shared table-ready shape for output_format=table (headers + rows). */
 export type TableResultPayload = {
@@ -36,6 +38,7 @@ export type Extraction = {
   source_version_id: string;
   extraction_type: ExtractionType;
   output_format: ExtractionOutputFormat;
+  target_language: TargetLanguage;
   status: ExtractionStatus;
   result: Record<string, unknown> | TableResultPayload | null;
   created_at: string;
@@ -44,4 +47,5 @@ export type Extraction = {
 export type ExtractionCreateRequest = {
   extraction_type: ExtractionType;
   output_format?: ExtractionOutputFormat;
+  target_language?: TargetLanguage;
 };

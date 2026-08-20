@@ -146,6 +146,31 @@ class RetrievalMethod(enum.StrEnum):
     rerank = "rerank"
 
 
+class TargetLanguage(enum.StrEnum):
+    """LLM output language for Summary / Extraction (API ``target_language``).
+
+    Only allowlisted codes may reach prompts — never interpolate raw user strings.
+    """
+
+    vi = "vi"
+    en = "en"
+
+
+# Canonical English labels for prompt injection (enum → label only).
+TARGET_LANGUAGE_LABELS: dict[TargetLanguage, str] = {
+    TargetLanguage.vi: "Vietnamese",
+    TargetLanguage.en: "English",
+}
+
+
+def target_language_label(language: TargetLanguage) -> str:
+    """Map allowlisted TargetLanguage to a safe prompt label."""
+    try:
+        return TARGET_LANGUAGE_LABELS[language]
+    except KeyError as exc:  # pragma: no cover — unreachable for valid enum
+        raise ValueError(f"Unsupported target_language: {language}") from exc
+
+
 class SummaryType(enum.StrEnum):
     """Aligned with OpenAPI Summary.style (by_topic / bullet_points).
 

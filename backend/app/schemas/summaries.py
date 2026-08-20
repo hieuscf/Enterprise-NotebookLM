@@ -4,7 +4,7 @@
 # Layer: Schema
 # Purpose: Pydantic request/response models for Summaries API (OpenAPI).
 # Responsibilities:
-#   - SummaryCreateRequest (style)
+#   - SummaryCreateRequest (style + target_language)
 #   - SummaryResponse (public contract; maps ORM type → style)
 # Dependencies:
 #   - Pydantic, app.models.enums
@@ -15,6 +15,7 @@
 # Important Notes:
 #   - Exposes source_version_id for FE current-vs-old version UX.
 #   - sections is set for by_topic; null for other styles.
+#   - target_language defaults to vi (backward compatible).
 # =============================================================================
 
 from __future__ import annotations
@@ -23,13 +24,14 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.enums import SummaryStatus, SummaryStyle
+from app.models.enums import SummaryStatus, SummaryStyle, TargetLanguage
 
 
 class SummaryCreateRequest(BaseModel):
     style: SummaryStyle
+    target_language: TargetLanguage = Field(default=TargetLanguage.vi)
 
 
 class SummaryTopicSection(BaseModel):
@@ -47,6 +49,7 @@ class SummaryResponse(BaseModel):
     document_id: uuid.UUID
     source_version_id: uuid.UUID
     style: SummaryStyle
+    target_language: TargetLanguage
     status: SummaryStatus
     content: str | None = None
     sections: list[SummaryTopicSection] | None = None

@@ -36,6 +36,7 @@ from app.models.enums import (
     SummaryStatus,
     SummaryStyle,
     SummaryType,
+    TargetLanguage,
 )
 from app.repositories.retrieval import ChunkHydrationRow
 from app.repositories.summaries import TopicContextRow
@@ -123,6 +124,7 @@ class FakeSummaryRepo:
             created_by=kwargs["created_by"],
             source_version_id=kwargs["source_version_id"],
             type=kwargs["type_"],
+            target_language=kwargs.get("target_language", TargetLanguage.vi),
             status=SummaryStatus.processing,
             content=None,
             model_used=None,
@@ -760,3 +762,124 @@ def test_model_context_window_uses_tier_settings() -> None:
     strong = select_answer_model(settings, prefer_strong=True)
     assert model_context_window(settings, light) == 111
     assert model_context_window(settings, strong) == 222
+
+
+def test_summary_prompts_vi_requests_vietnamese() -> None:
+    from app.services.summary.prompts import build_summary_prompts
+
+    system, user = build_summary_prompts(
+        style=SummaryType.short,
+        document_title="Doc",
+        chunks=[],
+        target_language=TargetLanguage.vi,
+    )
+    assert "Vietnamese" in system
+    assert "Output language: Vietnamese" in user
+    assert "Do not modify citation references" in user
+    assert "French" not in system
+    assert "French" not in user
+
+
+def test_summary_prompts_en_requests_english() -> None:
+    from app.services.summary.prompts import build_summary_prompts
+
+    system, user = build_summary_prompts(
+        style=SummaryType.short,
+        document_title="Doc",
+        chunks=[],
+        target_language=TargetLanguage.en,
+    )
+    assert "English" in system
+    assert "Output language: English" in user
+    assert "Vietnamese" not in system
+    assert "Output language: Vietnamese" not in user
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_en_passes_english_prompt_and_preserves_citations() -> None:
+    workspace_id, document_id, user_id, document, version = _doc_bundle()
+    captured: dict[str, Any] = {}
+
+    async def _llm(**kwargs: Any) -> StructuredLlmResult:
+        captured.update(kwargs)
+        return StructuredLlmResult(
+            data={"summary": "Revenue increased by 12% in 2025 [1]."},
+            model=kwargs["model"],
+            input_tokens=10,
+            output_tokens=5,
+            estimated_cost_usd=0.001,
+        )
+
+    svc = SummaryService(
+        settings=_settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(document=document, version=version),  # type: ignore[arg-type]
+        retrieval=FakeRetrievalRepo(  # type: ignore[arg-type]
+            chunks=[
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=version.id,
+                    content="Revenue increased by 12% in 2025.",
+                )
+            ]
+        ),
+        summaries=FakeSummaryRepo(),  # type: ignore[arg-type]
+        llm_call=_llm,
+        enqueue=False,
+    )
+    row = await svc.generate_summary(
+        workspace_id=workspace_id,
+        document_id=document_id,
+        style=SummaryStyle.short,
+        created_by=user_id,
+        target_language=TargetLanguage.en,
+    )
+    assert row.target_language == TargetLanguage.en
+    assert row.content == "Revenue increased by 12% in 2025 [1]."
+    assert "[1]" in (row.content or "")
+    assert "12%" in (row.content or "")
+    assert "Output language: English" in captured["user"]
+    assert "Output language: Vietnamese" not in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_failure_does_not_fallback_language() -> None:
+    workspace_id, document_id, user_id, document, version = _doc_bundle()
+
+    async def _llm(**kwargs: Any) -> StructuredLlmResult:
+        del kwargs
+        raise RuntimeError("llm down")
+
+    summaries = FakeSummaryRepo()
+    svc = SummaryService(
+        settings=_settings(),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(document=document, version=version),  # type: ignore[arg-type]
+        retrieval=FakeRetrievalRepo(  # type: ignore[arg-type]
+            chunks=[
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=version.id,
+                    content="Hello",
+                )
+            ]
+        ),
+        summaries=summaries,  # type: ignore[arg-type]
+        llm_call=_llm,
+        enqueue=False,
+    )
+    with pytest.raises(SummaryServiceError) as exc:
+        await svc.generate_summary(
+            workspace_id=workspace_id,
+            document_id=document_id,
+            style=SummaryStyle.short,
+            created_by=user_id,
+            target_language=TargetLanguage.en,
+        )
+    assert exc.value.code == "llm_failed"
+    row = next(iter(summaries.rows.values()))
+    assert row.target_language == TargetLanguage.en
+    assert row.status == SummaryStatus.failed
+    assert row.content is None

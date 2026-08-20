@@ -31,7 +31,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifacts import Extraction
 from app.models.documents import Document
-from app.models.enums import ExtractionOutputFormat, ExtractionStatus, ExtractionType
+from app.models.enums import (
+    ExtractionOutputFormat,
+    ExtractionStatus,
+    ExtractionType,
+    TargetLanguage,
+)
 from app.models.knowledge import Entity
 
 
@@ -59,6 +64,7 @@ class ExtractionRepository:
         source_version_id: uuid.UUID,
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> Extraction:
         """Insert a processing Extraction with null result (POST / 202 path)."""
         row = Extraction(
@@ -67,6 +73,7 @@ class ExtractionRepository:
             source_version_id=source_version_id,
             extraction_type=extraction_type,
             output_format=output_format,
+            target_language=target_language,
             status=ExtractionStatus.processing,
             result_json=None,
             model_used=None,

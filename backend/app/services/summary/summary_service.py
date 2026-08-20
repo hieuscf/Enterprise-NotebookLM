@@ -37,7 +37,13 @@ from app.ai.tokens import count_tokens, split_text_by_tokens
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.artifacts import Summary
-from app.models.enums import DocumentVersionStatus, SummaryStatus, SummaryStyle, SummaryType
+from app.models.enums import (
+    DocumentVersionStatus,
+    SummaryStatus,
+    SummaryStyle,
+    SummaryType,
+    TargetLanguage,
+)
 from app.repositories.documents import DocumentRepository
 from app.repositories.retrieval import ChunkHydrationRow, RetrievalRepository
 from app.repositories.summaries import SummaryRepository, TopicContextRow
@@ -102,6 +108,7 @@ class SummaryService:
         document_id: uuid.UUID,
         style: SummaryStyle,
         created_by: uuid.UUID,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> Summary:
         """Create processing Summary, commit, enqueue Celery — no LLM in-request."""
         summary_type = SummaryType(style)
@@ -138,6 +145,7 @@ class SummaryService:
             created_by=created_by,
             source_version_id=source_version_id,
             type_=summary_type,
+            target_language=target_language,
         )
         # Commit before enqueue so the worker can see the row (documents pattern).
         await self._session.commit()
@@ -237,6 +245,7 @@ class SummaryService:
                 document_title=document.title,
                 source_version_id=row.source_version_id,
                 style=row.type,
+                target_language=row.target_language,
             )
         except SummaryServiceError as exc:
             logger.warning(
@@ -283,6 +292,7 @@ class SummaryService:
         document_id: uuid.UUID,
         style: SummaryStyle,
         created_by: uuid.UUID,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> Summary:
         """In-process create+process (tests / sync callers). Still one Summary row."""
         summary_type = SummaryType(style)
@@ -315,6 +325,7 @@ class SummaryService:
             created_by=created_by,
             source_version_id=version.id,
             type_=summary_type,
+            target_language=target_language,
         )
         await self._session.flush()
         final = await self.process_summary(row.id)
@@ -352,6 +363,7 @@ class SummaryService:
         document_title: str,
         source_version_id: uuid.UUID,
         style: SummaryType,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> dict[str, Any]:
         """Run LLM generation for a pinned source_version_id (no Summary insert)."""
         chunks = await self._retrieval.list_chunks_for_document(
@@ -392,12 +404,14 @@ class SummaryService:
             style=style,
             topics=topics,
             document_title=document_title,
+            target_language=target_language,
         )
         system, user = build_summary_prompts(
             style=style,
             document_title=document_title,
             chunks=budgeted_chunks,
             topics=topics if style == SummaryType.by_topic else None,
+            target_language=target_language,
         )
 
         started = time.perf_counter()
@@ -433,7 +447,7 @@ class SummaryService:
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         sections = (
-            self._extract_sections(llm, topics=topics)
+            self._extract_sections(llm, topics=topics, target_language=target_language)
             if style == SummaryType.by_topic
             else None
         )
@@ -480,6 +494,7 @@ class SummaryService:
         style: SummaryType,
         topics: list[TopicContextRow],
         document_title: str,
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> list[ChunkHydrationRow]:
         context_window = model_context_window(self._settings, model)
         reserve = int(self._settings.summary_prompt_reserve_tokens) + int(
@@ -492,6 +507,7 @@ class SummaryService:
             document_title=document_title,
             chunks=[],
             topics=topics if style == SummaryType.by_topic else None,
+            target_language=target_language,
         )
         overhead = count_tokens(overhead_system) + count_tokens(overhead_user)
         remaining = max(256, max_source_tokens - overhead)
@@ -556,6 +572,7 @@ class SummaryService:
         llm: StructuredLlmResult | Any,
         *,
         topics: list[TopicContextRow],
+        target_language: TargetLanguage = TargetLanguage.vi,
     ) -> list[dict[str, Any]] | None:
         """Normalize backend-produced topic sections (no FE heuristics)."""
         data = getattr(llm, "data", None)
@@ -565,6 +582,9 @@ class SummaryService:
         if not isinstance(raw, list) or not raw:
             return None
         known_ids = {str(t.topic_id): t for t in topics}
+        fallback_title = (
+            "Topic" if target_language == TargetLanguage.en else "Chủ đề"
+        )
         out: list[dict[str, Any]] = []
         for item in raw:
             if not isinstance(item, dict):
@@ -584,7 +604,7 @@ class SummaryService:
             out.append(
                 {
                     "topic_id": topic_id,
-                    "title": title or "Chủ đề",
+                    "title": title or fallback_title,
                     "content": content,
                 }
             )

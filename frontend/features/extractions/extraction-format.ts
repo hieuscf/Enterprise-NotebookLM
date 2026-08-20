@@ -27,6 +27,7 @@ import type {
   ExtractionStatus,
   ExtractionType,
   TableResultPayload,
+  TargetLanguage,
 } from "@/types/extractions";
 
 export const EXTRACTION_TYPE_OPTIONS: ReadonlyArray<{
@@ -81,14 +82,16 @@ export function isOldVersion(
  * 1. completed
  * 2. matching extraction_type
  * 3. matching output_format
- * 4. matching current_version_id
- * 5. newest created_at
+ * 4. matching target_language
+ * 5. matching current_version_id
+ * 6. newest created_at
  */
 export function getCurrentExtraction(
   extractions: readonly Extraction[],
   currentVersionId: string | null,
   extractionType: ExtractionType,
   outputFormat: ExtractionOutputFormat,
+  selectedLanguage: TargetLanguage = "vi",
 ): Extraction | null {
   if (!currentVersionId) return null;
   const matches = extractions.filter(
@@ -96,6 +99,7 @@ export function getCurrentExtraction(
       e.status === "completed" &&
       e.extraction_type === extractionType &&
       e.output_format === outputFormat &&
+      (e.target_language ?? "vi") === selectedLanguage &&
       e.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -109,6 +113,7 @@ export function getProcessingExtraction(
   currentVersionId: string | null,
   extractionType: ExtractionType,
   outputFormat: ExtractionOutputFormat,
+  selectedLanguage: TargetLanguage = "vi",
 ): Extraction | null {
   if (!currentVersionId) return null;
   const matches = extractions.filter(
@@ -116,6 +121,7 @@ export function getProcessingExtraction(
       e.status === "processing" &&
       e.extraction_type === extractionType &&
       e.output_format === outputFormat &&
+      (e.target_language ?? "vi") === selectedLanguage &&
       e.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -129,6 +135,7 @@ export function getFailedExtraction(
   currentVersionId: string | null,
   extractionType: ExtractionType,
   outputFormat: ExtractionOutputFormat,
+  selectedLanguage: TargetLanguage = "vi",
 ): Extraction | null {
   if (!currentVersionId) return null;
   const matches = extractions.filter(
@@ -136,6 +143,7 @@ export function getFailedExtraction(
       e.status === "failed" &&
       e.extraction_type === extractionType &&
       e.output_format === outputFormat &&
+      (e.target_language ?? "vi") === selectedLanguage &&
       e.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;

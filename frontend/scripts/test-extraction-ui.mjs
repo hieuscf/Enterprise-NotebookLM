@@ -24,13 +24,20 @@ function isOldVersion(extraction, currentVersionId) {
   return extraction.source_version_id !== currentVersionId;
 }
 
-function getCurrentExtraction(extractions, currentVersionId, extractionType, outputFormat) {
+function getCurrentExtraction(
+  extractions,
+  currentVersionId,
+  extractionType,
+  outputFormat,
+  selectedLanguage = "vi",
+) {
   if (!currentVersionId) return null;
   const matches = extractions.filter(
     (e) =>
       e.status === "completed" &&
       e.extraction_type === extractionType &&
       e.output_format === outputFormat &&
+      (e.target_language ?? "vi") === selectedLanguage &&
       e.source_version_id === currentVersionId,
   );
   if (matches.length === 0) return null;
@@ -106,6 +113,7 @@ const extractions = [
     output_format: "table",
     status: "completed",
     source_version_id: V1,
+    target_language: "vi",
     created_at: "2026-08-01T10:00:00Z",
     result: { headers: ["A"], rows: [{ A: 1 }] },
   },
@@ -115,6 +123,7 @@ const extractions = [
     output_format: "table",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-02T10:00:00Z",
     result: { headers: ["A"], rows: [{ A: 2 }] },
   },
@@ -124,8 +133,19 @@ const extractions = [
     output_format: "table",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-03T10:00:00Z",
     result: { headers: ["A"], rows: [{ A: 3 }] },
+  },
+  {
+    id: "cur-table-en",
+    extraction_type: "table",
+    output_format: "table",
+    status: "completed",
+    source_version_id: V2,
+    target_language: "en",
+    created_at: "2026-08-03T11:00:00Z",
+    result: { headers: ["A"], rows: [{ A: 9 }] },
   },
   {
     id: "cur-figures-json",
@@ -133,6 +153,7 @@ const extractions = [
     output_format: "json",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-04T10:00:00Z",
     result: { figures: [{ metric: "Revenue", value: 10 }] },
   },
@@ -142,6 +163,7 @@ const extractions = [
     output_format: "table",
     status: "completed",
     source_version_id: V2,
+    target_language: "vi",
     created_at: "2026-08-05T10:00:00Z",
     result: {
       headers: ["name", "type"],
@@ -153,6 +175,10 @@ const extractions = [
 assert(
   getCurrentExtraction(extractions, V2, "table", "table")?.id === "cur-table-newer",
   "Picks newest completed table+table for V2 (no POST needed)",
+);
+assert(
+  getCurrentExtraction(extractions, V2, "table", "table", "en")?.id === "cur-table-en",
+  "Language is part of extraction reuse key",
 );
 assert(
   getCurrentExtraction(extractions, V2, "figures", "json")?.id === "cur-figures-json",
