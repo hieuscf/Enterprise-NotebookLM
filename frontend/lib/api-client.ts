@@ -172,7 +172,23 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (response.status === 204) {
     return undefined as T;
   }
-  return (await response.json()) as T;
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new ApiClientError(
+      response.status,
+      "invalid_response",
+      "Server returned a non-JSON response",
+    );
+  }
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiClientError(
+      response.status,
+      "invalid_response",
+      "Server returned invalid JSON",
+    );
+  }
 }
 
 export async function authLogin(
@@ -208,12 +224,18 @@ export async function authLogout(): Promise<void> {
 }
 
 export async function authMe(): Promise<User | null> {
-  const response = await fetch("/api/auth/me", {
-    credentials: "same-origin",
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok) return null;
-  return (await response.json()) as User;
+  try {
+    const response = await fetch("/api/auth/me", {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.includes("application/json")) return null;
+    return (await response.json()) as User;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -408,11 +408,26 @@ class DocumentIngestionService:
         if not markdown:
             return None
         blocks = self._layout_blocks_for_bbox(version)
+        if blocks and _blocks_have_spans(blocks):
+            norm_blocks = [
+                {
+                    **b,
+                    "id": str(
+                        b.get("id") or make_block_id(int(b.get("order_index") or i))
+                    ),
+                }
+                for i, b in enumerate(blocks)
+            ]
+            blocks_normalized = True
+        else:
+            norm_blocks = blocks
+            blocks_normalized = False
         result = resolve_canonical_locator(
             markdown=markdown,
-            blocks=blocks,
+            blocks=norm_blocks,
             text_snippet=text_snippet,
             chunk_content=chunk_content,
+            blocks_normalized=blocks_normalized,
         )
         return CitationLocator.model_validate(result.as_dict())
 
@@ -421,7 +436,11 @@ class DocumentIngestionService:
         workspace_id: uuid.UUID,
         rows: list[Any],
     ) -> dict[uuid.UUID, CitationLocator]:
-        """Batch-resolve locators keyed by citation id (one MinIO load per version)."""
+        """Batch-resolve locators keyed by citation id (one MinIO load per version).
+
+        CPU-heavy span matching runs in a worker thread so the uvicorn event loop
+        stays responsive (page loads /health must not wait on large docs).
+        """
         del workspace_id  # reserved for future ACL checks on version scope
         from app.repositories.chat_messages import CitationWithDocument
 
@@ -438,18 +457,51 @@ class DocumentIngestionService:
             version = await self._docs.get_version_by_id(version_id)
             if version is None:
                 continue
-            markdown = await asyncio.to_thread(self._load_markdown_text, version)
-            if not markdown:
-                continue
-            blocks = await asyncio.to_thread(self._layout_blocks_for_bbox, version)
-            for row in group:
-                result = resolve_canonical_locator(
-                    markdown=markdown,
-                    blocks=blocks,
-                    text_snippet=row.citation.text_snippet,
-                    chunk_content=getattr(row, "chunk_content", None),
-                )
-                out[row.citation.id] = CitationLocator.model_validate(result.as_dict())
+            resolved = await asyncio.to_thread(
+                self._resolve_locators_for_version_sync,
+                version,
+                group,
+            )
+            out.update(resolved)
+        return out
+
+    def _resolve_locators_for_version_sync(
+        self,
+        version: DocumentVersion,
+        group: list[Any],
+    ) -> dict[uuid.UUID, CitationLocator]:
+        """Sync batch resolve for one version — intended for ``asyncio.to_thread``."""
+        markdown = self._load_markdown_text(version)
+        if not markdown:
+            return {}
+        layout_blocks = self._layout_blocks_for_bbox(version)
+        # Prefer persisted spans; full re-span is O(blocks × |md|) and must
+        # run at most once per version (never per citation).
+        if layout_blocks and _blocks_have_spans(layout_blocks):
+            norm_blocks = [
+                {
+                    **b,
+                    "id": str(
+                        b.get("id") or make_block_id(int(b.get("order_index") or i))
+                    ),
+                }
+                for i, b in enumerate(layout_blocks)
+            ]
+        elif layout_blocks:
+            norm_blocks = normalize_layout_blocks(markdown, layout_blocks)
+        else:
+            norm_blocks = []
+
+        out: dict[uuid.UUID, CitationLocator] = {}
+        for row in group:
+            result = resolve_canonical_locator(
+                markdown=markdown,
+                blocks=norm_blocks,
+                text_snippet=row.citation.text_snippet,
+                chunk_content=getattr(row, "chunk_content", None),
+                blocks_normalized=True,
+            )
+            out[row.citation.id] = CitationLocator.model_validate(result.as_dict())
         return out
 
     def _load_markdown_text(self, version: DocumentVersion) -> str | None:

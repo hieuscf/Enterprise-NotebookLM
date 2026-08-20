@@ -105,6 +105,9 @@ def attach_markdown_spans(
     """
     cursor = 0
     enriched: list[dict[str, Any]] = []
+    # Build NFKC map once — per-block rebuild is O(blocks × |md|) and can peg
+    # a single uvicorn worker for minutes on large financial reports.
+    full_norm_cache = _normalized_with_map(markdown) if blocks else None
     for index, raw in enumerate(blocks):
         block = dict(raw)
         order = int(block.get("order_index", index))
@@ -116,10 +119,14 @@ def attach_markdown_spans(
             enriched.append(block)
             continue
 
-        start, end = _find_text_span(markdown, text, cursor)
+        start, end = _find_text_span(
+            markdown, text, cursor, full_norm_cache=full_norm_cache
+        )
         if start is None or end is None:
             # Retry from document start once (out-of-order / cleaned text).
-            start, end = _find_text_span(markdown, text, 0)
+            start, end = _find_text_span(
+                markdown, text, 0, full_norm_cache=full_norm_cache
+            )
         if start is not None and end is not None:
             block["markdown_start"] = start
             block["markdown_end"] = end
@@ -176,10 +183,16 @@ def resolve_canonical_locator(
     blocks: list[dict[str, Any]],
     text_snippet: str,
     chunk_content: str | None = None,
+    blocks_normalized: bool = False,
 ) -> CanonicalLocatorResult:
     """Resolve deterministic Knowledge View locator for a citation snippet.
 
     Prefers ``text_snippet`` (may be a sub-span of ``chunk_content``).
+
+    Args:
+        blocks_normalized: When True, ``blocks`` already have ids/spans — skip
+            ``normalize_layout_blocks`` (critical for batch citation resolve;
+            re-walking large docs per citation freezes the API event loop).
     """
     empty = CanonicalLocatorResult(
         type="canonical",
@@ -208,7 +221,9 @@ def resolve_canonical_locator(
         return empty
 
     md_start, md_end, confidence = span
-    norm_blocks = normalize_layout_blocks(markdown, blocks)
+    norm_blocks = (
+        blocks if blocks_normalized else normalize_layout_blocks(markdown, blocks)
+    )
     ranges = _ranges_for_span(norm_blocks, md_start, md_end, snippet)
     page, section, bbox = _provenance_from_ranges(norm_blocks, ranges)
 
@@ -254,6 +269,8 @@ def _find_text_span(
     markdown: str,
     text: str,
     start_from: int,
+    *,
+    full_norm_cache: tuple[str, list[int]] | None = None,
 ) -> tuple[int | None, int | None]:
     idx = markdown.find(text, start_from)
     if idx >= 0:
@@ -269,11 +286,33 @@ def _find_text_span(
             abs_end = start_from + line_match.end()
             return abs_start, abs_end
 
-    slice_md = markdown[start_from:]
-    norm_hay, index_map = _normalized_with_map(slice_md)
     norm_needle = normalize_for_match(text)
     if not norm_needle or len(norm_needle) < 12:
         return None, None
+
+    if full_norm_cache is not None:
+        norm_hay, index_map = full_norm_cache
+        # Restrict search to characters whose original index >= start_from.
+        search_from = 0
+        if start_from > 0:
+            lo, hi = 0, len(index_map)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if index_map[mid] < start_from:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            search_from = lo
+        nidx = norm_hay.find(norm_needle, search_from)
+        if nidx < 0:
+            return None, None
+        end_n = nidx + len(norm_needle) - 1
+        if end_n >= len(index_map):
+            return None, None
+        return index_map[nidx], index_map[end_n] + 1
+
+    slice_md = markdown[start_from:]
+    norm_hay, index_map = _normalized_with_map(slice_md)
     nidx = norm_hay.find(norm_needle)
     if nidx < 0:
         return None, None

@@ -24,6 +24,7 @@ import type { Metadata } from "next";
 import { Be_Vietnam_Pro, Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 
 import { ThemeBootstrap } from "@/features/settings/ThemeBootstrap";
+import { AuthProvider } from "@/hooks/useAuth";
 
 import "./globals.css";
 
@@ -67,7 +68,7 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <ThemeBootstrap />
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

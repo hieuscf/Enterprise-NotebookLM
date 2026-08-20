@@ -6,6 +6,7 @@
 # Responsibilities:
 #   - list() with created_at ASC pagination
 #   - list_for_session() all messages ASC (report aggregation / export)
+#   - get_with_relations_for_workspace() for GET .../messages/{id}
 #   - count() / latest() for Part 2 summary helpers
 #   - Batch-load message_generations + citations (with document_id via joins)
 # Dependencies:
@@ -13,7 +14,7 @@
 # Public Exports:
 #   - ChatMessageRepository, CitationWithDocument, MessageWithRelations
 # Database/Table: chat_messages, message_generations, citations, retrievals,
-#   document_chunks, document_versions, entities
+#   document_chunks, document_versions, entities, chat_sessions
 # Related Modules: app.services.chat.session_service, report_aggregation
 # Important Notes:
 #   - Part 1: NO create(). Part 2 owns message insert + generation writes.
@@ -29,7 +30,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.models.chat import ChatMessage, MessageGeneration
+from app.models.chat import ChatMessage, ChatSession, MessageGeneration
 from app.models.documents import DocumentVersion
 from app.models.enums import MessageRole
 from app.models.knowledge import DocumentChunk, Entity
@@ -144,6 +145,39 @@ class ChatMessageRepository:
             select(ChatMessage).where(ChatMessage.id == message_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_with_relations_for_workspace(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> MessageWithRelations | None:
+        """Load one message (+ generation/citations) when it belongs to workspace.
+
+        Returns ``None`` when the message is missing or outside ``workspace_id``.
+        Soft-deleted sessions are still considered in-workspace (matches agent-events).
+        """
+        message = (
+            await self._session.execute(
+                select(ChatMessage)
+                .join(ChatSession, ChatSession.id == ChatMessage.session_id)
+                .where(
+                    ChatMessage.id == message_id,
+                    ChatSession.workspace_id == workspace_id,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if message is None:
+            return None
+
+        generations = await self._load_generations([message.id])
+        citations = await self._load_citations([message.id])
+        return MessageWithRelations(
+            message=message,
+            generation=generations.get(message.id),
+            citations=citations.get(message.id, []),
+        )
 
     async def count(self, *, session_id: uuid.UUID) -> int:
         """Total messages in a session (for Part 2 last_message summary)."""

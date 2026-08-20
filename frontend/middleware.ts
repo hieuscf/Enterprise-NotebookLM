@@ -7,6 +7,7 @@
  * Responsibilities:
  *   - Allow public auth routes and static assets
  *   - Require access or refresh httpOnly cookie for protected pages
+ *   - Never HTML-redirect /api/* (clients expect JSON 401)
  * Dependencies:
  *   - next/server
  * Public Exports:
@@ -29,6 +30,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/login",
   "/api/auth/refresh",
   "/api/auth/logout",
+  "/api/auth/me",
   "/_next",
   "/favicon.ico",
 ];
@@ -54,6 +56,14 @@ export function middleware(request: NextRequest) {
     Boolean(request.cookies.get(REFRESH_COOKIE)?.value);
 
   if (!hasSession) {
+    // BFF / proxy callers must receive JSON, never the login HTML document
+    // (fetch follows redirects → response.ok + <!DOCTYPE → .json() throws).
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { code: "unauthorized", message: "Unauthorized" },
+        { status: 401 },
+      );
+    }
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);

@@ -37,7 +37,10 @@ type Props = {
   locator?: CitationLocator | null;
   highlightSnippet?: string | null;
   activeBlockId?: string | null;
+  /** When locator/snippet miss, still scroll to this block (chunk/page fallback). */
+  fallbackBlockId?: string | null;
   onBlockVisible?: (blockId: string) => void;
+  onNavigationFailed?: () => void;
 };
 
 export function KnowledgeView({
@@ -47,24 +50,66 @@ export function KnowledgeView({
   locator = null,
   highlightSnippet = null,
   activeBlockId = null,
+  fallbackBlockId = null,
   onBlockVisible,
+  onNavigationFailed,
 }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const expectFocus =
+    Boolean(locator?.ranges?.length) ||
+    Boolean(highlightSnippet?.trim()) ||
+    Boolean(activeBlockId) ||
+    Boolean(fallbackBlockId);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
-    const result = applyLocatorHighlights(
-      root,
-      blocks,
-      locator,
-      highlightSnippet,
-      activeBlockId,
-    );
-    if (result.scrolledBlockId && result.scrolledBlockId !== activeBlockId) {
-      onBlockVisible?.(result.scrolledBlockId);
-    }
-  }, [blocks, locator, highlightSnippet, activeBlockId, onBlockVisible]);
+
+    let cancelled = false;
+    let retryTimer: number | null = null;
+
+    const run = (attempt: number) => {
+      if (cancelled) return;
+      const result = applyLocatorHighlights(
+        root,
+        blocks,
+        locator,
+        highlightSnippet,
+        activeBlockId,
+        fallbackBlockId,
+      );
+      if (result.scrolledBlockId && result.scrolledBlockId !== activeBlockId) {
+        onBlockVisible?.(result.scrolledBlockId);
+      }
+      // DOM hosts may not exist on the first paint (flex layout / fonts).
+      if (!result.scrolledBlockId && expectFocus && attempt < 2) {
+        retryTimer = window.setTimeout(() => run(attempt + 1), attempt === 0 ? 32 : 120);
+        return;
+      }
+      if (!result.scrolledBlockId && expectFocus) {
+        onNavigationFailed?.();
+      }
+    };
+
+    const raf = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => run(0));
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf);
+      if (retryTimer != null) window.clearTimeout(retryTimer);
+    };
+  }, [
+    blocks,
+    locator,
+    highlightSnippet,
+    activeBlockId,
+    fallbackBlockId,
+    expectFocus,
+    onBlockVisible,
+    onNavigationFailed,
+  ]);
 
   if (!blocks.length && !markdownFallback.trim()) {
     return <KnowledgeEmpty />;

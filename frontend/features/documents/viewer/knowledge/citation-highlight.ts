@@ -8,11 +8,12 @@
  *   - Wrap a character range inside a block's text nodes with <mark>
  *   - Clear previous marks without changing Canonical content
  *   - Scroll the active mark/block inside the Knowledge View container
+ *   - Resolve snippet → block when locator ranges are missing (FR5)
  * Dependencies:
  *   - document-structure (offset mapping)
  * Public Exports:
  *   - highlightTextRange, clearCitationMarks, scrollTargetIntoContainer
- *   - applyLocatorHighlights
+ *   - applyLocatorHighlights, findBlockForSnippet
  * Database/Table: N/A
  * Related Modules: KnowledgeView, CitationLocator
  * Important Notes:
@@ -24,6 +25,80 @@
 import type { CanonicalBlock, CitationLocator } from "@/types/canonical";
 
 import { displayHeadingText, mapContentOffsetsToDisplay } from "./document-structure";
+
+function normalizeForMatch(value: string): string {
+  return (value || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/** Exact → case-insensitive → whitespace-normalized containment in block.content. */
+export function matchSnippetInBlockContent(
+  content: string,
+  snippet: string,
+): { start: number; end: number } | null {
+  const needle = (snippet || "").trim();
+  if (!content || !needle) return null;
+
+  const exact = content.indexOf(needle);
+  if (exact >= 0) return { start: exact, end: exact + needle.length };
+
+  const ci = content.toLowerCase().indexOf(needle.toLowerCase());
+  if (ci >= 0) return { start: ci, end: ci + needle.length };
+
+  const normContent = normalizeForMatch(content);
+  const normNeedle = normalizeForMatch(needle);
+  if (!normNeedle || normNeedle.length < 8) return null;
+  const nidx = normContent.indexOf(normNeedle);
+  if (nidx < 0) return null;
+
+  // Approximate map: use proportional index into original content.
+  const ratio = content.length / Math.max(1, normContent.length);
+  const start = Math.max(0, Math.min(content.length - 1, Math.floor(nidx * ratio)));
+  const end = Math.max(
+    start + 1,
+    Math.min(content.length, Math.floor((nidx + normNeedle.length) * ratio)),
+  );
+  return { start, end };
+}
+
+/** Prefer longest exact/normalized hit; used when locator ranges are empty. */
+export function findBlockForSnippet(
+  blocks: CanonicalBlock[],
+  snippet: string,
+): CanonicalBlock | null {
+  const needle = (snippet || "").trim();
+  if (!needle || blocks.length === 0) return null;
+
+  let best: CanonicalBlock | null = null;
+  let bestScore = 0;
+  for (const block of blocks) {
+    const hit = matchSnippetInBlockContent(block.content || "", needle);
+    if (!hit) continue;
+    const score = hit.end - hit.start;
+    if (score > bestScore) {
+      bestScore = score;
+      best = block;
+    }
+  }
+  if (best) return best;
+
+  // Chunk head may be longer than any single block — try progressive prefixes.
+  if (needle.length > 80) {
+    for (const len of [160, 120, 80, 48]) {
+      if (needle.length < len) continue;
+      const head = needle.slice(0, len);
+      for (const block of blocks) {
+        if (matchSnippetInBlockContent(block.content || "", head)) return block;
+      }
+    }
+  }
+  return null;
+}
 
 export function clearCitationMarks(root: HTMLElement): void {
   root.querySelectorAll("mark[data-citation-hl]").forEach((el) => {
@@ -112,14 +187,20 @@ export function applyLocatorHighlights(
   locator: CitationLocator | null,
   highlightSnippet: string | null,
   activeBlockId: string | null,
+  fallbackBlockId: string | null = null,
 ): ApplyResult {
   clearCitationMarks(root);
 
   const ranges = locator?.ranges?.filter((r) => r.end > r.start) ?? [];
+  const locatorUsable =
+    ranges.length > 0 &&
+    Boolean(locator?.confidence) &&
+    locator?.confidence !== "none";
   let firstMark: HTMLElement | null = null;
+  let matchedBlockId: string | null = null;
   const byId = new Map(blocks.map((b) => [b.id, b]));
 
-  if (ranges.length && locator?.confidence && locator.confidence !== "none") {
+  if (locatorUsable) {
     for (const range of ranges) {
       const host = root.querySelector(
         `[data-block-id="${CSS.escape(range.block_id)}"]`,
@@ -128,27 +209,41 @@ export function applyLocatorHighlights(
       const block = byId.get(range.block_id);
       const mapped = mapRangeForBlock(block, host, range.start, range.end);
       const mark = highlightTextRange(host, mapped.start, mapped.end);
-      if (mark && !firstMark) firstMark = mark;
+      if (mark && !firstMark) {
+        firstMark = mark;
+        matchedBlockId = range.block_id;
+      }
       host.setAttribute("data-active-block", "");
-    }
-  } else if (highlightSnippet?.trim()) {
-    const snippet = highlightSnippet.trim();
-    for (const block of blocks) {
-      const idx = block.content.indexOf(snippet);
-      if (idx < 0) continue;
-      const host = root.querySelector(
-        `[data-block-id="${CSS.escape(block.id)}"]`,
-      ) as HTMLElement | null;
-      if (!host) continue;
-      const mapped = mapRangeForBlock(block, host, idx, idx + snippet.length);
-      const mark = highlightTextRange(host, mapped.start, mapped.end);
-      if (mark && !firstMark) firstMark = mark;
-      host.setAttribute("data-active-block", "");
-      break;
+      if (!matchedBlockId) matchedBlockId = range.block_id;
     }
   }
 
-  const fallbackId = activeBlockId ?? ranges[0]?.block_id ?? null;
+  if (!firstMark && highlightSnippet?.trim()) {
+    const snippet = highlightSnippet.trim();
+    const block = findBlockForSnippet(blocks, snippet);
+    if (block) {
+      const hit = matchSnippetInBlockContent(block.content || "", snippet);
+      const host = root.querySelector(
+        `[data-block-id="${CSS.escape(block.id)}"]`,
+      ) as HTMLElement | null;
+      if (host && hit) {
+        const mapped = mapRangeForBlock(block, host, hit.start, hit.end);
+        const mark = highlightTextRange(host, mapped.start, mapped.end);
+        if (mark) firstMark = mark;
+        host.setAttribute("data-active-block", "");
+        matchedBlockId = block.id;
+      } else if (host) {
+        host.setAttribute("data-outline-active", "");
+        matchedBlockId = block.id;
+      }
+    }
+  }
+
+  const fallbackId =
+    matchedBlockId ??
+    activeBlockId ??
+    (locatorUsable ? ranges[0]?.block_id ?? null : null) ??
+    fallbackBlockId;
   const scrollTarget =
     firstMark ??
     (fallbackId

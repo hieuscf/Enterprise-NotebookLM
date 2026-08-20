@@ -13,6 +13,7 @@
  *   - lib/api-client (apiFetch, parseApiError, ApiClientError)
  * Public Exports:
  *   - listChatSessions, createChatSession, listChatMessages
+ *   - getChatMessage, listChatMessageCitations
  *   - sendChatMessageStream, type ChatStreamHandlers
  * Database/Table: N/A (talks to chat_sessions / chat_messages via API)
  * Related Modules: hooks/useChatSessions, useChatMessages, useChatStream
@@ -66,6 +67,30 @@ export async function listChatMessages(
   );
   if (!response.ok) throw await parseApiError(response);
   return (await response.json()) as ChatMessage[];
+}
+
+/** GET /workspaces/{id}/chat/messages/{messageId} — detail with nested generation. */
+export async function getChatMessage(
+  workspaceId: string,
+  messageId: string,
+): Promise<ChatMessage> {
+  const response = await apiFetch(
+    `/workspaces/${workspaceId}/chat/messages/${messageId}`,
+  );
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as ChatMessage;
+}
+
+/** GET .../messages/{messageId}/citations — verified citations for document highlight. */
+export async function listChatMessageCitations(
+  workspaceId: string,
+  messageId: string,
+): Promise<Citation[]> {
+  const response = await apiFetch(
+    `/workspaces/${workspaceId}/chat/messages/${messageId}/citations`,
+  );
+  if (!response.ok) throw await parseApiError(response);
+  return (await response.json()) as Citation[];
 }
 
 // ---------------------------------------------------------------------------

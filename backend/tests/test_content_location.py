@@ -13,7 +13,7 @@
 #   - N/A
 # Database/Table: document_chunks (contract covered via TextChunk fields)
 # Related Modules: P0.1 ocr.py; stage_chunking
-# Important Notes: Full chat citation HTTP path not implemented yet — schema ready.
+# Important Notes: GET .../citations is implemented on Chat API (FR5 highlight).
 # =============================================================================
 
 from __future__ import annotations

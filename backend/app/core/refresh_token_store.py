@@ -63,7 +63,14 @@ class InMemoryRefreshTokenStore(RefreshTokenStore):
 
 class RedisRefreshTokenStore(RefreshTokenStore):
     def __init__(self, redis_url: str) -> None:
-        self._client = redis.Redis.from_url(redis_url, decode_responses=True)
+        # Short timeouts — a hung Redis must not freeze the FastAPI event loop
+        # (sync client runs inline on request threads / async loop).
+        self._client = redis.Redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
 
     @staticmethod
     def _key(user_id: uuid.UUID) -> str:

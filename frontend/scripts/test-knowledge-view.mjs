@@ -289,6 +289,69 @@ assert(
   "copied heading text has no markdown marker",
 );
 
+// --- Citation snippet → block (mirrors citation-highlight.ts) ----------
+function normalizeForMatch(value) {
+  return (value || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function matchSnippetInBlockContent(content, snippet) {
+  const needle = (snippet || "").trim();
+  if (!content || !needle) return null;
+  const exact = content.indexOf(needle);
+  if (exact >= 0) return { start: exact, end: exact + needle.length };
+  const ci = content.toLowerCase().indexOf(needle.toLowerCase());
+  if (ci >= 0) return { start: ci, end: ci + needle.length };
+  const normContent = normalizeForMatch(content);
+  const normNeedle = normalizeForMatch(needle);
+  if (!normNeedle || normNeedle.length < 8) return null;
+  const nidx = normContent.indexOf(normNeedle);
+  if (nidx < 0) return null;
+  const ratio = content.length / Math.max(1, normContent.length);
+  const start = Math.max(0, Math.min(content.length - 1, Math.floor(nidx * ratio)));
+  const end = Math.max(
+    start + 1,
+    Math.min(content.length, Math.floor((nidx + normNeedle.length) * ratio)),
+  );
+  return { start, end };
+}
+
+function findBlockForSnippet(blocks, snippet) {
+  const needle = (snippet || "").trim();
+  if (!needle || blocks.length === 0) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const block of blocks) {
+    const hit = matchSnippetInBlockContent(block.content || "", needle);
+    if (!hit) continue;
+    const score = hit.end - hit.start;
+    if (score > bestScore) {
+      bestScore = score;
+      best = block;
+    }
+  }
+  return best;
+}
+
+const citeBlocks = [
+  { id: "b0001", content: "Doanh thu thuần năm 2024 đạt 1.200 tỷ đồng." },
+  { id: "b0002", content: "Chi phí quản lý doanh nghiệp tăng nhẹ." },
+];
+assert(
+  findBlockForSnippet(citeBlocks, "doanh thu thuần năm 2024 đạt 1.200 tỷ")?.id ===
+    "b0001",
+  "normalized snippet finds citation block",
+);
+assert(
+  findBlockForSnippet(citeBlocks, "không tồn tại trong tài liệu") === null,
+  "unknown snippet does not invent a block",
+);
+
 if (process.exitCode) {
   process.exit(process.exitCode);
 }

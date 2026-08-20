@@ -5,6 +5,7 @@
 # Purpose: FastAPI routes for Conversation Memory (FR4) + POST messages + FR14.
 # Responsibilities:
 #   - CRUD chat sessions (soft-delete) + GET message history
+#   - GET /chat/messages/{messageId} + GET .../citations (verified)
 #   - POST .../messages — Query Router + Prompt Construction (SSE / JSON)
 #   - GET /chat/messages/{messageId}/agent-events
 # Dependencies:
@@ -12,7 +13,7 @@
 #     AgentEventsService, get_query_orchestrator
 # Public Exports:
 #   - router
-# Database/Table: chat_sessions, chat_messages, agent_events (via services)
+# Database/Table: chat_sessions, chat_messages, citations, agent_events (via services)
 # Related Modules: docs/Enterprise_notebooklm_openapi.yaml §Chat
 # Important Notes:
 #   - Default POST response is text/event-stream; Accept: application/json → JSON.
@@ -28,6 +29,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Requ
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.minio_storage import get_minio_storage
 from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.dependencies.query_orchestrator import get_query_orchestrator
@@ -45,6 +47,7 @@ from app.schemas.chat import (
     ChatMessageResponse,
     ChatSessionCreateRequest,
     ChatSessionResponse,
+    CitationResponse,
 )
 from app.schemas.common import ErrorResponse
 from app.services.chat.agent_events_service import (
@@ -53,6 +56,7 @@ from app.services.chat.agent_events_service import (
 )
 from app.services.chat.message_service import MessageProcessingService, format_sse
 from app.services.chat.session_service import ChatServiceError, ChatSessionService
+from app.services.documents import DocumentIngestionService
 from app.services.query_router.orchestrator import QueryOrchestrator
 
 router = APIRouter(prefix="/workspaces", tags=["Chat"])
@@ -70,6 +74,7 @@ def get_chat_session_service(
     return ChatSessionService(
         ChatSessionRepository(session),
         ChatMessageRepository(session),
+        documents=DocumentIngestionService(session, get_minio_storage()),
     )
 
 
@@ -241,6 +246,60 @@ async def delete_chat_session(
 # ---------------------------------------------------------------------------
 # Messages
 # ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{workspaceId}/chat/messages/{messageId}",
+    response_model=ChatMessageResponse,
+    summary="Chi tiết 1 message (kèm message_generation nếu role=assistant)",
+    operation_id="getChatMessage",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def get_chat_message(
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    message_id: uuid.UUID = Path(..., alias="messageId"),
+    service: ChatSessionService = Depends(get_chat_session_service),
+) -> ChatMessageResponse:
+    """Return one workspace-scoped message with nested generation/citations."""
+    try:
+        return await service.get_message(
+            workspace_id=access.workspace_id,
+            message_id=message_id,
+        )
+    except ChatServiceError as exc:
+        raise _chat_http_error(exc) from exc
+
+
+@router.get(
+    "/{workspaceId}/chat/messages/{messageId}/citations",
+    response_model=list[CitationResponse],
+    summary="Danh sách citation đã verify cho message (để highlight trên tài liệu gốc)",
+    operation_id="listChatMessageCitations",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def list_chat_message_citations(
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    message_id: uuid.UUID = Path(..., alias="messageId"),
+    service: ChatSessionService = Depends(get_chat_session_service),
+) -> list[CitationResponse]:
+    """Verified citations only; empty list when none (never invent highlights)."""
+    try:
+        return await service.list_message_citations(
+            workspace_id=access.workspace_id,
+            message_id=message_id,
+        )
+    except ChatServiceError as exc:
+        raise _chat_http_error(exc) from exc
 
 
 @router.get(

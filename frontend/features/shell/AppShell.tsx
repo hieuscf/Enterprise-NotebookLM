@@ -31,24 +31,28 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Sidebar, type SidebarActiveKey } from "@/features/shell/Sidebar";
+import { useAuth } from "@/hooks/useAuth";
 import type { User } from "@/types/auth";
 
 type Props = {
   active: SidebarActiveKey;
-  user: User | null;
+  user?: User | null;
   /** Current workspace in view — forwarded to Sidebar for the contextual "Thành viên" link. */
   workspaceId?: string | null;
   children: React.ReactNode;
 };
 
-export function AppShell({ active, user, workspaceId, children }: Props) {
+export function AppShell({ active, user: userProp = null, workspaceId, children }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user: authUser, loading: authLoading } = useAuth();
+  const user = userProp ?? authUser;
 
   return (
     <div className="flex h-svh overflow-hidden bg-base">
       <Sidebar
         active={active}
         user={user}
+        userLoading={authLoading && !user}
         workspaceId={workspaceId}
         mobileOpen={mobileOpen}
         onClose={() => setMobileOpen(false)}

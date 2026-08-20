@@ -126,7 +126,13 @@ class InMemoryWorkspaceRateLimiter(WorkspaceRateLimiter):
 
 class RedisWorkspaceRateLimiter(WorkspaceRateLimiter):
     def __init__(self, redis_url: str) -> None:
-        self._client = redis.Redis.from_url(redis_url, decode_responses=True)
+        # Short timeouts — sync Redis must not stall the async event loop.
+        self._client = redis.Redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
         self._script = self._client.register_script(_FIXED_WINDOW_LUA)
 
     def hit(

@@ -34,6 +34,7 @@ import { AIContextPanel } from "@/features/documents/viewer/AIContextPanel";
 import { ChunkNavigator } from "@/features/documents/viewer/ChunkNavigator";
 import { KnowledgeView } from "@/features/documents/viewer/KnowledgeView";
 import { KnowledgeSkeleton } from "@/features/documents/viewer/knowledge/DocumentRenderer";
+import { findBlockForSnippet } from "@/features/documents/viewer/knowledge/citation-highlight";
 import {
   PDFViewer,
   type PDFViewerHandle,
@@ -181,6 +182,12 @@ export function DocumentViewer({
   }, [initialView]);
 
   useEffect(() => {
+    const id =
+      focusLocator?.ranges?.find((r) => r.end > r.start)?.block_id ?? null;
+    if (id) setActiveBlockId(id);
+  }, [focusLocator]);
+
+  useEffect(() => {
     let active = true;
     setCanonicalLoading(true);
     setCanonicalError(null);
@@ -317,6 +324,59 @@ export function DocumentViewer({
     if (!meta || !activeChunkId) return null;
     return meta.items.find((c) => c.id === activeChunkId) ?? null;
   }, [meta, activeChunkId]);
+
+  /** Block to scroll to when locator confidence is none / snippet differs from markdown. */
+  const knowledgeFallbackBlockId = useMemo(() => {
+    const locRange = focusLocator?.ranges?.find((r) => r.end > r.start);
+    if (
+      locRange &&
+      focusLocator?.confidence &&
+      focusLocator.confidence !== "none"
+    ) {
+      return locRange.block_id;
+    }
+    if (!canonical?.blocks?.length) return null;
+    if (focusSnippet?.trim()) {
+      const block = findBlockForSnippet(canonical.blocks, focusSnippet.trim());
+      if (block) return block.id;
+    }
+    if (activeChunk?.content?.trim()) {
+      const block = findBlockForSnippet(
+        canonical.blocks,
+        activeChunk.content.trim().slice(0, 240),
+      );
+      if (block) return block.id;
+    }
+    if (focusPage && focusPage > 0) {
+      const byPage = canonical.blocks.find((b) => b.page_number === focusPage);
+      if (byPage) return byPage.id;
+    }
+    return locRange?.block_id ?? null;
+  }, [canonical, focusLocator, focusSnippet, activeChunk, focusPage]);
+
+  useEffect(() => {
+    if (knowledgeFallbackBlockId) {
+      setActiveBlockId(knowledgeFallbackBlockId);
+    }
+  }, [knowledgeFallbackBlockId]);
+
+  // Knowledge View unavailable → Original View still has ChunkNavigator.
+  useEffect(() => {
+    if (canonicalLoading) return;
+    if (canonical) return;
+    if (initialView !== "knowledge") return;
+    if (focusChunkId || (focusPage != null && focusPage > 0)) {
+      setViewMode("original");
+    }
+  }, [canonicalLoading, canonical, initialView, focusChunkId, focusPage]);
+
+  const handleKnowledgeNavFailed = useCallback(() => {
+    if (focusChunkId || (focusPage != null && focusPage > 0)) {
+      setViewMode("original");
+      return;
+    }
+    onHighlightFailed?.();
+  }, [focusChunkId, focusPage, onHighlightFailed]);
 
   const activeMatch = matches[matchIndex] ?? null;
   const toc = useMemo(
@@ -758,7 +818,9 @@ export function DocumentViewer({
                 locator={focusLocator}
                 highlightSnippet={focusSnippet}
                 activeBlockId={activeBlockId}
+                fallbackBlockId={knowledgeFallbackBlockId}
                 onBlockVisible={setActiveBlockId}
+                onNavigationFailed={handleKnowledgeNavFailed}
               />
             ) : canonicalLoading ? (
               <KnowledgeSkeleton />

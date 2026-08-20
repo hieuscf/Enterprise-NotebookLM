@@ -18,6 +18,7 @@
  *   - Frontend must call /api/proxy/* — never LLM providers directly.
  *   - SSE branch must not buffer the body (defeats streaming); everything
  *     else keeps the original arrayBuffer() behavior unchanged.
+ *   - Streaming fetches use undici bodyTimeout=0 to avoid UND_ERR_BODY_TIMEOUT.
  * =============================================================================
  */
 
@@ -33,6 +34,26 @@ import {
 import type { AuthToken } from "@/types/auth";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
+
+/** Allow long Chat SSE on platforms that honor route segment config. */
+export const runtime = "nodejs";
+export const maxDuration = 800;
+export const dynamic = "force-dynamic";
+
+function wantsEventStream(request: NextRequest, path: string[]): boolean {
+  const accept = (request.headers.get("Accept") ?? "").toLowerCase();
+  if (accept.includes("text/event-stream")) return true;
+  // POST .../chat/sessions/{id}/messages defaults to SSE in the Chat API.
+  if (
+    request.method === "POST" &&
+    path.includes("chat") &&
+    path.includes("sessions") &&
+    path[path.length - 1] === "messages"
+  ) {
+    return true;
+  }
+  return false;
+}
 
 async function tryRefresh(): Promise<string | null> {
   const refreshToken = await getRefreshToken();
@@ -58,6 +79,7 @@ async function tryRefresh(): Promise<string | null> {
 async function proxy(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
   const targetPath = `/${path.join("/")}${request.nextUrl.search}`;
+  const streaming = wantsEventStream(request, path);
 
   let access = await getAccessToken();
   if (!access) {
@@ -88,7 +110,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     body,
   });
 
-  let upstream = await backendFetch(targetPath, buildInit(access));
+  let upstream = await backendFetch(targetPath, buildInit(access), { streaming });
 
   if (upstream.status === 401) {
     const refreshed = await tryRefresh();
@@ -98,7 +120,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
         { status: 401 },
       );
     }
-    upstream = await backendFetch(targetPath, buildInit(refreshed));
+    upstream = await backendFetch(targetPath, buildInit(refreshed), { streaming });
   }
 
   const responseHeaders = new Headers();
@@ -114,7 +136,10 @@ async function proxy(request: NextRequest, context: RouteContext) {
   // Chat streaming (SSE) — pipe the body through as-is; buffering it here
   // would defeat the whole point of streaming (no tokens until the answer
   // finished generating).
-  if (responseContentType?.toLowerCase().startsWith("text/event-stream")) {
+  if (
+    streaming ||
+    responseContentType?.toLowerCase().startsWith("text/event-stream")
+  ) {
     responseHeaders.set("Cache-Control", "no-cache, no-transform");
     responseHeaders.set("Connection", "keep-alive");
     responseHeaders.set("X-Accel-Buffering", "no");

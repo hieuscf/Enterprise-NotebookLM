@@ -6,15 +6,18 @@
 # Responsibilities:
 #   - Create / list / get / soft-delete chat sessions
 #   - List messages with nested generation + citations
-#   - Enforce owner-scoped read; owner-or-admin delete
+#   - GET message detail + verified citations by message id (OpenAPI)
+#   - Enforce owner-scoped session read; owner-or-admin delete
 # Dependencies:
 #   - ChatSessionRepository, ChatMessageRepository
+#   - Optional DocumentIngestionService for CitationLocator enrichment
 # Public Exports:
 #   - ChatSessionService, ChatServiceError
 # Database/Table: chat_sessions, chat_messages, message_generations, citations
 # Related Modules: app.api.chat
 # Important Notes:
-#   - Part 1: no POST message / Query Router / LLM / SSE.
+#   - GET .../messages/{id} is workspace-member scoped (any member), like agent-events.
+#   - GET .../citations returns verified citations only (OpenAPI highlight contract).
 #   - OpenAPI ChatSession has no denormalized preview fields — see TODO below.
 # =============================================================================
 
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import TYPE_CHECKING, Any, Protocol
 
 from app.core.logging import get_logger
 from app.models.chat import ChatSession, MessageGeneration
@@ -36,7 +40,18 @@ from app.schemas.chat import (
     MessageGenerationResponse,
 )
 
+if TYPE_CHECKING:
+    from app.services.documents import DocumentIngestionService
+
 logger = get_logger(__name__)
+
+
+class _LocatorResolver(Protocol):
+    async def resolve_locators_for_citations(
+        self,
+        workspace_id: uuid.UUID,
+        rows: list[Any],
+    ) -> dict[uuid.UUID, CitationLocator]: ...
 
 
 class ChatServiceError(Exception):
@@ -56,9 +71,11 @@ class ChatSessionService:
         self,
         sessions: ChatSessionRepository,
         messages: ChatMessageRepository,
+        documents: DocumentIngestionService | _LocatorResolver | None = None,
     ) -> None:
         self._sessions = sessions
         self._messages = messages
+        self._documents = documents
 
     async def create_session(
         self,
@@ -192,7 +209,76 @@ class ChatSessionService:
             page=page,
             page_size=page_size,
         )
+        # Do NOT resolve Knowledge View locators here — MinIO markdown load per
+        # version makes list history multi-second and starves other API calls.
+        # Locators come from SSE generation, GET .../messages/{id}, or
+        # GET .../citations; FE falls back via chunk/snippet when absent.
         return [_message_response(r.message, r.generation, r.citations) for r in rows]
+
+    async def get_message(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> ChatMessageResponse:
+        """Workspace-scoped message detail (generation + citations when assistant)."""
+        row = await self._messages.get_with_relations_for_workspace(
+            workspace_id=workspace_id,
+            message_id=message_id,
+        )
+        if row is None:
+            raise ChatServiceError(
+                "not_found",
+                "Chat message not found in this workspace",
+                status_code=404,
+            )
+        locator_map = await self._resolve_locators(workspace_id, row.citations)
+        return _message_response(
+            row.message,
+            row.generation,
+            row.citations,
+            locator_map=locator_map,
+        )
+
+    async def list_message_citations(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> list[CitationResponse]:
+        """Verified citations for highlight — empty list when none; 404 if missing."""
+        row = await self._messages.get_with_relations_for_workspace(
+            workspace_id=workspace_id,
+            message_id=message_id,
+        )
+        if row is None:
+            raise ChatServiceError(
+                "not_found",
+                "Chat message not found in this workspace",
+                status_code=404,
+            )
+        verified = [item for item in row.citations if bool(item.citation.verified)]
+        locator_map = await self._resolve_locators(workspace_id, verified)
+        return [
+            _citation_response(item, locator=locator_map.get(item.citation.id))
+            for item in verified
+        ]
+
+    async def _resolve_locators(
+        self,
+        workspace_id: uuid.UUID,
+        rows: list[CitationWithDocument],
+    ) -> dict[uuid.UUID, CitationLocator]:
+        if self._documents is None or not rows:
+            return {}
+        try:
+            return await self._documents.resolve_locators_for_citations(
+                workspace_id,
+                rows,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("citation_locator_enrich_failed", error=str(exc))
+            return {}
 
     async def _require_readable_session(
         self,
@@ -230,6 +316,8 @@ def _message_response(
     message,
     generation: MessageGeneration | None,
     citations: list[CitationWithDocument],
+    *,
+    locator_map: dict[uuid.UUID, CitationLocator] | None = None,
 ) -> ChatMessageResponse:
     role = message.role.value if hasattr(message.role, "value") else str(message.role)
     if role == MessageRole.user.value:
@@ -242,13 +330,17 @@ def _message_response(
             citations=[],
             created_at=message.created_at,
         )
+    locators = locator_map or {}
     return ChatMessageResponse(
         id=message.id,
         session_id=message.session_id,
         role="assistant",
         content=message.content,
         generation=_generation_response(generation) if generation else None,
-        citations=[_citation_response(c) for c in citations],
+        citations=[
+            _citation_response(c, locator=locators.get(c.citation.id))
+            for c in citations
+        ],
         created_at=message.created_at,
     )
 

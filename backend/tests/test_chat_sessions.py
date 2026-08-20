@@ -153,6 +153,8 @@ class FakeSessionRepo:
 class FakeMessageRepo:
     def __init__(self) -> None:
         self.by_session: dict[uuid.UUID, list[MessageWithRelations]] = {}
+        self.by_id: dict[uuid.UUID, MessageWithRelations] = {}
+        self.workspace_of: dict[uuid.UUID, uuid.UUID] = {}
 
     async def list(
         self,
@@ -165,6 +167,19 @@ class FakeMessageRepo:
         items.sort(key=lambda r: r.message.created_at)
         start = (page - 1) * page_size
         return items[start : start + page_size]
+
+    async def get_with_relations_for_workspace(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        message_id: uuid.UUID,
+    ) -> MessageWithRelations | None:
+        row = self.by_id.get(message_id)
+        if row is None:
+            return None
+        if self.workspace_of.get(message_id) != workspace_id:
+            return None
+        return row
 
     async def count(self, *, session_id: uuid.UUID) -> int:
         return len(self.by_session.get(session_id, []))
@@ -183,6 +198,19 @@ def _service(
     s = sessions or FakeSessionRepo()
     m = messages or FakeMessageRepo()
     return ChatSessionService(s, m), s, m
+
+
+def _store_message(
+    msgs: FakeMessageRepo,
+    *,
+    workspace_id: uuid.UUID,
+    row: MessageWithRelations,
+) -> None:
+    msgs.by_id[row.message.id] = row
+    msgs.workspace_of[row.message.id] = workspace_id
+    bucket = msgs.by_session.setdefault(row.message.session_id, [])
+    if row not in bucket:
+        bucket.append(row)
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +513,8 @@ async def test_list_messages_nested_generation_and_citations() -> None:
         citations=[CitationWithDocument(citation=citation, document_id=doc_id)],
     )
     msgs.by_session[session.id] = [assistant, user_row]  # wrong order on purpose
+    _store_message(msgs, workspace_id=ws, row=assistant)
+    _store_message(msgs, workspace_id=ws, row=user_row)
 
     out = await svc.list_messages(
         workspace_id=ws,
@@ -506,6 +536,124 @@ async def test_list_messages_nested_generation_and_citations() -> None:
     assert out[1].citations[0].verified is True
 
 
+@pytest.mark.asyncio
+async def test_get_message_detail_by_id() -> None:
+    svc, repo, msgs = _service()
+    ws, user = uuid.uuid4(), uuid.uuid4()
+    session = await repo.create(workspace_id=ws, user_id=user)
+    now = datetime.now(UTC)
+    citation = Citation(
+        id=uuid.uuid4(),
+        message_id=uuid.uuid4(),
+        retrieval_id=uuid.uuid4(),
+        text_snippet="snippet",
+        verified=True,
+        order_index=0,
+    )
+    assistant_id = uuid.uuid4()
+    citation.message_id = assistant_id
+    generation = MessageGeneration(
+        id=uuid.uuid4(),
+        message_id=assistant_id,
+        route_type=RouteType.complex,
+        confidence_level=ConfidenceLevel.high,
+        confidence_score=0.91,
+        agent_triggered=False,
+        model_used="claude-sonnet",
+        prompt_tokens=1,
+        completion_tokens=2,
+        total_tokens=3,
+        cost_usd=Decimal("0.001"),
+        latency_ms=50,
+        finish_reason=FinishReason.stop,
+        created_at=now,
+    )
+    assistant = MessageWithRelations(
+        message=ChatMessage(
+            id=assistant_id,
+            session_id=session.id,
+            role=MessageRole.assistant,
+            content="Answer",
+            created_at=now,
+        ),
+        generation=generation,
+        citations=[
+            CitationWithDocument(citation=citation, document_id=uuid.uuid4())
+        ],
+    )
+    _store_message(msgs, workspace_id=ws, row=assistant)
+
+    out = await svc.get_message(workspace_id=ws, message_id=assistant_id)
+    assert out.id == assistant_id
+    assert out.role == "assistant"
+    assert out.generation is not None
+    assert out.generation.route_type == "complex"
+    assert len(out.citations) == 1
+
+    with pytest.raises(ChatServiceError) as exc:
+        await svc.get_message(workspace_id=uuid.uuid4(), message_id=assistant_id)
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_message_citations_verified_only() -> None:
+    svc, repo, msgs = _service()
+    ws, user = uuid.uuid4(), uuid.uuid4()
+    session = await repo.create(workspace_id=ws, user_id=user)
+    now = datetime.now(UTC)
+    message_id = uuid.uuid4()
+    verified = Citation(
+        id=uuid.uuid4(),
+        message_id=message_id,
+        retrieval_id=uuid.uuid4(),
+        text_snippet="ok",
+        verified=True,
+        order_index=0,
+    )
+    unverified = Citation(
+        id=uuid.uuid4(),
+        message_id=message_id,
+        retrieval_id=uuid.uuid4(),
+        text_snippet="no",
+        verified=False,
+        order_index=1,
+    )
+    row = MessageWithRelations(
+        message=ChatMessage(
+            id=message_id,
+            session_id=session.id,
+            role=MessageRole.assistant,
+            content="Answer",
+            created_at=now,
+        ),
+        generation=None,
+        citations=[
+            CitationWithDocument(citation=verified, document_id=uuid.uuid4()),
+            CitationWithDocument(citation=unverified, document_id=uuid.uuid4()),
+        ],
+    )
+    _store_message(msgs, workspace_id=ws, row=row)
+
+    citations = await svc.list_message_citations(
+        workspace_id=ws, message_id=message_id
+    )
+    assert len(citations) == 1
+    assert citations[0].id == verified.id
+    assert citations[0].verified is True
+
+    user_msg = _msg(
+        session_id=session.id,
+        role=MessageRole.user,
+        content="Q",
+        created_at=now,
+    )
+    _store_message(msgs, workspace_id=ws, row=user_msg)
+    empty = await svc.list_message_citations(
+        workspace_id=ws, message_id=user_msg.message.id
+    )
+    assert empty == []
+
+
 # ---------------------------------------------------------------------------
 # API tests — RBAC read roles
 # ---------------------------------------------------------------------------
@@ -517,6 +665,9 @@ class FakeChatService:
     def __init__(self) -> None:
         self.deleted: list[dict[str, Any]] = []
         self.listed_by: list[uuid.UUID] = []
+        self.message_detail: ChatMessageResponse | None = None
+        self.citations: list[Any] = []
+        self.missing_message = False
 
     async def list_sessions(self, **kwargs: Any) -> list[ChatSessionResponse]:
         self.listed_by.append(kwargs["user_id"])
@@ -548,6 +699,23 @@ class FakeChatService:
     async def list_messages(self, **kwargs: Any) -> list[ChatMessageResponse]:
         return []
 
+    async def get_message(self, **kwargs: Any) -> ChatMessageResponse:
+        if self.missing_message or self.message_detail is None:
+            raise ChatServiceError(
+                "not_found",
+                "Chat message not found in this workspace",
+                status_code=404,
+            )
+        return self.message_detail
+
+    async def list_message_citations(self, **kwargs: Any) -> list[Any]:
+        if self.missing_message:
+            raise ChatServiceError(
+                "not_found",
+                "Chat message not found in this workspace",
+                status_code=404,
+            )
+        return list(self.citations)
 
 async def _api_client(
     *,
@@ -685,5 +853,88 @@ async def test_api_list_messages_empty(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         assert resp.status_code == 200
         assert resp.json() == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_api_get_message_and_citations(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.schemas.chat import CitationResponse
+
+    ws, user, message_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(UTC)
+    svc = FakeChatService()
+    svc.message_detail = ChatMessageResponse(
+        id=message_id,
+        session_id=uuid.uuid4(),
+        role="assistant",
+        content="Hello",
+        generation=None,
+        citations=[],
+        created_at=now,
+    )
+    citation_id = uuid.uuid4()
+    svc.citations = [
+        CitationResponse(
+            id=citation_id,
+            message_id=message_id,
+            retrieval_id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            chunk_id=None,
+            document_version_id=None,
+            text_snippet="snippet",
+            verified=True,
+            order_index=0,
+            location=None,
+            locator=None,
+        )
+    ]
+    client = await _api_client(
+        user_id=user,
+        role=RoleName.viewer,
+        service=svc,
+        monkeypatch=monkeypatch,
+    )
+    try:
+        async with client:
+            detail = await client.get(
+                f"/workspaces/{ws}/chat/messages/{message_id}"
+            )
+            citations = await client.get(
+                f"/workspaces/{ws}/chat/messages/{message_id}/citations"
+            )
+        assert detail.status_code == 200
+        assert detail.json()["id"] == str(message_id)
+        assert detail.json()["role"] == "assistant"
+        assert citations.status_code == 200
+        body = citations.json()
+        assert len(body) == 1
+        assert body[0]["id"] == str(citation_id)
+        assert body[0]["verified"] is True
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_api_get_message_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    ws, user, message_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    svc = FakeChatService()
+    svc.missing_message = True
+    client = await _api_client(
+        user_id=user,
+        role=RoleName.editor,
+        service=svc,
+        monkeypatch=monkeypatch,
+    )
+    try:
+        async with client:
+            detail = await client.get(
+                f"/workspaces/{ws}/chat/messages/{message_id}"
+            )
+            citations = await client.get(
+                f"/workspaces/{ws}/chat/messages/{message_id}/citations"
+            )
+        assert detail.status_code == 404
+        assert citations.status_code == 404
     finally:
         app.dependency_overrides.clear()

@@ -77,6 +77,31 @@ def test_citation_subspan_not_whole_chunk() -> None:
     assert total < len(chunk)
 
 
+def test_batch_resolve_skips_renormalize_when_spans_present() -> None:
+    """Pre-normalized blocks must not re-walk markdown (page-load starvation fix)."""
+    analysis = build_layout_analysis(markdown=MARKDOWN, item_pages=[])
+    blocks = [b.as_dict() for b in analysis.blocks]
+    snippet = "Các hoạt động khác trong kỳ."
+    once = resolve_canonical_locator(
+        markdown=MARKDOWN,
+        blocks=blocks,
+        text_snippet=snippet,
+        blocks_normalized=False,
+    )
+    again = resolve_canonical_locator(
+        markdown=MARKDOWN,
+        blocks=blocks,
+        text_snippet=snippet,
+        blocks_normalized=True,
+    )
+    assert once.confidence == again.confidence == "exact"
+    assert once.markdown_start == again.markdown_start
+    assert once.markdown_end == again.markdown_end
+    assert [(r.block_id, r.start, r.end) for r in once.ranges] == [
+        (r.block_id, r.start, r.end) for r in again.ranges
+    ]
+
+
 def test_attach_spans_backfills_legacy_blocks() -> None:
     raw = [
         {"order_index": 0, "block_type": "heading", "text": "Báo cáo tài chính"},

@@ -252,6 +252,8 @@ function initialsOf(name: string): string {
 type Props = {
   active: SidebarActiveKey;
   user: User | null;
+  /** True while /auth/me is in flight — avoids a stuck "?" + "Đang tải…" look. */
+  userLoading?: boolean;
   /** Current workspace in view (detail/members pages) — enables the contextual "Thành viên" link. */
   workspaceId?: string | null;
   mobileOpen: boolean;
@@ -261,6 +263,7 @@ type Props = {
 export function Sidebar({
   active,
   user,
+  userLoading = false,
   workspaceId = null,
   mobileOpen,
   onClose,
@@ -375,7 +378,11 @@ export function Sidebar({
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-body-sm font-medium text-primary">
-                {user ? user.full_name : "Đang tải…"}
+                {user
+                  ? user.full_name
+                  : userLoading
+                    ? "Đang tải…"
+                    : "Chưa đăng nhập"}
               </p>
               <p className="truncate text-caption text-tertiary">
                 {user ? user.email : ""}
