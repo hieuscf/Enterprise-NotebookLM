@@ -4,12 +4,6 @@
 
 Đồ án tốt nghiệp — Ngành Công nghệ Thông tin, Trường Đại học Giao thông Vận tải TP. Hồ Chí Minh.
 
-| | |
-|---|---|
-| **Đề tài** | Hệ thống Web hỗ trợ quản lý và khai thác tri thức từ tài liệu doanh nghiệp dựa trên LLM và RAG |
-| **Người hướng dẫn** | TS. Trần Thế Vinh |
-| **Học viên** | Ngô Quốc Hiếu — MSHS 2251120416 — Lớp CN22H |
-
 ---
 
 ## Giới thiệu
@@ -22,42 +16,42 @@ Trong môi trường doanh nghiệp, tài liệu (hợp đồng, báo cáo, quy 
 
 ### Phía Người dùng (Client)
 
-* **Đăng nhập / Workspace** — Xác thực JWT; làm việc trong Workspace theo phòng ban/dự án với vai trò `admin` / `editor` / `viewer`.
-* **Quản lý tài liệu** — Upload đa định dạng (PDF, DOCX, XLSX, PPTX, TXT); theo dõi pipeline xử lý (Document Understanding → Chunking → Embedding → Graph → Indexing).
-* **Intelligent Search** — Hybrid Retrieval (Vector + BM25 + Knowledge Graph) + Cross-Encoder Re-ranking.
-* **AI Chat có Citation** — Hỏi–đáp ngôn ngữ tự nhiên; câu trả lời kèm nguồn đã xác minh; highlight trên tài liệu gốc; streaming response.
-* **AI Summary & Extraction** — Tóm tắt (ngắn / chi tiết / theo chủ đề / bullet) và trích xuất thông tin có cấu trúc (bảng, số liệu, thực thể, mốc thời gian).
-* **So sánh tài liệu & Contract Comparison** — Đối chiếu ≥2 tài liệu; với cặp hợp đồng: phân tích cấp điều khoản (Added/Removed/Modified/Unchanged), rủi ro pháp lý và evidence đã kiểm chứng.
-* **Báo cáo** — Tổng hợp tóm tắt / trích xuất / so sánh / chat thành file PDF, DOCX hoặc Markdown.
-* **Conversation Memory** — Lưu và tiếp tục lịch sử hội thoại theo phiên.
+- **Đăng nhập / Workspace** — Xác thực JWT; làm việc trong Workspace theo phòng ban/dự án với vai trò `admin` / `editor` / `viewer`.
+- **Quản lý tài liệu** — Upload đa định dạng (PDF, DOCX, XLSX, PPTX, TXT); theo dõi pipeline xử lý (Document Understanding → Chunking → Embedding → Graph → Indexing).
+- **Intelligent Search** — Hybrid Retrieval (Vector + BM25 + Knowledge Graph) + Cross-Encoder Re-ranking.
+- **AI Chat có Citation** — Hỏi–đáp ngôn ngữ tự nhiên; câu trả lời kèm nguồn đã xác minh; highlight trên tài liệu gốc; streaming response.
+- **AI Summary & Extraction** — Tóm tắt (ngắn / chi tiết / theo chủ đề / bullet) và trích xuất thông tin có cấu trúc (bảng, số liệu, thực thể, mốc thời gian).
+- **So sánh tài liệu & Contract Comparison** — Đối chiếu ≥2 tài liệu; với cặp hợp đồng: phân tích cấp điều khoản (Added/Removed/Modified/Unchanged), rủi ro pháp lý và evidence đã kiểm chứng.
+- **Báo cáo** — Tổng hợp tóm tắt / trích xuất / so sánh / chat thành file PDF, DOCX hoặc Markdown.
+- **Conversation Memory** — Lưu và tiếp tục lịch sử hội thoại theo phiên.
 
 ### Phía Quản trị (Admin / Platform Manage)
 
-* **Admin Dashboard** — Theo dõi health hệ thống, số lượng workspace/user/document, định tuyến truy vấn và chi phí LLM (biểu đồ / metric).
-* **Quản lý Workspace & tài liệu** — Danh mục workspace, pipeline runs, documents ở phạm vi nền tảng.
-* **Phân quyền** — Platform role `manage` cho `/admin`; RBAC theo Workspace (`admin` / `editor` / `viewer`).
-* **Observability** — Query logs theo `route_type`, cost-summary theo model, tracing/logging (structlog + OpenTelemetry).
+- **Admin Dashboard** — Theo dõi health hệ thống, số lượng workspace/user/document, định tuyến truy vấn và chi phí LLM (biểu đồ / metric).
+- **Quản lý Workspace & tài liệu** — Danh mục workspace, pipeline runs, documents ở phạm vi nền tảng.
+- **Phân quyền** — Platform role `manage` cho `/admin`; RBAC theo Workspace (`admin` / `editor` / `viewer`).
+- **Observability** — Query logs theo `route_type`, cost-summary theo model, tracing/logging (structlog + OpenTelemetry).
 
 ---
 
 ## 🛠️ Công nghệ sử dụng
 
-| Thành phần | Công nghệ |
-|---|---|
-| **Frontend** | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS, shadcn/ui |
-| **Backend API** | Python 3.11+, FastAPI, SQLAlchemy (async), Alembic, Pydantic |
-| **Xác thực** | OAuth2 / JWT; Platform Manage + Workspace RBAC |
-| **Task queue** | Celery + Redis |
-| **RDBMS** | PostgreSQL 16 |
-| **Vector DB** | Qdrant |
-| **Full-text (BM25)** | Elasticsearch |
-| **Knowledge Graph** | Neo4j Community (+ LightRAG dual-level) |
-| **Object storage** | MinIO (S3-compatible) |
-| **Document Understanding** | LlamaParse (fallback OCR local) |
-| **RAG / Retrieval** | Hybrid Retrieval + Cross-Encoder Reranker + Query Router |
-| **LLM** | OpenAI / Anthropic (chat & structured output; tối đa 1 LLM call / complex query) |
-| **Triển khai** | Docker + Docker Compose |
-| **CI** | GitHub Actions (`ruff`, `black`, `pytest`, `eslint`, `next build`) |
+| Thành phần                 | Công nghệ                                                                        |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| **Frontend**               | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS, shadcn/ui           |
+| **Backend API**            | Python 3.11+, FastAPI, SQLAlchemy (async), Alembic, Pydantic                     |
+| **Xác thực**               | OAuth2 / JWT; Platform Manage + Workspace RBAC                                   |
+| **Task queue**             | Celery + Redis                                                                   |
+| **RDBMS**                  | PostgreSQL 16                                                                    |
+| **Vector DB**              | Qdrant                                                                           |
+| **Full-text (BM25)**       | Elasticsearch                                                                    |
+| **Knowledge Graph**        | Neo4j Community (+ LightRAG dual-level)                                          |
+| **Object storage**         | MinIO (S3-compatible)                                                            |
+| **Document Understanding** | LlamaParse (fallback OCR local)                                                  |
+| **RAG / Retrieval**        | Hybrid Retrieval + Cross-Encoder Reranker + Query Router                         |
+| **LLM**                    | OpenAI / Anthropic (chat & structured output; tối đa 1 LLM call / complex query) |
+| **Triển khai**             | Docker + Docker Compose                                                          |
+| **CI**                     | GitHub Actions (`ruff`, `black`, `pytest`, `eslint`, `next build`)               |
 
 Kiến trúc chi tiết: `docs/System_Architecture_Enterprise_NotebookLM.md` · Hợp đồng API: `docs/Enterprise_notebooklm_openapi.yaml`.
 
@@ -65,17 +59,37 @@ Kiến trúc chi tiết: `docs/System_Architecture_Enterprise_NotebookLM.md` · 
 
 ## 📸 Hình ảnh giao diện
 
-| Đăng nhập | Workspace |
-|---|---|
-| <img src="assets/readme/login.png" width="400" alt="Giao diện đăng nhập"> | <img src="assets/readme/workspaces.png" width="400" alt="Danh sách Workspace"> |
+Ảnh giao diện dạng ngang (~915×480). Hiển thị **một ảnh mỗi hàng** để giữ đúng tỉ lệ và độ rõ trên GitHub.
 
-| AI Chat có Citation | Admin Dashboard |
-|---|---|
-| <img src="assets/readme/ai-chat.png" width="400" alt="AI Chat với nguồn trích dẫn"> | <img src="assets/readme/admin-dashboard.png" width="400" alt="Admin Observability Dashboard"> |
+<p align="center"><b>Đăng nhập</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/ee536029-69f0-4894-92d8-d30e672be730" width="915" height="434" alt="Giao diện đăng nhập">
+</p>
 
-| Document Viewer (Citation highlight) |
-|---|
-| <img src="assets/readme/document-viewer.png" width="600" alt="Xem tài liệu và highlight citation"> |
+<p align="center"><b>Workspace</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/2c0bc99a-c2f6-4648-86a0-8018988e11ce" width="915" height="487" alt="Danh sách Workspace">
+</p>
+
+<p align="center"><b>AI Chat có Citation</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/5b292653-8092-47cc-9124-7211ca2b541a" width="915" height="480" alt="AI Chat với nguồn trích dẫn">
+</p>
+
+<p align="center"><b>Document Viewer (Citation highlight)</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/341e6ca3-11de-4d39-8bc0-1353abccbc32" width="915" height="478" alt="Xem tài liệu và highlight citation">
+</p>
+
+<p align="center"><b>Document / Contract Comparison</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/34c96efa-80fa-4367-afc7-9b89bf76a644" width="915" height="482" alt="So sánh tài liệu">
+</p>
+
+<p align="center"><b>Admin Dashboard</b></p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/e87c673c-8e77-4241-8ba1-31904176d1bb" width="915" height="489" alt="Admin Observability Dashboard">
+</p>
 
 ---
 
@@ -83,12 +97,12 @@ Kiến trúc chi tiết: `docs/System_Architecture_Enterprise_NotebookLM.md` · 
 
 ### Yêu cầu môi trường
 
-* [Git](https://git-scm.com/)
-* [Docker Desktop](https://www.docker.com/products/docker-desktop/) / Docker Engine + **Compose v2**
-* RAM khuyến nghị: **≥ 8–16 GB** (nhiều container chạy đồng thời)
-* API key (tùy chọn nhưng cần cho đầy đủ chức năng AI):
-  * `OPENAI_API_KEY` (hoặc Anthropic nếu cấu hình `CHAT_LLM_PROVIDER=anthropic`)
-  * `LLAMAPARSE_API_KEY` (Document Understanding; có thể fallback local OCR)
+- [Git](https://git-scm.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) / Docker Engine + **Compose v2**
+- RAM khuyến nghị: **≥ 8–16 GB** (nhiều container chạy đồng thời)
+- API key (tùy chọn nhưng cần cho đầy đủ chức năng AI):
+  - `OPENAI_API_KEY` (hoặc Anthropic nếu cấu hình `CHAT_LLM_PROVIDER=anthropic`)
+  - `LLAMAPARSE_API_KEY` (Document Understanding; có thể fallback local OCR)
 
 ### 1. Clone mã nguồn
 
@@ -109,12 +123,12 @@ Copy-Item .env.example .env
 
 Các biến quan trọng trong `.env`:
 
-| Nhóm | Biến | Ghi chú |
-|---|---|---|
-| Auth | `JWT_SECRET_KEY` | Đổi trước khi dùng môi trường chia sẻ |
-| Chat LLM | `CHAT_LLM_PROVIDER`, `OPENAI_API_KEY` | Mặc định provider `openai` |
-| Document parse | `DOCUMENT_PARSER`, `LLAMAPARSE_API_KEY` | `llamaparse` hoặc `local` |
-| Bootstrap | `BOOTSTRAP_MANAGE_EMAIL` | (Tuỳ chọn) promote user sẵn có lên Platform Manage |
+| Nhóm           | Biến                                    | Ghi chú                                            |
+| -------------- | --------------------------------------- | -------------------------------------------------- |
+| Auth           | `JWT_SECRET_KEY`                        | Đổi trước khi dùng môi trường chia sẻ              |
+| Chat LLM       | `CHAT_LLM_PROVIDER`, `OPENAI_API_KEY`   | Mặc định provider `openai`                         |
+| Document parse | `DOCUMENT_PARSER`, `LLAMAPARSE_API_KEY` | `llamaparse` hoặc `local`                          |
+| Bootstrap      | `BOOTSTRAP_MANAGE_EMAIL`                | (Tuỳ chọn) promote user sẵn có lên Platform Manage |
 
 Giá trị Postgres / Redis / MinIO / Neo4j mặc định trong `.env.example` đủ dùng cho local.
 
@@ -152,14 +166,14 @@ Kỳ vọng: các service `healthy` (MinIO init có thể `Exited 0`), `GET /hea
 
 ### URL local
 
-| Service | URL |
-|---|---|
-| Frontend (Next.js) | http://localhost:3000 |
-| Backend API / health | http://localhost:8000/health |
-| MinIO Console | http://localhost:9001 (`minioadmin` / `minioadmin`) |
-| Neo4j Browser | http://localhost:7474 |
-| Qdrant Dashboard | http://localhost:6333/dashboard |
-| Elasticsearch | http://localhost:9200 |
+| Service              | URL                                                 |
+| -------------------- | --------------------------------------------------- |
+| Frontend (Next.js)   | http://localhost:3000                               |
+| Backend API / health | http://localhost:8000/health                        |
+| MinIO Console        | http://localhost:9001 (`minioadmin` / `minioadmin`) |
+| Neo4j Browser        | http://localhost:7474                               |
+| Qdrant Dashboard     | http://localhost:6333/dashboard                     |
+| Elasticsearch        | http://localhost:9200                               |
 
 ### Luồng dùng thử cơ bản
 
@@ -171,16 +185,16 @@ Kỳ vọng: các service `healthy` (MinIO init có thể `Exited 0`), `GET /hea
 
 ### Checklist dịch vụ
 
-| Service | Kiểm tra nhanh |
-|---|---|
-| postgres | `docker compose exec postgres pg_isready -U notebooklm` |
-| redis | `docker compose exec redis redis-cli ping` → `PONG` |
-| qdrant | `curl http://localhost:6333/readyz` |
-| elasticsearch | `curl http://localhost:9200/_cluster/health` |
-| minio | `curl http://localhost:9000/minio/health/live` |
-| backend-api | `curl -i http://localhost:8000/health` |
-| celery-worker | `docker compose logs celery-worker --tail 20` |
-| frontend | mở http://localhost:3000 |
+| Service       | Kiểm tra nhanh                                          |
+| ------------- | ------------------------------------------------------- |
+| postgres      | `docker compose exec postgres pg_isready -U notebooklm` |
+| redis         | `docker compose exec redis redis-cli ping` → `PONG`     |
+| qdrant        | `curl http://localhost:6333/readyz`                     |
+| elasticsearch | `curl http://localhost:9200/_cluster/health`            |
+| minio         | `curl http://localhost:9000/minio/health/live`          |
+| backend-api   | `curl -i http://localhost:8000/health`                  |
+| celery-worker | `docker compose logs celery-worker --tail 20`           |
+| frontend      | mở http://localhost:3000                                |
 
 ### Chạy kiểm thử / lint (tùy chọn)
 
@@ -219,21 +233,21 @@ docs/                    # Tài liệu thiết kế / OpenAPI (local)
 
 ## Điểm nổi bật kỹ thuật
 
-* **Query Router** — Phân loại cache / metadata / section / factoid / complex; nhiều nhánh **0 lần gọi LLM**.
-* **Complex Query** — Hybrid Retrieval → Rerank → Confidence Engine → tối đa **1 lần LLM** (structured output) + Citation Verification deterministic.
-* **Contract Comparison** — Deterministic clause mapping/diff trước, LLM giải thích sau; gắn evidence đã kiểm chứng.
-* **Multi-tenant** — Mọi truy vấn dữ liệu lọc theo `workspace_id`; chỉ `backend-api` gọi LLM chat provider.
+- **Query Router** — Phân loại cache / metadata / section / factoid / complex; nhiều nhánh **0 lần gọi LLM**.
+- **Complex Query** — Hybrid Retrieval → Rerank → Confidence Engine → tối đa **1 lần LLM** (structured output) + Citation Verification deterministic.
+- **Contract Comparison** — Deterministic clause mapping/diff trước, LLM giải thích sau; gắn evidence đã kiểm chứng.
+- **Multi-tenant** — Mọi truy vấn dữ liệu lọc theo `workspace_id`; chỉ `backend-api` gọi LLM chat provider.
 
 ---
 
 ## Tài liệu tham chiếu
 
-* `docs/Business_Context.md` — Mục tiêu, Use Case, Functional Requirements
-* `docs/Enterprise_NotebookLM.md` — 10 module chức năng & Query Router
-* `docs/System_Architecture_Enterprise_NotebookLM.md` — C4 + Sequence
-* `docs/database-design-enterprise-notebooklm.md` — Schema
-* `docs/Enterprise_notebooklm_openapi.yaml` — Hợp đồng API
-* `docs/Đồ án Enteprise_NotebookLM.docx` — Báo cáo đồ án đầy đủ
+- `docs/Business_Context.md` — Mục tiêu, Use Case, Functional Requirements
+- `docs/Enterprise_NotebookLM.md` — 10 module chức năng & Query Router
+- `docs/System_Architecture_Enterprise_NotebookLM.md` — C4 + Sequence
+- `docs/database-design-enterprise-notebooklm.md` — Schema
+- `docs/Enterprise_notebooklm_openapi.yaml` — Hợp đồng API
+- `docs/Đồ án Enteprise_NotebookLM.docx` — Báo cáo đồ án đầy đủ
 
 ---
 
