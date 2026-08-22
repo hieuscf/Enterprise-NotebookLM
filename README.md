@@ -2,8 +2,6 @@
 
 > Hệ thống Web hỗ trợ **quản lý và khai thác tri thức** từ tài liệu doanh nghiệp dựa trên **Large Language Models (LLM)** và **Retrieval-Augmented Generation (RAG)**.
 
-Đồ án tốt nghiệp — Ngành Công nghệ Thông tin, Trường Đại học Giao thông Vận tải TP. Hồ Chí Minh.
-
 ---
 
 ## Giới thiệu
@@ -58,8 +56,6 @@ Kiến trúc chi tiết: `docs/System_Architecture_Enterprise_NotebookLM.md` · 
 ---
 
 ## 📸 Hình ảnh giao diện
-
-Ảnh giao diện dạng ngang (~915×480). Hiển thị **một ảnh mỗi hàng** để giữ đúng tỉ lệ và độ rõ trên GitHub.
 
 <p align="center"><b>Đăng nhập</b></p>
 <p align="center">
