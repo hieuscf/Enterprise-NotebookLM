@@ -586,25 +586,48 @@ class ExtractionService:
         model_used: str | None = None
         started = time.perf_counter()
         partials: list[dict[str, Any]] = []
+        batches_failed = 0
 
-        for batch in batches:
-            llm = await self._call_llm(
-                extraction_type=extraction_type,
-                document_title=document_title,
-                chunks=batch,
-                model=model,
-                target_language=target_language,
-            )
+        for batch_index, batch in enumerate(batches):
+            try:
+                llm, validated = await self._extract_single_batch(
+                    extraction_type=extraction_type,
+                    document_title=document_title,
+                    chunks=batch,
+                    model=model,
+                    target_language=target_language,
+                )
+            except ExtractionServiceError as exc:
+                batches_failed += 1
+                logger.warning(
+                    "extraction_batch_skipped",
+                    batch_index=batch_index,
+                    batch_size=len(batch),
+                    code=exc.code,
+                    extraction_type=extraction_type.value,
+                )
+                continue
+
             model_used = llm.model
             prompt_tokens += int(llm.input_tokens)
             completion_tokens += int(llm.output_tokens)
             cost_usd += Decimal(str(llm.estimated_cost_usd))
-            validated = self._validate_llm_payload(
-                extraction_type=extraction_type,
-                data=llm.data,
-                chunks=batch,
-            )
             partials.append(validated)
+
+        if not partials:
+            raise ExtractionServiceError(
+                "empty_extraction",
+                "No structured extraction result produced",
+                status_code=502,
+            )
+        if batches_failed:
+            logger.info(
+                "extraction_partial_batches",
+                batches_total=len(batches),
+                batches_failed=batches_failed,
+                batches_ok=len(partials),
+                extraction_type=extraction_type.value,
+            )
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         merged = self._merge_partials(extraction_type, partials, chunks=chunks)
@@ -616,6 +639,48 @@ class ExtractionService:
             "latency_ms": latency_ms,
         }
         return merged, meta
+
+    async def _extract_single_batch(
+        self,
+        *,
+        extraction_type: ExtractionType,
+        document_title: str,
+        chunks: list[ChunkHydrationRow],
+        model: str,
+        target_language: TargetLanguage = TargetLanguage.vi,
+        max_attempts: int = 2,
+    ) -> tuple[StructuredLlmResult, dict[str, Any]]:
+        """One LLM call + validation; retry transient LLM/validation failures."""
+        last_exc: ExtractionServiceError | None = None
+        for attempt in range(max_attempts):
+            try:
+                llm = await self._call_llm(
+                    extraction_type=extraction_type,
+                    document_title=document_title,
+                    chunks=chunks,
+                    model=model,
+                    target_language=target_language,
+                )
+                validated = self._validate_llm_payload(
+                    extraction_type=extraction_type,
+                    data=llm.data,
+                    chunks=chunks,
+                )
+                return llm, validated
+            except ExtractionServiceError as exc:
+                last_exc = exc
+                if exc.code not in {"llm_failed", "invalid_structured_output"}:
+                    raise
+                if attempt + 1 >= max_attempts:
+                    raise
+                logger.info(
+                    "extraction_batch_retry",
+                    attempt=attempt + 1,
+                    code=exc.code,
+                    extraction_type=extraction_type.value,
+                )
+        assert last_exc is not None
+        raise last_exc
 
     async def _call_llm(
         self,
@@ -656,6 +721,13 @@ class ExtractionService:
                 **call_kwargs,
             )
         except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "extraction_llm_call_failed",
+                extraction_type=extraction_type.value,
+                model=model,
+                error_type=type(exc).__name__,
+                error=str(exc)[:500],
+            )
             raise ExtractionServiceError(
                 "llm_failed",
                 "Extraction generation failed",
@@ -677,6 +749,117 @@ class ExtractionService:
             status_code=422,
         )
 
+    @staticmethod
+    def _normalize_table_payload(data: dict[str, Any]) -> dict[str, Any]:
+        """Coerce common LLM table shapes before strict Pydantic validation."""
+        headers_raw = data.get("headers")
+        rows_raw = data.get("rows")
+        rows = rows_raw if isinstance(rows_raw, list) else []
+        headers: list[str] = []
+        if isinstance(headers_raw, list):
+            headers = [
+                str(h).strip()
+                for h in headers_raw
+                if h is not None and str(h).strip()
+            ]
+        if not headers:
+            seen: set[str] = set()
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                for key in row.keys():
+                    label = str(key).strip()
+                    if label and label not in seen:
+                        seen.add(label)
+                        headers.append(label)
+        if not headers:
+            headers = ["Column"]
+        # De-duplicate headers while preserving order.
+        deduped: list[str] = []
+        seen_hdr: set[str] = set()
+        for h in headers:
+            if h in seen_hdr:
+                suffix = 2
+                candidate = f"{h}_{suffix}"
+                while candidate in seen_hdr:
+                    suffix += 1
+                    candidate = f"{h}_{suffix}"
+                h = candidate
+            seen_hdr.add(h)
+            deduped.append(h)
+        headers = deduped
+
+        normalized_rows: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized_rows.append({h: row.get(h) for h in headers})
+        return {"headers": headers, "rows": normalized_rows}
+
+    @staticmethod
+    def _normalize_figures_payload(data: dict[str, Any]) -> dict[str, Any]:
+        figures_raw = data.get("figures")
+        if not isinstance(figures_raw, list):
+            return {"figures": []}
+        figures: list[dict[str, Any]] = []
+        for item in figures_raw:
+            if not isinstance(item, dict):
+                continue
+            metric = str(item.get("metric") or "").strip()
+            if not metric:
+                continue
+            figures.append(
+                {
+                    "metric": metric,
+                    "value": item.get("value"),
+                    "unit": item.get("unit"),
+                    "context": item.get("context"),
+                }
+            )
+        return {"figures": figures}
+
+    def _normalize_llm_payload(
+        self,
+        *,
+        extraction_type: ExtractionType,
+        data: dict[str, Any],
+        chunks: list[ChunkHydrationRow],
+    ) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        if extraction_type == ExtractionType.table:
+            return self._normalize_table_payload(data)
+        if extraction_type == ExtractionType.figures:
+            return self._normalize_figures_payload(data)
+        if extraction_type == ExtractionType.timeline:
+            known = {c.chunk_id for c in chunks}
+            events_raw = data.get("events")
+            if not isinstance(events_raw, list):
+                return {"events": []}
+            events: list[dict[str, Any]] = []
+            for item in events_raw:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    cid = uuid.UUID(str(item.get("source_chunk_id")))
+                except (TypeError, ValueError):
+                    continue
+                if cid not in known:
+                    continue
+                date_or_period = str(item.get("date_or_period") or "").strip()
+                event = str(item.get("event") or "").strip()
+                if not date_or_period or not event:
+                    continue
+                events.append(
+                    {
+                        "date_or_period": date_or_period,
+                        "event": event,
+                        "source_chunk_id": cid,
+                    }
+                )
+            return {"events": events}
+        return data
+
     def _validate_llm_payload(
         self,
         *,
@@ -684,6 +867,11 @@ class ExtractionService:
         data: dict[str, Any],
         chunks: list[ChunkHydrationRow],
     ) -> dict[str, Any]:
+        data = self._normalize_llm_payload(
+            extraction_type=extraction_type,
+            data=data,
+            chunks=chunks,
+        )
         try:
             if extraction_type == ExtractionType.table:
                 return table_result_to_dict(TableExtractionResult.model_validate(data))
@@ -817,6 +1005,7 @@ class ExtractionService:
         window = model_context_window(self._settings, model=model)
         reserve = int(self._settings.extraction_prompt_reserve_tokens)
         budget = max(512, window - reserve - int(self._settings.extraction_max_output_tokens))
+        max_chunks = max(1, int(self._settings.extraction_max_chunks_per_batch))
 
         batches: list[list[ChunkHydrationRow]] = []
         current: list[ChunkHydrationRow] = []
@@ -834,7 +1023,9 @@ class ExtractionService:
         for chunk in chunks:
             piece = f"[chunk_id={chunk.chunk_id}]\n{(chunk.content or '').strip()}"
             tok = count_tokens(piece)
-            if current and current_tokens + tok + overhead > budget:
+            if current and (
+                current_tokens + tok + overhead > budget or len(current) >= max_chunks
+            ):
                 batches.append(current)
                 current = []
                 current_tokens = 0

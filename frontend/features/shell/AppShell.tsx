@@ -42,10 +42,12 @@ type Props = {
   children: React.ReactNode;
 };
 
-export function AppShell({ active, user: userProp = null, workspaceId, children }: Props) {
+export function AppShell({ active, user: userProp, workspaceId, children }: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user: authUser, loading: authLoading } = useAuth();
-  const user = userProp ?? authUser;
+  // Prefer live AuthProvider user; optional prop is only a fallback for tests /
+  // isolated mounts. Do not let an explicit `null` prop block authUser.
+  const user = authUser ?? userProp ?? null;
 
   return (
     <div className="flex h-svh overflow-hidden bg-base">

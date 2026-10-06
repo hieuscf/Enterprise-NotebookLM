@@ -239,9 +239,12 @@ class Settings(BaseSettings):
     summary_prompt_reserve_tokens: int = 4_096
 
     # FR7 — Information Extraction (reuses chat LLM + model tiering; entities reuse graph).
-    extraction_max_output_tokens: int = 4096
-    extraction_timeout_seconds: float = 120.0
+    extraction_max_output_tokens: int = 8192
+    extraction_timeout_seconds: float = 180.0
     extraction_prompt_reserve_tokens: int = 4_096
+    # Cap chunks per LLM call — large docs otherwise fit one 200k window but blow the
+    # structured JSON completion budget (especially gpt-5 / reasoning models).
+    extraction_max_chunks_per_batch: int = 24
 
     # FR8 — Multi-document Comparison (strong model / complex query; 1 LLM call).
     comparison_max_output_tokens: int = 4096

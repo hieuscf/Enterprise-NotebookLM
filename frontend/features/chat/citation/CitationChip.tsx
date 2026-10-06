@@ -19,7 +19,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { ArrowUpRight } from "lucide-react";
 
@@ -50,6 +51,9 @@ export function CitationChip({
   const popoverId = useId();
   const wrapRef = useRef<HTMLSpanElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(
+    null,
+  );
   const closeTimer = useRef<number | null>(null);
 
   const isActive = ui?.highlightedCitationId === citation.id;
@@ -134,6 +138,31 @@ export function CitationChip({
 
   useEffect(() => () => clearCloseTimer(), []);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopoverPos(null);
+      return;
+    }
+    const anchor = wrapRef.current;
+    if (!anchor) return;
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      setPopoverPos({
+        top: rect.top,
+        left: rect.left + rect.width / 2,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [open]);
+
   const pageLabel = locationLabel || "Nguồn";
   const isPageVariant = variant === "page";
 
@@ -194,16 +223,21 @@ export function CitationChip({
         )}
       </button>
 
-      {open ? (
-        <span
-          id={popoverId}
-          className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2"
-          onMouseEnter={handleOpenPreview}
-          onMouseLeave={scheduleClose}
-        >
-          <CitationPopover citation={citation} onOpenDocument={openDocument} />
-        </span>
-      ) : null}
+      {open && popoverPos && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              id={popoverId}
+              role="presentation"
+              className="fixed z-[100] -translate-x-1/2 -translate-y-full pb-2"
+              style={{ top: popoverPos.top, left: popoverPos.left }}
+              onMouseEnter={handleOpenPreview}
+              onMouseLeave={scheduleClose}
+            >
+              <CitationPopover citation={citation} onOpenDocument={openDocument} />
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }

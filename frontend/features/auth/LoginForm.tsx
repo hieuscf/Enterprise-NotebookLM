@@ -6,15 +6,18 @@
  * Purpose: Email/password login form (Scholarly Precision design system).
  * Responsibilities:
  *   - Submit credentials to BFF /api/auth/login
+ *   - Refresh AuthProvider via /auth/me after success (sidebar user state)
  *   - Show clear 401 error; redirect on success
  *   - Icon inputs + show/hide password + loading state
  * Dependencies:
- *   - lib/api-client.authLogin, lib/utils.cn, lucide-react
+ *   - lib/api-client.authLogin, hooks/useAuth, lib/utils.cn, lucide-react
  * Public Exports:
  *   - LoginForm
  * Database/Table: N/A
  * Related Modules: app/login/page.tsx, .cursor/rules/SKILL.md
  * Important Notes: Use design tokens only — no ad-hoc hex colors.
+ *   AuthProvider mounts once in root layout — must reload() after login or
+ *   sidebar stays on the pre-login null user ("Chưa đăng nhập").
  * =============================================================================
  */
 
@@ -24,6 +27,7 @@ import { AlertCircle, Eye, EyeOff, Loader2, Lock, LogIn, Mail } from "lucide-rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
+import { useAuth } from "@/hooks/useAuth";
 import { authLogin, authMe } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +42,7 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/workspaces";
+  const { reload: reloadAuth } = useAuth();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -51,28 +56,41 @@ export function LoginForm() {
     void (async () => {
       const me = await authMe();
       if (!cancelled && me) {
-        router.replace(nextPath.startsWith("/") ? nextPath : "/workspaces");
+        // Keep AuthProvider in sync when landing on /login already authenticated.
+        await reloadAuth();
+        if (!cancelled) {
+          router.replace(nextPath.startsWith("/") ? nextPath : "/workspaces");
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [nextPath, router]);
+  }, [nextPath, reloadAuth, router]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
-    const result = await authLogin(email.trim(), password);
-    setSubmitting(false);
+    try {
+      const result = await authLogin(email.trim(), password);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
 
-    if (!result.ok) {
-      setError(result.message);
-      return;
+      // Cookies are set by the BFF; refresh shared auth state before navigating.
+      const me = await reloadAuth();
+      if (!me) {
+        setError("Đăng nhập thành công nhưng không tải được hồ sơ. Vui lòng thử lại.");
+        return;
+      }
+
+      router.replace(nextPath.startsWith("/") ? nextPath : "/workspaces");
+      router.refresh();
+    } finally {
+      setSubmitting(false);
     }
-
-    router.replace(nextPath.startsWith("/") ? nextPath : "/");
-    router.refresh();
   }
 
   return (
