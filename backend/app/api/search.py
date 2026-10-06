@@ -30,7 +30,7 @@ from app.core.config import get_settings
 from app.db.session import get_db_session
 from app.dependencies.rate_limit import require_workspace_member_rl
 from app.dependencies.rbac import WorkspaceAccess
-from app.repositories.retrieval import RetrievalRepository
+from app.repositories.retrieval import IsolatedRetrievalRepository, RetrievalRepository
 from app.repositories.search_history import SearchHistoryRepository
 from app.schemas.common import ErrorResponse
 from app.schemas.search import (
@@ -54,23 +54,26 @@ def get_search_service(
 ) -> SearchService:
     """Wire Hybrid Retrieval + history repos for the Search Service."""
     settings = get_settings()
+    # Request session: history + post-filter only. Parallel Vector/BM25/Graph
+    # hydration MUST use isolated sessions (see IsolatedRetrievalRepository).
     retrieval_repo = RetrievalRepository(session)
+    hydrate_repo = IsolatedRetrievalRepository()
     hybrid = HybridRetrievalService(
         settings=settings,
         vector_search=VectorSearch(
             settings=settings,
             qdrant=get_qdrant_store(),
-            repo=retrieval_repo,
+            repo=hydrate_repo,
         ),
         bm25_search=Bm25Search(
             settings=settings,
             elasticsearch=get_elasticsearch_bm25(),
-            repo=retrieval_repo,
+            repo=hydrate_repo,
         ),
         graph_search=GraphSearch(
             settings=settings,
             neo4j=get_neo4j_graph(),
-            repo=retrieval_repo,
+            repo=hydrate_repo,
         ),
         reranker=Reranker(settings),
     )

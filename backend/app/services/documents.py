@@ -268,6 +268,7 @@ class DocumentIngestionService:
                 heading_path=row.heading_path,
                 section_path=row.heading_path,
                 bounding_box=_match_bbox(layout_blocks, row),
+                block_ids=_match_block_ids(layout_blocks, row),
             )
             for row in rows
         ]
@@ -860,6 +861,58 @@ def _viewer_kind_from_preview(version: DocumentVersion) -> str:
     return "original_download"
 
 
+def _chunk_layout_overlap(
+    layout_blocks: list[dict[str, Any]],
+    row: ChunkHydrationRow,
+    *,
+    min_snippet_len: int = 8,
+) -> list[dict[str, Any]]:
+    """Layout blocks that overlap ``row.content`` (same page when known)."""
+    if not layout_blocks:
+        return []
+    snippet = (row.content or "").strip()
+    if len(snippet) < min_snippet_len:
+        return []
+    needle = snippet[:120].lower()
+    chunk_lower = snippet.lower()
+    page = row.page_number
+    hits: list[dict[str, Any]] = []
+    for block in layout_blocks:
+        if page is not None and block.get("page_number") not in (None, page):
+            continue
+        text = str(block.get("text") or block.get("content") or "").lower()
+        if not text:
+            continue
+        # Require real overlap: chunk needle in block OR block start in chunk.
+        if needle not in text and text[:40] not in chunk_lower:
+            continue
+        hits.append(block)
+    return hits
+
+
+def _match_block_ids(
+    layout_blocks: list[dict[str, Any]],
+    row: ChunkHydrationRow,
+    *,
+    limit: int = 8,
+) -> list[str]:
+    """Canonical block ids overlapping this chunk — used by Knowledge View deep-link."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for block in _chunk_layout_overlap(layout_blocks, row):
+        bid = block.get("id")
+        if not isinstance(bid, str):
+            continue
+        clean = bid.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _match_bbox(
     layout_blocks: list[dict[str, Any]],
     row: ChunkHydrationRow,
@@ -869,25 +922,9 @@ def _match_bbox(
     Prefers the *tightest* overlapping block (smallest area) so citation
     highlights do not inflate to a full-page paragraph container.
     """
-    if not layout_blocks:
-        return None
-    snippet = (row.content or "").strip()
-    if len(snippet) < 12:
-        return None
-    needle = snippet[:120].lower()
-    page = row.page_number
     best: list[float] | None = None
     best_area: float | None = None
-    for block in layout_blocks:
-        if page is not None and block.get("page_number") not in (None, page):
-            continue
-        text = str(block.get("text") or block.get("content") or "").lower()
-        if not text:
-            continue
-        # Require real overlap: chunk needle in block OR block start in chunk.
-        chunk_lower = snippet.lower()
-        if needle not in text and text[:40] not in chunk_lower:
-            continue
+    for block in _chunk_layout_overlap(layout_blocks, row, min_snippet_len=12):
         bbox = block.get("bbox")
         if not isinstance(bbox, list) or len(bbox) < 4:
             continue

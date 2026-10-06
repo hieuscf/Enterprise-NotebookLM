@@ -13,20 +13,36 @@
 # Database/Table: entities, document_chunks (fallback hydration)
 # Related Modules: HybridRetrievalService, Neo4jGraphAdapter
 # Important Notes: 0 LLM. Workspace filter on every Cypher / SQL path.
+#   Prefer IsolatedRetrievalRepository when run under asyncio.gather.
 # =============================================================================
 
 from __future__ import annotations
 
 import asyncio
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.adapters.neo4j_graph import Neo4jGraphAdapter
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.repositories.retrieval import RetrievalRepository
 from app.services.retrieval.schemas import RetrievalCandidate
 
 logger = get_logger(__name__)
+
+
+class _HydrationRepo(Protocol):
+    async def hydrate_chunks(
+        self, workspace_id: UUID, chunk_ids: list[UUID]
+    ) -> dict[UUID, Any]: ...
+
+    async def chunks_for_entity_versions(
+        self,
+        workspace_id: UUID,
+        source_version_ids: list[UUID],
+        *,
+        entity_names: list[str],
+        limit: int = 20,
+    ) -> list[Any]: ...
 
 
 class GraphSearch:
@@ -37,7 +53,7 @@ class GraphSearch:
         *,
         settings: Settings,
         neo4j: Neo4jGraphAdapter,
-        repo: RetrievalRepository | None = None,
+        repo: _HydrationRepo | None = None,
     ) -> None:
         self._settings = settings
         self._neo4j = neo4j
@@ -71,6 +87,18 @@ class GraphSearch:
         entity_names: list[str] = []
         entity_ids_by_version: dict[UUID, UUID] = {}
 
+        # Batch Postgres hydrate once (avoid N+1 under per-source timeout).
+        chunk_ids: list[UUID] = []
+        for row in rows:
+            cid = _as_uuid(row.get("chunk_id"))
+            if cid is not None:
+                chunk_ids.append(cid)
+        hydrated: dict[UUID, Any] = {}
+        if self._repo is not None and chunk_ids:
+            hydrated = await self._repo.hydrate_chunks(
+                workspace_id, list(dict.fromkeys(chunk_ids))
+            )
+
         for row in rows:
             entity_id = _as_uuid(row.get("entity_id"))
             chunk_id = _as_uuid(row.get("chunk_id"))
@@ -88,19 +116,17 @@ class GraphSearch:
                 heading_path: str | None = None
                 chunk_index: int | None = None
                 document_version_id: UUID | None = None
-                if self._repo is not None:
-                    hydrated = await self._repo.hydrate_chunks(workspace_id, [chunk_id])
-                    h = hydrated.get(chunk_id)
-                    if h is not None:
-                        snippet = (h.content or snippet)[:max_chars]
-                        document_id = document_id or h.document_id
-                        page_number = h.page_number
-                        section_index = h.section_index
-                        section_title = h.section
-                        document_title = h.title
-                        heading_path = h.heading_path
-                        chunk_index = h.chunk_index
-                        document_version_id = h.document_version_id
+                h = hydrated.get(chunk_id)
+                if h is not None:
+                    snippet = (h.content or snippet)[:max_chars]
+                    document_id = document_id or h.document_id
+                    page_number = h.page_number
+                    section_index = h.section_index
+                    section_title = h.section
+                    document_title = h.title
+                    heading_path = h.heading_path
+                    chunk_index = h.chunk_index
+                    document_version_id = h.document_version_id
                 candidates.append(
                     RetrievalCandidate(
                         workspace_id=workspace_id,

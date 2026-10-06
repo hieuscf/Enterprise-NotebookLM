@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 from app.schemas.chat import CitationResponse
 from app.schemas.content_location import ContentLocation
-from app.services.documents import _match_bbox
+from app.services.documents import _match_bbox, _match_block_ids
 
 
 def test_match_bbox_prefers_tightest_overlapping_block() -> None:
@@ -53,6 +53,31 @@ def test_match_bbox_returns_none_without_text_overlap() -> None:
         {"page_number": 2, "text": "Hoạt động chính trong kỳ", "bbox": [0.1, 0.1, 0.5, 0.1]},
     ]
     assert _match_bbox(blocks, row) is None  # type: ignore[arg-type]
+
+
+def test_match_block_ids_returns_overlapping_canonical_ids() -> None:
+    row = SimpleNamespace(
+        content="Hoạt động chính trong kỳ của Công ty và các công ty con",
+        page_number=1,
+    )
+    blocks = [
+        {
+            "id": "b0001",
+            "page_number": 1,
+            "text": "Mục lục",
+        },
+        {
+            "id": "b0002",
+            "page_number": 1,
+            "text": row.content + " — chi tiết thêm",
+        },
+        {
+            "id": "b0003",
+            "page_number": 2,
+            "text": row.content,
+        },
+    ]
+    assert _match_block_ids(blocks, row) == ["b0002"]  # type: ignore[arg-type]
 
 
 def test_citation_response_includes_locator_fields() -> None:

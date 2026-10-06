@@ -10,11 +10,14 @@
 # Dependencies:
 #   - SQLAlchemy AsyncSession, app.models.documents, app.models.knowledge
 # Public Exports:
-#   - ChunkHydrationRow, MetadataDocumentRow, RetrievalRepository
+#   - ChunkHydrationRow, MetadataDocumentRow, RetrievalRepository,
+#     IsolatedRetrievalRepository
 # Database/Table: document_chunks, document_versions, documents, entities,
 #   topics, topic_chunks, users
 # Related Modules: app.services.retrieval.*, app.services.comparison
 # Important Notes: Always filter by workspace_id — multi-tenant isolation.
+#   AsyncSession is NOT safe under asyncio.gather — use IsolatedRetrievalRepository
+#   for Vector/BM25/Graph parallel hydration (separate short-lived sessions).
 # =============================================================================
 
 from __future__ import annotations
@@ -738,3 +741,56 @@ class RetrievalRepository:
                 status=version.status.value if version else None,
             )
         return out
+
+
+class IsolatedRetrievalRepository:
+    """Per-call AsyncSession wrapper — safe under ``asyncio.gather`` / ``wait_for``.
+
+    Hybrid Retrieval runs Vector + BM25 + Graph concurrently. Sharing the
+    request-scoped session across those tasks causes ``PendingRollbackError``
+    when one source times out mid-query and cancels in-flight SQLAlchemy work.
+    Each method here opens a short-lived session so cancellation cannot poison
+    the request transaction used for ``search_history`` writes.
+    """
+
+    async def hydrate_chunks(
+        self,
+        workspace_id: uuid.UUID,
+        chunk_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, ChunkHydrationRow]:
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            return await RetrievalRepository(session).hydrate_chunks(
+                workspace_id, chunk_ids
+            )
+
+    async def document_id_for_version(
+        self,
+        workspace_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+    ) -> uuid.UUID | None:
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            return await RetrievalRepository(session).document_id_for_version(
+                workspace_id, document_version_id
+            )
+
+    async def chunks_for_entity_versions(
+        self,
+        workspace_id: uuid.UUID,
+        source_version_ids: list[uuid.UUID],
+        *,
+        entity_names: list[str],
+        limit: int = 20,
+    ) -> list[ChunkHydrationRow]:
+        from app.db.session import async_session_factory
+
+        async with async_session_factory() as session:
+            return await RetrievalRepository(session).chunks_for_entity_versions(
+                workspace_id,
+                source_version_ids,
+                entity_names=entity_names,
+                limit=limit,
+            )

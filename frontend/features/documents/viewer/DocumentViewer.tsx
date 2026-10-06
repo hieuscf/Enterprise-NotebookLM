@@ -161,21 +161,28 @@ export function DocumentViewer({
 
   const storedMatches = useMemo(
     () => loadSearchMatches(workspaceId, documentId),
-    [workspaceId, documentId],
+    // Re-read when deep-link chunk changes — Search rewrites sessionStorage on click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional focusChunkId trigger
+    [workspaceId, documentId, focusChunkId],
   );
   const matches = storedMatches?.matches ?? [];
-  const matchIndex = Math.max(
-    0,
-    matches.findIndex((m) => m.chunkId === activeChunkId),
-  );
+  const matchIndex = matches.findIndex((m) => m.chunkId === activeChunkId);
+  const activeMatch = matchIndex >= 0 ? (matches[matchIndex] ?? null) : null;
+
+  /** Citation snippet, or Search hit snippet persisted in sessionStorage. */
+  const effectiveHighlightSnippet = useMemo(() => {
+    const fromCitation = focusSnippet?.trim() || null;
+    if (fromCitation) return fromCitation;
+    return activeMatch?.textSnippet?.trim() || null;
+  }, [focusSnippet, activeMatch]);
 
   useEffect(() => {
     setActiveChunkId(focusChunkId);
   }, [focusChunkId]);
 
   useEffect(() => {
-    setCitationSnippetPreview(focusSnippet);
-  }, [focusSnippet]);
+    setCitationSnippetPreview(focusSnippet ?? effectiveHighlightSnippet);
+  }, [focusSnippet, effectiveHighlightSnippet]);
 
   useEffect(() => {
     setViewMode(initialView);
@@ -228,11 +235,17 @@ export function DocumentViewer({
   }, [contentUrl, contentKey]);
 
   useEffect(() => {
-    if (focusChunkId || focusCitationId || focusSnippet) return;
+    if (focusChunkId || focusCitationId || effectiveHighlightSnippet) return;
     if (!pdfReady || !focusPage || focusPage <= 0) return;
     pdfRef.current?.jumpToPage(focusPage);
     setCurrentPage(focusPage);
-  }, [focusChunkId, focusCitationId, focusSnippet, focusPage, pdfReady]);
+  }, [
+    focusChunkId,
+    focusCitationId,
+    effectiveHighlightSnippet,
+    focusPage,
+    pdfReady,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -336,8 +349,17 @@ export function DocumentViewer({
       return locRange.block_id;
     }
     if (!canonical?.blocks?.length) return null;
-    if (focusSnippet?.trim()) {
-      const block = findBlockForSnippet(canonical.blocks, focusSnippet.trim());
+
+    const blockIdSet = new Set(canonical.blocks.map((b) => b.id));
+    // Prefer explicit chunk→block mapping from API (Search / citation deep-link).
+    const mappedId = activeChunk?.block_ids?.find((id) => blockIdSet.has(id));
+    if (mappedId) return mappedId;
+
+    if (effectiveHighlightSnippet) {
+      const block = findBlockForSnippet(
+        canonical.blocks,
+        effectiveHighlightSnippet,
+      );
       if (block) return block.id;
     }
     if (activeChunk?.content?.trim()) {
@@ -348,11 +370,28 @@ export function DocumentViewer({
       if (block) return block.id;
     }
     if (focusPage && focusPage > 0) {
-      const byPage = canonical.blocks.find((b) => b.page_number === focusPage);
-      if (byPage) return byPage.id;
+      const onPage = canonical.blocks.filter((b) => b.page_number === focusPage);
+      if (effectiveHighlightSnippet && onPage.length) {
+        const block = findBlockForSnippet(onPage, effectiveHighlightSnippet);
+        if (block) return block.id;
+      }
+      // Prefer a substantial paragraph over the first heading on the page.
+      const paragraph = onPage.find(
+        (b) =>
+          b.block_type === "paragraph" &&
+          (b.content?.trim().length ?? 0) > 20,
+      );
+      if (paragraph) return paragraph.id;
+      if (onPage[0]) return onPage[0].id;
     }
     return locRange?.block_id ?? null;
-  }, [canonical, focusLocator, focusSnippet, activeChunk, focusPage]);
+  }, [
+    canonical,
+    focusLocator,
+    effectiveHighlightSnippet,
+    activeChunk,
+    focusPage,
+  ]);
 
   useEffect(() => {
     if (knowledgeFallbackBlockId) {
@@ -377,8 +416,6 @@ export function DocumentViewer({
     }
     onHighlightFailed?.();
   }, [focusChunkId, focusPage, onHighlightFailed]);
-
-  const activeMatch = matches[matchIndex] ?? null;
   const toc = useMemo(
     () =>
       buildToc(
@@ -816,7 +853,7 @@ export function DocumentViewer({
                 markdownFallback={canonical.markdown}
                 documentTitle={canonical.document_title}
                 locator={focusLocator}
-                highlightSnippet={focusSnippet}
+                highlightSnippet={effectiveHighlightSnippet}
                 activeBlockId={activeBlockId}
                 fallbackBlockId={knowledgeFallbackBlockId}
                 onBlockVisible={setActiveBlockId}
@@ -891,7 +928,7 @@ export function DocumentViewer({
               />
               <ChunkNavigator
                 chunkId={activeChunkId}
-                highlightSnippet={focusSnippet}
+                highlightSnippet={effectiveHighlightSnippet}
                 chunks={meta?.items ?? []}
                 pdfRef={pdfRef}
                 ready={metaReady && pdfReady}
@@ -900,8 +937,11 @@ export function DocumentViewer({
                 onHighlightFailed={onHighlightFailed}
               />
               <SnippetNavigator
-                enabled={Boolean(focusCitationId || focusSnippet) && !focusChunkId}
-                snippet={focusSnippet}
+                enabled={
+                  Boolean(focusCitationId || effectiveHighlightSnippet) &&
+                  !focusChunkId
+                }
+                snippet={effectiveHighlightSnippet}
                 pageHint={
                   focusLocator?.page_number ?? focusPage
                 }
@@ -913,7 +953,9 @@ export function DocumentViewer({
                     setActiveChunkId(chunk.id);
                     handleLocated(chunk);
                   }
-                  if (!matched) setCitationSnippetPreview(focusSnippet);
+                  if (!matched) {
+                    setCitationSnippetPreview(effectiveHighlightSnippet);
+                  }
                 }}
                 onHighlightFailed={onHighlightFailed}
               />
@@ -968,8 +1010,14 @@ export function DocumentViewer({
             }
             matchIndex={matchIndex >= 0 ? matchIndex : 0}
             matchCount={matches.length}
-            onPrev={() => goMatch(matchIndex - 1)}
-            onNext={() => goMatch(matchIndex + 1)}
+            onPrev={() => {
+              if (matchIndex > 0) goMatch(matchIndex - 1);
+            }}
+            onNext={() => {
+              if (matchIndex >= 0 && matchIndex < matches.length - 1) {
+                goMatch(matchIndex + 1);
+              }
+            }}
             onOpenVersionHistory={onOpenVersionHistory}
             onAskAi={askAi}
           />

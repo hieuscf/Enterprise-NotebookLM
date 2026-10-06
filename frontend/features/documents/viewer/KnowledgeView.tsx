@@ -82,8 +82,9 @@ export function KnowledgeView({
         onBlockVisible?.(result.scrolledBlockId);
       }
       // DOM hosts may not exist on the first paint (flex layout / fonts).
-      if (!result.scrolledBlockId && expectFocus && attempt < 2) {
-        retryTimer = window.setTimeout(() => run(attempt + 1), attempt === 0 ? 32 : 120);
+      if (!result.scrolledBlockId && expectFocus && attempt < 4) {
+        const delay = attempt === 0 ? 32 : attempt === 1 ? 120 : attempt === 2 ? 280 : 480;
+        retryTimer = window.setTimeout(() => run(attempt + 1), delay);
         return;
       }
       if (!result.scrolledBlockId && expectFocus) {

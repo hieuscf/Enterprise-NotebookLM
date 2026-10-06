@@ -18,16 +18,22 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.adapters.qdrant_store import QdrantStoreAdapter
 from app.ai.embedding import embed_texts_batch
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.repositories.retrieval import RetrievalRepository
 from app.services.retrieval.schemas import RetrievalCandidate
 
 logger = get_logger(__name__)
+
+
+class _HydrationRepo(Protocol):
+    async def hydrate_chunks(
+        self, workspace_id: UUID, chunk_ids: list[UUID]
+    ) -> dict[UUID, Any]: ...
 
 
 class VectorSearch:
@@ -38,7 +44,7 @@ class VectorSearch:
         *,
         settings: Settings,
         qdrant: QdrantStoreAdapter,
-        repo: RetrievalRepository | None = None,
+        repo: _HydrationRepo | None = None,
     ) -> None:
         self._settings = settings
         self._qdrant = qdrant

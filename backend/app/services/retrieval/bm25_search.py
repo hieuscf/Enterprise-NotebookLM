@@ -18,15 +18,25 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.adapters.elasticsearch_bm25 import ElasticsearchBm25Adapter
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.repositories.retrieval import RetrievalRepository
 from app.services.retrieval.schemas import RetrievalCandidate
 
 logger = get_logger(__name__)
+
+
+class _HydrationRepo(Protocol):
+    async def hydrate_chunks(
+        self, workspace_id: UUID, chunk_ids: list[UUID]
+    ) -> dict[UUID, Any]: ...
+
+    async def document_id_for_version(
+        self, workspace_id: UUID, document_version_id: UUID
+    ) -> UUID | None: ...
 
 
 class Bm25Search:
@@ -37,7 +47,7 @@ class Bm25Search:
         *,
         settings: Settings,
         elasticsearch: ElasticsearchBm25Adapter,
-        repo: RetrievalRepository | None = None,
+        repo: _HydrationRepo | None = None,
     ) -> None:
         self._settings = settings
         self._es = elasticsearch

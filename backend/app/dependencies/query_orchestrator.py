@@ -31,7 +31,7 @@ from app.repositories.agent_events import AgentEventRepository
 from app.repositories.metadata_query import PostgresMetadataRepository
 from app.repositories.query_cache import QueryCacheRepository
 from app.repositories.query_logs import QueryObservabilityRepository
-from app.repositories.retrieval import RetrievalRepository
+from app.repositories.retrieval import IsolatedRetrievalRepository, RetrievalRepository
 from app.repositories.retrieval_records import RetrievalRecordRepository
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.citation_verification.service import CitationVerificationService
@@ -65,10 +65,12 @@ def get_query_orchestrator(
     settings = get_settings()
     rules = get_router_rules()
     retrieval_repo = RetrievalRepository(session)
+    # Parallel hybrid sources must not share the request AsyncSession.
+    hydrate_repo = IsolatedRetrievalRepository()
     vector_search = VectorSearch(
         settings=settings,
         qdrant=get_qdrant_store(),
-        repo=retrieval_repo,
+        repo=hydrate_repo,
     )
     hybrid = HybridRetrievalService(
         settings=settings,
@@ -76,12 +78,12 @@ def get_query_orchestrator(
         bm25_search=Bm25Search(
             settings=settings,
             elasticsearch=get_elasticsearch_bm25(),
-            repo=retrieval_repo,
+            repo=hydrate_repo,
         ),
         graph_search=GraphSearch(
             settings=settings,
             neo4j=get_neo4j_graph(),
-            repo=retrieval_repo,
+            repo=hydrate_repo,
         ),
         reranker=Reranker(settings),
     )
