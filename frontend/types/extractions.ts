@@ -10,11 +10,12 @@
  *   - docs/Enterprise_notebooklm_openapi.yaml Extraction schema
  * Public Exports:
  *   - ExtractionType, ExtractionOutputFormat, ExtractionStatus, TargetLanguage,
- *     Extraction, ExtractionCreateRequest, TableResultPayload
+ *     Extraction, ExtractionCreateRequest, TableResultPayload, DocumentTableItem,
+ *     TableGalleryPayload
  * Database/Table: extractions
  * Related Modules: lib/extractions.api, features/extractions/*
  * Important Notes: result is null while processing/failed; structured when completed.
- *   Cost/token fields are not public API. target_language defaults to vi.
+ *   extraction_type=table → gallery {tables:[...]}. Cost/token fields are not public.
  * =============================================================================
  */
 
@@ -26,10 +27,25 @@ export type ExtractionStatus = "processing" | "completed" | "failed";
 
 export type TargetLanguage = "vi" | "en";
 
-/** Shared table-ready shape for output_format=table (headers + rows). */
+/** Shared table-ready shape for non-table types with output_format=table. */
 export type TableResultPayload = {
   headers: string[];
   rows: Array<Record<string, unknown>>;
+};
+
+/** One original document table in extraction_type=table gallery. */
+export type DocumentTableItem = {
+  id: string;
+  title: string;
+  source_chunk_id: string;
+  page_number?: number | null;
+  heading_path?: string | null;
+  headers: string[];
+  rows: Array<Record<string, unknown>>;
+};
+
+export type TableGalleryPayload = {
+  tables: DocumentTableItem[];
 };
 
 export type Extraction = {
@@ -40,7 +56,7 @@ export type Extraction = {
   output_format: ExtractionOutputFormat;
   target_language: TargetLanguage;
   status: ExtractionStatus;
-  result: Record<string, unknown> | TableResultPayload | null;
+  result: Record<string, unknown> | TableResultPayload | TableGalleryPayload | null;
   created_at: string;
 };
 

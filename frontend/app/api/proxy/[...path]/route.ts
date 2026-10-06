@@ -6,10 +6,10 @@
  * Purpose: Same-origin proxy so browser never holds JWT in JS (httpOnly cookies).
  * Responsibilities:
  *   - Forward method/body/query to backend with Authorization from access cookie
- *   - On 401, attempt refresh once then retry
+ *   - On 401, attempt single-flight refresh once then retry
  *   - Pipe text/event-stream responses through unbuffered (Chat SSE, FR4)
  * Dependencies:
- *   - lib/auth/backend, lib/auth/cookies
+ *   - lib/auth/backend, lib/auth/cookies, lib/auth/refresh
  * Public Exports:
  *   - GET, POST, PUT, PATCH, DELETE
  * Database/Table: N/A
@@ -25,13 +25,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendFetch } from "@/lib/auth/backend";
-import {
-  clearAuthCookies,
-  getAccessToken,
-  getRefreshToken,
-  setAuthCookies,
-} from "@/lib/auth/cookies";
-import type { AuthToken } from "@/types/auth";
+import { getAccessToken } from "@/lib/auth/cookies";
+import { refreshAccessToken } from "@/lib/auth/refresh";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -55,27 +50,6 @@ function wantsEventStream(request: NextRequest, path: string[]): boolean {
   return false;
 }
 
-async function tryRefresh(): Promise<string | null> {
-  const refreshToken = await getRefreshToken();
-  if (!refreshToken) return null;
-  const upstream = await backendFetch("/auth/refresh", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!upstream.ok) {
-    await clearAuthCookies();
-    return null;
-  }
-  const tokens = (await upstream.json()) as AuthToken;
-  await setAuthCookies({
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_in: tokens.expires_in,
-  });
-  return tokens.access_token;
-}
-
 async function proxy(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
   const targetPath = `/${path.join("/")}${request.nextUrl.search}`;
@@ -83,7 +57,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
 
   let access = await getAccessToken();
   if (!access) {
-    access = (await tryRefresh()) ?? undefined;
+    access = (await refreshAccessToken()) ?? undefined;
   }
   if (!access) {
     return NextResponse.json(
@@ -113,7 +87,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   let upstream = await backendFetch(targetPath, buildInit(access), { streaming });
 
   if (upstream.status === 401) {
-    const refreshed = await tryRefresh();
+    const refreshed = await refreshAccessToken();
     if (!refreshed) {
       return NextResponse.json(
         { code: "unauthorized", message: "Unauthorized" },

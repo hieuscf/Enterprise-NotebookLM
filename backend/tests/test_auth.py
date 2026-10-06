@@ -193,7 +193,22 @@ async def test_refresh_valid_rotates_tokens() -> None:
     refreshed = await service.refresh(original.refresh_token)
     assert refreshed.refresh_token != original.refresh_token
     assert refreshed.access_token  # newly issued (may match if same-second iat/exp)
-    # Old refresh jti no longer accepted (rotated)
+    # Grace window: previous jti still accepted so concurrent BFF refreshes
+    # do not 401 each other; a second refresh rotates again.
+    raced = await service.refresh(original.refresh_token)
+    assert raced.refresh_token != refreshed.refresh_token
+    assert raced.refresh_token != original.refresh_token
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_stale_jti_outside_grace() -> None:
+    user = FakeUser(email="ok@example.com", password="secret123")
+    store = InMemoryRefreshTokenStore()
+    service = _auth_service(user, store=store)
+    original = await service.login("ok@example.com", "secret123")
+    mid = await service.refresh(original.refresh_token)
+    _ = await service.refresh(mid.refresh_token)
+    # original is two rotations behind — only immediate previous jti is kept.
     with pytest.raises(AuthError):
         await service.refresh(original.refresh_token)
 

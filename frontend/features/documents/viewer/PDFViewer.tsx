@@ -35,6 +35,7 @@ import {
   type HighlightRect,
 } from "@/features/documents/viewer/HighlightOverlay";
 import { findSnippetRectsInTextContent } from "@/features/documents/viewer/pdf-text-highlight";
+import { apiFetch } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 export type PDFViewerHandle = {
@@ -338,7 +339,15 @@ export const PDFViewer = memo(forwardRef<PDFViewerHandle, Props>(function PDFVie
     painted.current.clear();
     painting.current.clear();
     canvasByPage.current.clear();
-    fetch(contentUrl, { credentials: "same-origin" })
+    // Prefer apiFetch (path without /api/proxy) so 401 uses shared cookie refresh
+    // instead of a raw fetch that can race-rotate the refresh jti.
+    const proxyPath = contentUrl.startsWith("/api/proxy")
+      ? contentUrl.slice("/api/proxy".length)
+      : contentUrl;
+    apiFetch(proxyPath, {
+      credentials: "same-origin",
+      headers: { Accept: "application/pdf,application/octet-stream,*/*" },
+    })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = await res.arrayBuffer();

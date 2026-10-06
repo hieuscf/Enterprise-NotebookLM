@@ -152,7 +152,7 @@ export function useDocumentSummaries(workspaceId: string, documentId: string) {
           setError(
             err instanceof ApiClientError
               ? err.message
-              : "Unable to generate summary in the selected language. Please try again.",
+              : "Không tạo được tóm tắt. Vui lòng thử lại.",
           );
         }
         return null;

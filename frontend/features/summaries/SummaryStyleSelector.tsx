@@ -3,7 +3,7 @@
  * File: SummaryStyleSelector.tsx
  * Module/Service: Summary Service (Web App)
  * Layer: UI
- * Purpose: Four-style segmented control for AI Summary (FR6).
+ * Purpose: Two-style segmented control for AI Summary (short / detailed).
  * Responsibilities:
  *   - Keyboard-accessible style selection; Vietnamese labels
  * Dependencies:
@@ -13,6 +13,7 @@
  * Database/Table: N/A
  * Related Modules: SummarySection
  * Important Notes: Does not trigger POST — parent owns generation decisions.
+ *   by_topic / bullet_points are intentionally omitted from the selector.
  * =============================================================================
  */
 

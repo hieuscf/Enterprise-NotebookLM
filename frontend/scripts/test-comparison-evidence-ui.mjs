@@ -70,10 +70,8 @@ function evidenceViewerHref(workspaceId, evidence, fallbackDocumentId, fallbackV
   const page = evidence.page_number;
   if (typeof page === "number" && page > 0) {
     params.set("page", String(page));
-    params.set("view", "original");
-  } else {
-    params.set("view", "knowledge");
   }
+  params.set("view", "knowledge");
   const chunkId = asString(evidence.chunk_id);
   if (chunkId) params.set("chunk", chunkId);
   const versionId = asString(evidence.document_version_id) ?? asString(fallbackVersionId);
@@ -141,6 +139,33 @@ function evidenceExcerpt(item, clause) {
   const source = side === "v2" ? clause.v2_text : clause.v1_text;
   if (!source || end > source.length || start < 0) return null;
   return source.slice(start, end);
+}
+
+const NAV_SNIPPET_MIN = 24;
+const NAV_SNIPPET_MAX = 280;
+
+function evidenceNavigationSnippet(item, clause) {
+  const side = evidenceSide(item);
+  const body = ((side === "v2" ? clause.v2_text : clause.v1_text) ?? "").trim();
+  const excerpt = (evidenceExcerpt(item, clause) ?? "").trim();
+
+  if (body) {
+    if (excerpt) {
+      const idx = body.indexOf(excerpt);
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 48);
+        const end = Math.min(body.length, idx + Math.max(excerpt.length, 1) + 120);
+        const window = body.slice(start, end).trim();
+        if (window.length >= Math.min(NAV_SNIPPET_MIN, excerpt.length)) {
+          return window.length > NAV_SNIPPET_MAX ? window.slice(0, NAV_SNIPPET_MAX).trim() : window;
+        }
+      }
+    }
+    if (body.length >= NAV_SNIPPET_MIN) return body.slice(0, NAV_SNIPPET_MAX).trim();
+    return body;
+  }
+
+  return excerpt || null;
 }
 
 function sourceLocationLabel(item, documentTitle) {
@@ -487,10 +512,25 @@ assert(groups.v1[0].excerpt === "480,000,000", "source excerpt is preserved");
 assert(findingContext(verifiedModified).includes("480,000,000"), "finding shows exact change");
 assert(findingContext(verifiedModified).includes("600,000,000"), "finding includes V2 value");
 
+const navSnippet = evidenceNavigationSnippet(verifiedModified.evidence[0], verifiedModified);
+assert(navSnippet && navSnippet.includes("480,000,000"), "navigation snippet keeps display value");
+assert(navSnippet.length > "480,000,000".length, "navigation snippet widens short display_text with clause body");
+assert(navSnippet.includes("liability"), "navigation snippet uses clause context");
+
+const sparseNav = evidenceNavigationSnippet(sparse.evidence[0], {
+  ...sparse,
+  v2_text: "Definitions apply to this agreement and related schedules.",
+});
+assert(
+  sparseNav && sparseNav.includes("Definitions apply"),
+  "CLAUSE evidence without display_text still navigates via clause body",
+);
+
 const v1Href = buildEvidenceSourceHref("ws1", verifiedModified.evidence[0]);
 assert(v1Href.includes("/workspaces/ws1/documents/doc-a"), "opens correct V1 document");
 assert(v1Href.includes("version=ver-a"), "opens correct V1 version");
 assert(v1Href.includes("page=14"), "opens correct V1 page");
+assert(v1Href.includes("view=knowledge"), "opens Knowledge View for reliable highlight");
 assert(v1Href.includes("citation=ev-v1"), "passes citation id for highlight session");
 assert(v1Href.includes("chunk=chunk-a"), "passes backend chunk when present");
 assert(hasSourceSpan(verifiedModified.evidence[0]), "source span is passed through, not recalculated");

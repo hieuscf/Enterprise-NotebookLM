@@ -470,10 +470,10 @@ export function evidenceViewerHref(
   const page = evidence.page_number;
   if (typeof page === "number" && page > 0) {
     params.set("page", String(page));
-    params.set("view", "original");
-  } else {
-    params.set("view", "knowledge");
   }
+  // Knowledge View matches clause/canonical text more reliably than the PDF
+  // text layer (comparison spans are often short money/date values).
+  params.set("view", "knowledge");
   const chunkId = asString(evidence.chunk_id);
   if (chunkId) params.set("chunk", chunkId);
   const versionId =

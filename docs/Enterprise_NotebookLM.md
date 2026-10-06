@@ -48,7 +48,7 @@ Tóm tắt tài liệu theo nhiều dạng: tóm tắt ngắn, tóm tắt chi ti
 
 ## Module 7. Information Extraction
 
-Trích xuất thông tin có cấu trúc (bảng biểu, số liệu, thực thể, mốc thời gian...) từ tài liệu phi cấu trúc, xuất ra dạng JSON/bảng.
+Trích xuất thông tin có cấu trúc từ tài liệu: **bảng gốc** (liệt kê từng bảng Markdown đã parse trong PDF/DOCX — 0 LLM), số liệu, thực thể, mốc thời gian; xuất ra dạng JSON/bảng (gallery).
 
 ## Module 8. Multi-document Analysis
 

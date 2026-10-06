@@ -10,10 +10,11 @@
  * Dependencies:
  *   - comparison-summary, clause-view, types/comparisons
  * Public Exports:
- *   - groupedEvidence, itemVerificationState, sourceTypeLabel, copyCitationText, …
+ *   - groupedEvidence, evidenceNavigationSnippet, itemVerificationState, …
  * Database/Table: N/A
  * Related Modules: ComparisonEvidencePanel, ClauseComparisonView
  * Important Notes: Never infer verified from page/text match. Keep pure for tests.
+ *   Navigation snippets may widen short display_text using clause body for locate.
  * =============================================================================
  */
 
@@ -116,6 +117,50 @@ export function evidenceExcerpt(
   const source = side === "v2" ? clause.v2_text : clause.v1_text;
   if (!source || end > source.length || start < 0) return null;
   return source.slice(start, end);
+}
+
+/** Min length for reliable Knowledge View / PDF snippet matching. */
+const NAV_SNIPPET_MIN = 24;
+const NAV_SNIPPET_MAX = 280;
+
+/**
+ * Snippet used when opening the document viewer from comparison evidence.
+ * Short CMP-06 display values (e.g. "480,000,000") rarely match the PDF text
+ * layer alone — widen with surrounding clause body when available.
+ * Does not invent text: only uses display_text / span / v1_text / v2_text.
+ */
+export function evidenceNavigationSnippet(
+  item: ContractEvidenceRef,
+  clause: ContractClauseResult,
+): string | null {
+  const side = evidenceSide(item);
+  const body = ((side === "v2" ? clause.v2_text : clause.v1_text) ?? "").trim();
+  const excerpt = (evidenceExcerpt(item, clause) ?? "").trim();
+
+  if (body) {
+    if (excerpt) {
+      const idx = body.indexOf(excerpt);
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 48);
+        const end = Math.min(
+          body.length,
+          idx + Math.max(excerpt.length, 1) + 120,
+        );
+        const window = body.slice(start, end).trim();
+        if (window.length >= Math.min(NAV_SNIPPET_MIN, excerpt.length)) {
+          return window.length > NAV_SNIPPET_MAX
+            ? window.slice(0, NAV_SNIPPET_MAX).trim()
+            : window;
+        }
+      }
+    }
+    if (body.length >= NAV_SNIPPET_MIN) {
+      return body.slice(0, NAV_SNIPPET_MAX).trim();
+    }
+    return body;
+  }
+
+  return excerpt || null;
 }
 
 export function sourceLocationLabel(

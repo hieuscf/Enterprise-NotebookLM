@@ -30,7 +30,6 @@ import {
   FileBarChart2,
   FileText,
   GitCompare,
-  Hash,
   Home,
   Layers,
   LogOut,
@@ -124,7 +123,6 @@ const NAV_GROUPS: NavGroup[] = [
         contextual: "search",
         badge: "Chọn workspace",
       },
-      { label: "Chủ đề", icon: Hash, badge: "Sắp có" },
       {
         key: "graph",
         label: "Đồ thị tri thức",

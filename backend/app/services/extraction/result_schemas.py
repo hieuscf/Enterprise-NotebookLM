@@ -4,18 +4,20 @@
 # Layer: Schema
 # Purpose: Per-type Pydantic schemas for structured Information Extraction.
 # Responsibilities:
-#   - Validate LLM / reuse payloads for table, figures, entities, timeline
+#   - Validate payloads for table gallery, figures, entities, timeline
 #   - Provide deterministic table-ready conversion helpers
 # Dependencies:
 #   - pydantic
 # Public Exports:
-#   - TableExtractionResult, FiguresExtractionResult, EntitiesExtractionResult,
-#     TimelineExtractionResult, TableRepresentation, to_table_representation
+#   - DocumentTableItem, TableExtractionResult, FiguresExtractionResult,
+#     EntitiesExtractionResult, TimelineExtractionResult, TableRepresentation,
+#     to_table_representation, *_result_to_dict
 # Database/Table: extractions.result_json (shape contract)
-# Related Modules: extraction_service, prompts
+# Related Modules: extraction_service, prompts, markdown_tables
 # Important Notes:
-#   - Each extraction_type has its own schema — no shared generic blob.
-#   - LLM paths validate through these models; no regex/Markdown parsers.
+#   - extraction_type=table is a gallery of original document tables
+#     ``{tables: [...]}`` (0 LLM; Markdown parsers allowed for this type only).
+#   - figures / entities / timeline still use LLM (or entity reuse) paths.
 # =============================================================================
 
 from __future__ import annotations
@@ -26,11 +28,16 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class TableExtractionResult(BaseModel):
-    """Structured tabular data extracted from document chunks."""
+class DocumentTableItem(BaseModel):
+    """One original table recovered from a document chunk."""
 
     model_config = ConfigDict(extra="forbid")
 
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    source_chunk_id: uuid.UUID
+    page_number: int | None = None
+    heading_path: str | None = None
     headers: list[str] = Field(min_length=1)
     rows: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -43,6 +50,14 @@ class TableExtractionResult(BaseModel):
         if len(set(cleaned)) != len(cleaned):
             raise ValueError("headers must be unique")
         return cleaned
+
+
+class TableExtractionResult(BaseModel):
+    """Gallery of original tables found in the document version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tables: list[DocumentTableItem] = Field(default_factory=list)
 
 
 class FigureItem(BaseModel):
@@ -90,7 +105,7 @@ class TimelineExtractionResult(BaseModel):
 
 
 class TableRepresentation(BaseModel):
-    """Deterministic table-ready view for output_format=table."""
+    """Deterministic table-ready view for non-table types with output_format=table."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -115,11 +130,11 @@ def timeline_result_to_dict(result: TimelineExtractionResult) -> dict[str, Any]:
 
 
 def to_table_representation(canonical: dict[str, Any], *, extraction_type: str) -> dict[str, Any]:
-    """Derive headers+rows from a validated canonical result (no FE inference)."""
+    """Derive headers+rows (or table gallery) from a validated canonical result."""
     if extraction_type == "table":
-        headers = list(canonical.get("headers") or [])
-        rows = list(canonical.get("rows") or [])
-        return TableRepresentation(headers=headers, rows=rows).model_dump(mode="json")
+        return TableExtractionResult.model_validate(
+            {"tables": list(canonical.get("tables") or [])}
+        ).model_dump(mode="json")
 
     if extraction_type == "figures":
         headers = ["metric", "value", "unit", "context"]

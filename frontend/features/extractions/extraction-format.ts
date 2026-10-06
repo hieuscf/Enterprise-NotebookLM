@@ -12,20 +12,22 @@
  * Public Exports:
  *   - EXTRACTION_TYPE_OPTIONS, OUTPUT_FORMAT_OPTIONS, getCurrentExtraction,
  *     getProcessingExtraction, getFailedExtraction, isOldVersion,
- *     asTablePayload, buildExportFilename, buildCopyText, …
+ *     asTablePayload, asTableGalleryPayload, buildExportFilename, buildCopyText, …
  * Database/Table: N/A
  * Related Modules: features/extractions/*, scripts/test-extraction-ui.mjs
  * Important Notes: Selection never picks an old-version extraction as current.
- *   FE does not sort timeline / infer columns — backend owns semantics.
+ *   extraction_type=table uses gallery {tables:[...]}; other types keep headers+rows.
  * =============================================================================
  */
 
 import { serializeToCsv } from "@/lib/download";
 import type {
+  DocumentTableItem,
   Extraction,
   ExtractionOutputFormat,
   ExtractionStatus,
   ExtractionType,
+  TableGalleryPayload,
   TableResultPayload,
   TargetLanguage,
 } from "@/types/extractions";
@@ -176,6 +178,48 @@ export function asTablePayload(
   };
 }
 
+export function asTableGalleryPayload(
+  result: Extraction["result"],
+): TableGalleryPayload | null {
+  if (!result || typeof result !== "object") return null;
+  const tables = (result as TableGalleryPayload).tables;
+  if (Array.isArray(tables)) {
+    const normalized: DocumentTableItem[] = [];
+    for (const item of tables) {
+      if (!item || typeof item !== "object") continue;
+      const headers = item.headers;
+      const rows = item.rows;
+      if (!Array.isArray(headers) || !Array.isArray(rows)) continue;
+      normalized.push({
+        id: String(item.id ?? ""),
+        title: String(item.title ?? "Bảng"),
+        source_chunk_id: String(item.source_chunk_id ?? ""),
+        page_number: item.page_number ?? null,
+        heading_path: item.heading_path ?? null,
+        headers: headers.map((h) => String(h)),
+        rows: rows as Array<Record<string, unknown>>,
+      });
+    }
+    return { tables: normalized };
+  }
+  // Legacy single-table payload {headers, rows} from older generations.
+  const legacy = asTablePayload(result);
+  if (!legacy) return null;
+  return {
+    tables: [
+      {
+        id: "legacy",
+        title: "Bảng 1",
+        source_chunk_id: "",
+        page_number: null,
+        heading_path: null,
+        headers: legacy.headers,
+        rows: legacy.rows,
+      },
+    ],
+  };
+}
+
 export function isEmptyTable(payload: TableResultPayload): boolean {
   return payload.headers.length === 0 || payload.rows.length === 0;
 }
@@ -191,6 +235,17 @@ export function buildExportFilename(
 }
 
 export function buildCsvFromExtraction(extraction: Extraction): string | null {
+  if (extraction.extraction_type === "table") {
+    const gallery = asTableGalleryPayload(extraction.result);
+    if (!gallery || gallery.tables.length === 0) return null;
+    const parts: string[] = [];
+    for (const table of gallery.tables) {
+      if (isEmptyTable(table)) continue;
+      parts.push(`# ${table.title}`);
+      parts.push(serializeToCsv(table.headers, table.rows).trimEnd());
+    }
+    return parts.length ? `${parts.join("\n\n")}\n` : null;
+  }
   const table = asTablePayload(extraction.result);
   if (!table || isEmptyTable(table)) return null;
   return serializeToCsv(table.headers, table.rows);
@@ -203,6 +258,22 @@ export function buildJsonExport(extraction: Extraction): string | null {
 
 export function buildCopyText(extraction: Extraction): string {
   if (extraction.result == null) return "";
+  if (extraction.extraction_type === "table") {
+    const gallery = asTableGalleryPayload(extraction.result);
+    if (!gallery) return JSON.stringify(extraction.result, null, 2);
+    if (extraction.output_format === "json") {
+      return JSON.stringify(extraction.result, null, 2);
+    }
+    const blocks: string[] = [];
+    for (const table of gallery.tables) {
+      const lines = [`# ${table.title}`, table.headers.join("\t")];
+      for (const row of table.rows) {
+        lines.push(table.headers.map((h) => String(row[h] ?? "")).join("\t"));
+      }
+      blocks.push(lines.join("\n"));
+    }
+    return blocks.join("\n\n");
+  }
   if (extraction.output_format === "table") {
     const table = asTablePayload(extraction.result);
     if (!table) return JSON.stringify(extraction.result, null, 2);

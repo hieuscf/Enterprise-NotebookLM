@@ -152,7 +152,7 @@ export function SummarySection({
       if (!row) {
         setAwaitingLanguage(false);
         onCreateError?.(
-          "Unable to generate summary in the selected language. Please try again.",
+          "Không tạo được tóm tắt. Vui lòng thử lại.",
         );
       }
     })();
@@ -178,9 +178,7 @@ export function SummarySection({
       return;
     }
     if (!row && onCreateError) {
-      onCreateError(
-        "Unable to generate summary in the selected language. Please try again.",
-      );
+      onCreateError("Không tạo được tóm tắt. Vui lòng thử lại.");
     }
     setHistorySelection(null);
   }
@@ -343,7 +341,7 @@ export function SummarySection({
           <div className="flex flex-col gap-3" role="alert">
             <p className="flex items-center gap-2 text-body-sm text-danger">
               <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
-              Unable to generate summary in the selected language. Please try again.
+              Không tạo được tóm tắt. Vui lòng thử lại.
             </p>
             {canEdit ? (
               <button

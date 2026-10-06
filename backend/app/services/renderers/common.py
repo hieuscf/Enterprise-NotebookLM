@@ -93,12 +93,41 @@ def extraction_as_table(content: dict[str, Any]) -> tuple[list[str], list[list[s
     """Return (headers, rows) when extraction payload is tabular; else None.
 
     Recognizes:
-    - ``extraction_type == "table"`` with ``result.headers`` + ``result.rows``
+    - ``extraction_type == "table"`` with gallery ``result.tables[]``
+      (uses the first non-empty table)
+    - ``extraction_type == "table"`` legacy ``result.headers`` + ``result.rows``
     - Any ``result`` dict that already has non-empty ``headers`` + list ``rows``
     """
     result = content.get("result")
     extraction_type = content.get("extraction_type")
     if not isinstance(result, dict):
+        return None
+
+    # Gallery of original document tables (FR7 table extraction).
+    tables_raw = result.get("tables")
+    if extraction_type == "table" and isinstance(tables_raw, list):
+        for item in tables_raw:
+            if not isinstance(item, dict):
+                continue
+            headers_raw = item.get("headers")
+            rows_raw = item.get("rows")
+            if not isinstance(headers_raw, list) or not headers_raw:
+                continue
+            if not isinstance(rows_raw, list):
+                continue
+            headers = [cell_str(h) for h in headers_raw]
+            rows: list[list[str]] = []
+            for row in rows_raw:
+                if isinstance(row, dict):
+                    rows.append([cell_str(row.get(h)) for h in headers_raw])
+                elif isinstance(row, (list, tuple)):
+                    cells = [cell_str(v) for v in row]
+                    if len(cells) < len(headers):
+                        cells.extend([""] * (len(headers) - len(cells)))
+                    rows.append(cells[: len(headers)])
+                else:
+                    rows.append([cell_str(row)] + [""] * (len(headers) - 1))
+            return headers, rows
         return None
 
     headers_raw = result.get("headers")
@@ -112,7 +141,7 @@ def extraction_as_table(content: dict[str, Any]) -> tuple[list[str], list[list[s
         return None
 
     headers = [cell_str(h) for h in headers_raw]
-    rows: list[list[str]] = []
+    rows = []
     for row in rows_raw:
         if isinstance(row, dict):
             rows.append([cell_str(row.get(h)) for h in headers_raw])

@@ -14,6 +14,8 @@
 # Database/Table: N/A (Redis key auth:refresh:{user_id})
 # Related Modules: app.services.auth
 # Important Notes: Phase 1.2 — single active refresh jti per user; no device list.
+#   Keep previous jti valid briefly (grace) so concurrent BFF refreshes do not
+#   401 each other after rotation.
 # =============================================================================
 
 from __future__ import annotations
@@ -25,6 +27,10 @@ from functools import lru_cache
 import redis
 
 from app.core.config import Settings, get_settings
+
+# Concurrent proxy refreshes (e.g. document + PDF content) may present the
+# pre-rotation refresh token for a short window after a successful rotate.
+_PREV_JTI_GRACE_SECONDS = 30
 
 
 class RefreshTokenStore(ABC):
@@ -41,7 +47,14 @@ class RefreshTokenStore(ABC):
 
     def matches(self, user_id: uuid.UUID, jti: str) -> bool:
         current = self.get(user_id)
-        return current is not None and current == jti
+        if current is not None and current == jti:
+            return True
+        previous = self.get_previous(user_id)
+        return previous is not None and previous == jti
+
+    def get_previous(self, user_id: uuid.UUID) -> str | None:
+        """Optional previous jti still accepted during rotation grace."""
+        return None
 
 
 class InMemoryRefreshTokenStore(RefreshTokenStore):
@@ -49,16 +62,26 @@ class InMemoryRefreshTokenStore(RefreshTokenStore):
 
     def __init__(self) -> None:
         self._data: dict[str, str] = {}
+        self._prev: dict[str, str] = {}
 
     def save(self, user_id: uuid.UUID, jti: str, ttl_seconds: int) -> None:
         del ttl_seconds  # TTL not enforced in-memory; tests control expiry via JWT
-        self._data[str(user_id)] = jti
+        key = str(user_id)
+        old = self._data.get(key)
+        if old and old != jti:
+            self._prev[key] = old
+        self._data[key] = jti
 
     def get(self, user_id: uuid.UUID) -> str | None:
         return self._data.get(str(user_id))
 
+    def get_previous(self, user_id: uuid.UUID) -> str | None:
+        return self._prev.get(str(user_id))
+
     def delete(self, user_id: uuid.UUID) -> None:
-        self._data.pop(str(user_id), None)
+        key = str(user_id)
+        self._data.pop(key, None)
+        self._prev.pop(key, None)
 
 
 class RedisRefreshTokenStore(RefreshTokenStore):
@@ -76,15 +99,30 @@ class RedisRefreshTokenStore(RefreshTokenStore):
     def _key(user_id: uuid.UUID) -> str:
         return f"auth:refresh:{user_id}"
 
+    @staticmethod
+    def _prev_key(user_id: uuid.UUID) -> str:
+        return f"auth:refresh:prev:{user_id}"
+
     def save(self, user_id: uuid.UUID, jti: str, ttl_seconds: int) -> None:
+        old = self.get(user_id)
+        if old and old != jti:
+            self._client.set(
+                self._prev_key(user_id),
+                old,
+                ex=min(_PREV_JTI_GRACE_SECONDS, max(1, ttl_seconds)),
+            )
         self._client.set(self._key(user_id), jti, ex=ttl_seconds)
 
     def get(self, user_id: uuid.UUID) -> str | None:
         value = self._client.get(self._key(user_id))
         return value if isinstance(value, str) else None
 
+    def get_previous(self, user_id: uuid.UUID) -> str | None:
+        value = self._client.get(self._prev_key(user_id))
+        return value if isinstance(value, str) else None
+
     def delete(self, user_id: uuid.UUID) -> None:
-        self._client.delete(self._key(user_id))
+        self._client.delete(self._key(user_id), self._prev_key(user_id))
 
 
 @lru_cache

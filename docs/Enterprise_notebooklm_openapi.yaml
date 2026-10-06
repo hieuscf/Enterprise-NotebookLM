@@ -2159,8 +2159,11 @@ components:
           nullable: true
           description: >
             null khi processing/failed. Khi completed: structured payload —
-            output_format=json → type-specific (table headers+rows; figures[];
-            entities[]; timeline events[]). output_format=table → luôn headers+rows.
+            output_format=json → type-specific (table: {tables:[{id,title,
+            source_chunk_id,page_number,heading_path,headers,rows}]}; figures[];
+            entities[]; timeline events[]). output_format=table → với
+            extraction_type=table giữ gallery {tables:[...]}; các type khác
+            luôn {headers,rows}.
         created_at: { type: string, format: date-time }
 
     Comparison:

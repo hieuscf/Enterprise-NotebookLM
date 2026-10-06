@@ -73,8 +73,8 @@ export function ExtractionsView({ workspaceId, initialDocumentId = null }: Props
           <p className="text-caption font-medium text-accent-primary">FR7 · AI Tools</p>
           <h1 className="mt-1 text-h1 text-primary">Trích xuất thông tin</h1>
           <p className="mt-1 text-body-sm text-secondary">
-            Chọn tài liệu trong workspace để trích xuất bảng biểu, sự kiện, hoặc cấu
-            trúc JSON.
+            Chọn tài liệu trong workspace để liệt kê bảng gốc, số liệu, thực thể
+            hoặc mốc thời gian (JSON / bảng).
           </p>
         </div>
 

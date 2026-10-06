@@ -233,8 +233,12 @@ class Settings(BaseSettings):
     chat_sse_token_chunk_chars: int = 24
 
     # FR6 — AI Summary (reuses chat LLM provider + model tiering above).
-    summary_max_output_tokens: int = 4096
-    summary_timeout_seconds: float = 120.0
+    # 8192 (not 4096): gpt-5 / o-series with reasoning_effort=minimal still spend
+    # hidden reasoning tokens inside max_completion_tokens. Detailed summaries
+    # need a larger visible-answer budget or the provider returns HTTP 200 with
+    # empty content (EmptyCompletionError / finish_reason=length).
+    summary_max_output_tokens: int = 8192
+    summary_timeout_seconds: float = 180.0
     # Reserve this many tokens for system/style instructions + completion budget.
     summary_prompt_reserve_tokens: int = 4_096
 

@@ -20,6 +20,7 @@
 # Important Notes:
 #   - HTTP path must not call the LLM; generation runs in process_extraction only.
 #   - Celery MUST use source_version_id (never re-read current_version_id).
+#   - extraction_type=table lists original Markdown tables from chunks (0 LLM).
 #   - Standard extraction_type=entities reuses Graph/LightRAG entities
 #     (Entity.source_version_id) — ZERO LLM calls (REUSE_EXISTING_ENTITIES).
 #   - LLM_ENTITY_EXTRACTION is an explicit isolated fallback mode only.
@@ -46,6 +47,7 @@ from app.core.logging import get_logger
 from app.models.artifacts import Extraction
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import (
+    ChunkLayoutType,
     DocumentVersionStatus,
     EntityExtractionMode,
     ExtractionOutputFormat,
@@ -61,6 +63,10 @@ from app.services.chat.model_tiering import (
     model_context_window,
     select_answer_model,
 )
+from app.services.extraction.markdown_tables import (
+    looks_like_document_table,
+    parse_document_table,
+)
 from app.services.extraction.prompts import (
     build_figures_prompts,
     build_llm_entity_prompts,
@@ -68,6 +74,7 @@ from app.services.extraction.prompts import (
     build_timeline_prompts,
 )
 from app.services.extraction.result_schemas import (
+    DocumentTableItem,
     EntitiesExtractionResult,
     EntityItem,
     FiguresExtractionResult,
@@ -437,7 +444,7 @@ class ExtractionService:
             document_id,
             version_id=source_version_id,
         )
-        # Entity reuse does not require chunks; LLM paths do.
+        # Entity reuse + table gallery do not require LLM; table still needs chunks.
         needs_chunks = not (
             extraction_type == ExtractionType.entities
             and entity_mode == EntityExtractionMode.REUSE_EXISTING_ENTITIES
@@ -469,12 +476,7 @@ class ExtractionService:
                     status_code=422,
                 )
         elif extraction_type == ExtractionType.table:
-            canonical, meta = await self._extract_via_llm(
-                extraction_type=ExtractionType.table,
-                document_title=document_title,
-                chunks=chunks,
-                target_language=target_language,
-            )
+            canonical, meta = self._extract_tables_from_chunks(chunks)
         elif extraction_type == ExtractionType.figures:
             canonical, meta = await self._extract_via_llm(
                 extraction_type=ExtractionType.figures,
@@ -545,6 +547,79 @@ class ExtractionService:
         }
         return entities_result_to_dict(result), meta
 
+    def _extract_tables_from_chunks(
+        self,
+        chunks: list[ChunkHydrationRow],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """List original Markdown tables from chunks — ZERO LLM calls."""
+        started = time.perf_counter()
+        items: list[DocumentTableItem] = []
+        seen_chunk_ids: set[uuid.UUID] = set()
+
+        # Prefer layout-tagged table chunks; also accept GFM pipes or HTML cells
+        # (LlamaParse often flattens tables to bare <th>/<td> without layout_type).
+        candidates = [
+            c
+            for c in chunks
+            if c.layout_type == ChunkLayoutType.table
+            or looks_like_document_table(c.content or "")
+        ]
+        # Deduplicate while preserving chunk_index order.
+        candidates.sort(key=lambda c: (c.chunk_index is None, c.chunk_index or 0))
+
+        for chunk in candidates:
+            if chunk.chunk_id in seen_chunk_ids:
+                continue
+            parsed = parse_document_table(chunk.content or "")
+            if parsed is None:
+                continue
+            # Skip empty header-only noise with zero cells after parse failure modes.
+            if not parsed.get("headers"):
+                continue
+            seen_chunk_ids.add(chunk.chunk_id)
+            index = len(items) + 1
+            title = self._table_title(chunk, index)
+            items.append(
+                DocumentTableItem(
+                    id=str(chunk.chunk_id),
+                    title=title,
+                    source_chunk_id=chunk.chunk_id,
+                    page_number=chunk.page_number,
+                    heading_path=chunk.heading_path,
+                    headers=list(parsed["headers"]),
+                    rows=list(parsed["rows"]),
+                )
+            )
+
+        result = TableExtractionResult(tables=items)
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        meta = {
+            "model_used": None,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": Decimal("0"),
+            "latency_ms": latency_ms,
+        }
+        logger.info(
+            "extraction_tables_from_chunks",
+            table_count=len(items),
+            chunk_candidates=len(candidates),
+            latency_ms=latency_ms,
+        )
+        return table_result_to_dict(result), meta
+
+    @staticmethod
+    def _table_title(chunk: ChunkHydrationRow, index: int) -> str:
+        path = (chunk.heading_path or "").strip()
+        if path:
+            leaf = path.split(">")[-1].strip() if ">" in path else path
+            leaf = leaf.strip(" /")
+            if leaf:
+                return leaf
+        if chunk.page_number is not None:
+            return f"Bảng {index} (trang {chunk.page_number})"
+        return f"Bảng {index}"
+
     async def _extract_via_llm(
         self,
         *,
@@ -563,8 +638,7 @@ class ExtractionService:
         model = select_answer_model(
             self._settings,
             agent_triggered=False,
-            prefer_strong=extraction_type
-            in {ExtractionType.table, ExtractionType.timeline},
+            prefer_strong=extraction_type == ExtractionType.timeline,
         )
         batches = self._batch_chunks_for_context(
             chunks,
@@ -980,6 +1054,9 @@ class ExtractionService:
         extraction_type: ExtractionType,
         output_format: ExtractionOutputFormat,
     ) -> dict[str, Any]:
+        # Table gallery is the canonical + display shape for both formats.
+        if extraction_type == ExtractionType.table:
+            return canonical
         if output_format == ExtractionOutputFormat.json:
             return canonical
         if output_format == ExtractionOutputFormat.table:

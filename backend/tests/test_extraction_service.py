@@ -4,7 +4,8 @@
 # Layer: Service
 # Purpose: Unit tests for version-bound Information Extraction strategies.
 # Responsibilities:
-#   - Cover table / figures / timeline LLM structured paths
+#   - Cover table gallery from Markdown chunks (0 LLM)
+#   - Cover figures / timeline LLM structured paths
 #   - Cover entities REUSE_EXISTING_ENTITIES (assert ZERO LLM calls)
 #   - Cover LLM_ENTITY_EXTRACTION fallback isolation
 #   - Cover version isolation, output formats, malformed schema rejection
@@ -14,7 +15,7 @@
 #   - N/A
 # Database/Table: N/A (in-memory fakes; no Postgres)
 # Related Modules: app.services.extraction.extraction_service
-# Important Notes: LLM is injected; entity reuse must never call it.
+# Important Notes: LLM is injected; entity reuse + table gallery must never call it.
 # =============================================================================
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from app.core.config import Settings
 from app.models.artifacts import Extraction
 from app.models.documents import Document, DocumentVersion
 from app.models.enums import (
+    ChunkLayoutType,
     DocumentVersionStatus,
     EntityExtractionMode,
     ExtractionOutputFormat,
@@ -46,7 +48,7 @@ from app.services.extraction.extraction_service import (
     ExtractionService,
     ExtractionServiceError,
 )
-from app.services.extraction.result_schemas import TableExtractionResult
+from app.services.extraction.result_schemas import DocumentTableItem, TableExtractionResult
 from app.services.extraction.timeline_sort import sort_timeline_events
 
 
@@ -216,6 +218,9 @@ def _chunk(
     workspace_id: uuid.UUID,
     index: int,
     content: str,
+    layout_type: ChunkLayoutType | None = None,
+    page_number: int | None = None,
+    heading_path: str | None = None,
 ) -> ChunkHydrationRow:
     return ChunkHydrationRow(
         chunk_id=uuid.uuid4(),
@@ -225,6 +230,9 @@ def _chunk(
         content=content,
         title="Report",
         chunk_index=index,
+        layout_type=layout_type,
+        page_number=page_number,
+        heading_path=heading_path,
     )
 
 
@@ -268,102 +276,195 @@ def _service(
 
 
 # ---------------------------------------------------------------------------
-# TABLE
+# TABLE (original Markdown gallery — 0 LLM)
 # ---------------------------------------------------------------------------
+
+_MD_TABLE_A = """| Year | Revenue |
+| --- | --- |
+| 2024 | 1000 |
+| 2025 | 1200 |
+"""
+
+_MD_TABLE_B = """| Metric | Value |
+| --- | --- |
+| Margin | 12% |
+"""
 
 
 @pytest.mark.asyncio
-async def test_table_extraction_structured_result_and_metadata() -> None:
+async def test_table_extraction_gallery_from_markdown_chunks() -> None:
     document, version, workspace_id, user_id, ver_id = _doc_bundle()
-    chunk = _chunk(
+    chunk_a = _chunk(
         document_id=document.id,
         version_id=ver_id,
         workspace_id=workspace_id,
         index=0,
-        content="Year Revenue\n2024 1000",
+        content=_MD_TABLE_A,
+        layout_type=ChunkLayoutType.table,
+        page_number=3,
+        heading_path="Financials > Revenue",
+    )
+    chunk_b = _chunk(
+        document_id=document.id,
+        version_id=ver_id,
+        workspace_id=workspace_id,
+        index=1,
+        content=_MD_TABLE_B,
+        layout_type=ChunkLayoutType.table,
+        page_number=4,
+    )
+    prose = _chunk(
+        document_id=document.id,
+        version_id=ver_id,
+        workspace_id=workspace_id,
+        index=2,
+        content="This is a paragraph without a table.",
+        layout_type=ChunkLayoutType.paragraph,
     )
 
     async def llm(**_kwargs: Any) -> StructuredLlmResult:
-        return StructuredLlmResult(
-            data={
-                "headers": ["Year", "Revenue"],
-                "rows": [{"Year": 2024, "Revenue": 1000}],
-            },
-            model="claude-sonnet-test",
-            input_tokens=10,
-            output_tokens=20,
-            estimated_cost_usd=0.01,
-        )
+        raise AssertionError("table gallery must not call the LLM")
 
     svc, _, repo = _service(
         document=document,
         version=version,
-        chunks_by_version={ver_id: [chunk]},
+        chunks_by_version={ver_id: [chunk_a, chunk_b, prose]},
         llm_call=llm,
     )
     row = await svc.extract_information(
         workspace_id=workspace_id,
         document_id=document.id,
         extraction_type=ExtractionType.table,
-        output_format=ExtractionOutputFormat.json,
+        output_format=ExtractionOutputFormat.table,
         created_by=user_id,
     )
     assert row.source_version_id == ver_id
-    assert row.result_json["headers"] == ["Year", "Revenue"]
-    assert row.result_json["rows"] == [{"Year": 2024, "Revenue": 1000}]
-    assert row.model_used == "claude-sonnet-test"
-    assert row.prompt_tokens == 10
-    assert row.completion_tokens == 20
-    assert row.cost_usd == Decimal("0.01")
-    assert row.latency_ms is not None
-    assert svc.llm_call_count == 1
+    assert row.model_used is None
+    assert row.prompt_tokens == 0
+    assert row.completion_tokens == 0
+    assert row.cost_usd == Decimal("0")
+    assert svc.llm_call_count == 0
+    tables = row.result_json["tables"]
+    assert len(tables) == 2
+    assert tables[0]["title"] == "Revenue"
+    assert tables[0]["page_number"] == 3
+    assert tables[0]["headers"] == ["Year", "Revenue"]
+    assert tables[0]["rows"] == [
+        {"Year": "2024", "Revenue": "1000"},
+        {"Year": "2025", "Revenue": "1200"},
+    ]
+    assert tables[1]["title"].startswith("Bảng 2")
+    assert tables[1]["headers"] == ["Metric", "Value"]
     assert len(repo.rows) == 1
 
 
 @pytest.mark.asyncio
-async def test_table_malformed_structured_output_rejected() -> None:
+async def test_table_extraction_empty_when_no_markdown_tables() -> None:
     document, version, workspace_id, user_id, ver_id = _doc_bundle()
     chunk = _chunk(
         document_id=document.id,
         version_id=ver_id,
         workspace_id=workspace_id,
         index=0,
-        content="table",
+        content="No tabular data here.",
+        layout_type=ChunkLayoutType.paragraph,
     )
-
-    async def llm(**_kwargs: Any) -> StructuredLlmResult:
-        return StructuredLlmResult(
-            data={"headers": [], "rows": "not-a-list"},
-            model="m",
-            input_tokens=1,
-            output_tokens=1,
-            estimated_cost_usd=0.0,
-        )
-
-    svc, _, repo = _service(
+    svc, _, _ = _service(
         document=document,
         version=version,
         chunks_by_version={ver_id: [chunk]},
-        llm_call=llm,
+        llm_call=None,
     )
-    with pytest.raises(ExtractionServiceError) as exc:
-        await svc.extract_information(
-            workspace_id=workspace_id,
-            document_id=document.id,
-            extraction_type=ExtractionType.table,
-            created_by=user_id,
-        )
-    assert exc.value.code == "llm_failed"
-    # process_extraction marks the row failed without re-raising domain codes.
-    failed = next(iter(repo.rows.values()))
-    assert failed.status == ExtractionStatus.failed
+    row = await svc.extract_information(
+        workspace_id=workspace_id,
+        document_id=document.id,
+        extraction_type=ExtractionType.table,
+        created_by=user_id,
+    )
+    assert row.status == ExtractionStatus.completed
+    assert row.result_json == {"tables": []}
+    assert svc.llm_call_count == 0
 
 
 def test_table_schema_rejects_duplicate_headers() -> None:
     with pytest.raises(Exception):
-        TableExtractionResult.model_validate(
-            {"headers": ["A", "A"], "rows": []}
+        DocumentTableItem.model_validate(
+            {
+                "id": "t1",
+                "title": "T",
+                "source_chunk_id": str(uuid.uuid4()),
+                "headers": ["A", "A"],
+                "rows": [],
+            }
         )
+
+
+def test_table_gallery_schema_accepts_empty() -> None:
+    result = TableExtractionResult.model_validate({"tables": []})
+    assert result.tables == []
+
+
+@pytest.mark.asyncio
+async def test_table_extraction_from_html_cell_sequences() -> None:
+    """LlamaParse-flattened <th>/<td> chunks must become gallery tables."""
+    document, version, workspace_id, user_id, ver_id = _doc_bundle()
+    html_table = (
+        "<th>Phase</th>\n"
+        " <th>Process</th>\n"
+        " <td>Xử lý tiền ký</td>\n"
+        "<td>Parse Document</td>\n"
+        " <td>So sánh</td>\n"
+        "<td>Diff Engine</td>\n"
+    )
+    single_th = (
+        "<th>Nhóm</th>\n"
+        " <td>Backend</td>\n"
+        "<td>Python 3.11+</td>\n"
+        " <td>API</td>\n"
+        "<td>REST / OpenAPI</td>\n"
+    )
+    chunk_a = _chunk(
+        document_id=document.id,
+        version_id=ver_id,
+        workspace_id=workspace_id,
+        index=0,
+        content=html_table,
+        layout_type=ChunkLayoutType.heading,
+    )
+    chunk_b = _chunk(
+        document_id=document.id,
+        version_id=ver_id,
+        workspace_id=workspace_id,
+        index=1,
+        content=single_th,
+        layout_type=ChunkLayoutType.heading,
+    )
+    svc, _, _ = _service(
+        document=document,
+        version=version,
+        chunks_by_version={ver_id: [chunk_a, chunk_b]},
+        llm_call=None,
+    )
+    row = await svc.extract_information(
+        workspace_id=workspace_id,
+        document_id=document.id,
+        extraction_type=ExtractionType.table,
+        output_format=ExtractionOutputFormat.table,
+        created_by=user_id,
+    )
+    tables = row.result_json["tables"]
+    assert len(tables) == 2
+    assert tables[0]["headers"] == ["Phase", "Process"]
+    assert tables[0]["rows"] == [
+        {"Phase": "Xử lý tiền ký", "Process": "Parse Document"},
+        {"Phase": "So sánh", "Process": "Diff Engine"},
+    ]
+    assert tables[1]["headers"] == ["Nhóm", "Chi tiết"]
+    assert tables[1]["rows"] == [
+        {"Nhóm": "Backend", "Chi tiết": "Python 3.11+"},
+        {"Nhóm": "API", "Chi tiết": "REST / OpenAPI"},
+    ]
+    assert svc.llm_call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -644,7 +745,11 @@ async def test_version_isolation_uses_only_current_version_chunks() -> None:
         assert "OLD VERSION CONTENT SHOULD NEVER APPEAR" not in user
         assert "NEW VERSION" in user
         return StructuredLlmResult(
-            data={"headers": ["Col"], "rows": [{"Col": 1}]},
+            data={
+                "figures": [
+                    {"metric": "X", "value": 1, "unit": None, "context": None}
+                ]
+            },
             model="m",
             input_tokens=1,
             output_tokens=1,
@@ -661,7 +766,7 @@ async def test_version_isolation_uses_only_current_version_chunks() -> None:
     row = await svc.extract_information(
         workspace_id=workspace_id,
         document_id=document.id,
-        extraction_type=ExtractionType.table,
+        extraction_type=ExtractionType.figures,
         created_by=user_id,
     )
     assert retrieval.last_version_id == v2_id
@@ -722,30 +827,21 @@ async def test_output_format_table_for_figures() -> None:
 
 
 @pytest.mark.asyncio
-async def test_output_format_json_keeps_canonical_table() -> None:
+async def test_output_format_json_keeps_canonical_table_gallery() -> None:
     document, version, workspace_id, user_id, ver_id = _doc_bundle()
     chunk = _chunk(
         document_id=document.id,
         version_id=ver_id,
         workspace_id=workspace_id,
         index=0,
-        content="t",
+        content=_MD_TABLE_A,
+        layout_type=ChunkLayoutType.table,
     )
-
-    async def llm(**_kwargs: Any) -> StructuredLlmResult:
-        return StructuredLlmResult(
-            data={"headers": ["A"], "rows": [{"A": 1}]},
-            model="m",
-            input_tokens=1,
-            output_tokens=1,
-            estimated_cost_usd=0.0,
-        )
-
     svc, _, _ = _service(
         document=document,
         version=version,
         chunks_by_version={ver_id: [chunk]},
-        llm_call=llm,
+        llm_call=None,
     )
     row = await svc.extract_information(
         workspace_id=workspace_id,
@@ -754,17 +850,20 @@ async def test_output_format_json_keeps_canonical_table() -> None:
         output_format=ExtractionOutputFormat.json,
         created_by=user_id,
     )
-    assert row.result_json == {"headers": ["A"], "rows": [{"A": 1}]}
+    assert "tables" in row.result_json
+    assert len(row.result_json["tables"]) == 1
+    assert row.result_json["tables"][0]["headers"] == ["Year", "Revenue"]
+    assert "headers" not in row.result_json
 
 
 @pytest.mark.asyncio
-async def test_no_chunks_errors_for_llm_paths() -> None:
+async def test_no_chunks_errors_for_table_gallery() -> None:
     document, version, workspace_id, user_id, _ver_id = _doc_bundle()
-    svc, _, _ = _service(
+    svc, _, repo = _service(
         document=document,
         version=version,
         chunks_by_version={},
-        llm_call=lambda **_: None,
+        llm_call=None,
     )
     with pytest.raises(ExtractionServiceError) as exc:
         await svc.extract_information(
@@ -773,4 +872,7 @@ async def test_no_chunks_errors_for_llm_paths() -> None:
             extraction_type=ExtractionType.table,
             created_by=user_id,
         )
+    # process_extraction marks failed; extract_information maps to llm_failed.
     assert exc.value.code == "llm_failed"
+    failed = next(iter(repo.rows.values()))
+    assert failed.status == ExtractionStatus.failed

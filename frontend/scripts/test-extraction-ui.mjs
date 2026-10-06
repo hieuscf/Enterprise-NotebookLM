@@ -72,8 +72,44 @@ function asTablePayload(result) {
   };
 }
 
+function asTableGalleryPayload(result) {
+  if (!result || typeof result !== "object") return null;
+  if (Array.isArray(result.tables)) {
+    return { tables: result.tables };
+  }
+  const legacy = asTablePayload(result);
+  if (!legacy) return null;
+  return {
+    tables: [
+      {
+        id: "legacy",
+        title: "Bảng 1",
+        source_chunk_id: "",
+        headers: legacy.headers,
+        rows: legacy.rows,
+      },
+    ],
+  };
+}
+
 function buildCopyText(extraction) {
   if (extraction.result == null) return "";
+  if (extraction.extraction_type === "table") {
+    const gallery = asTableGalleryPayload(extraction.result);
+    if (!gallery) return JSON.stringify(extraction.result, null, 2);
+    if (extraction.output_format === "json") {
+      return JSON.stringify(extraction.result, null, 2);
+    }
+    const blocks = [];
+    for (const table of gallery.tables) {
+      const lines = [`# ${table.title}`, table.headers.join("\t")];
+      for (const row of table.rows) {
+        lines.push(table.headers.map((h) => String(row[h] ?? "")).join("\t"));
+      }
+      blocks.push(lines.join("\n"));
+    }
+    return blocks.join("\n\n");
+  }
   if (extraction.output_format === "table") {
     const table = asTablePayload(extraction.result);
     if (!table) return JSON.stringify(extraction.result, null, 2);
@@ -115,7 +151,17 @@ const extractions = [
     source_version_id: V1,
     target_language: "vi",
     created_at: "2026-08-01T10:00:00Z",
-    result: { headers: ["A"], rows: [{ A: 1 }] },
+    result: {
+      tables: [
+        {
+          id: "t1",
+          title: "Bảng 1",
+          source_chunk_id: "c1",
+          headers: ["A"],
+          rows: [{ A: 1 }],
+        },
+      ],
+    },
   },
   {
     id: "cur-table",
@@ -125,7 +171,17 @@ const extractions = [
     source_version_id: V2,
     target_language: "vi",
     created_at: "2026-08-02T10:00:00Z",
-    result: { headers: ["A"], rows: [{ A: 2 }] },
+    result: {
+      tables: [
+        {
+          id: "t2",
+          title: "Bảng 1",
+          source_chunk_id: "c2",
+          headers: ["A"],
+          rows: [{ A: 2 }],
+        },
+      ],
+    },
   },
   {
     id: "cur-table-newer",
@@ -135,7 +191,17 @@ const extractions = [
     source_version_id: V2,
     target_language: "vi",
     created_at: "2026-08-03T10:00:00Z",
-    result: { headers: ["A"], rows: [{ A: 3 }] },
+    result: {
+      tables: [
+        {
+          id: "t3",
+          title: "Bảng 1",
+          source_chunk_id: "c3",
+          headers: ["A"],
+          rows: [{ A: 3 }],
+        },
+      ],
+    },
   },
   {
     id: "cur-table-en",
@@ -145,7 +211,17 @@ const extractions = [
     source_version_id: V2,
     target_language: "en",
     created_at: "2026-08-03T11:00:00Z",
-    result: { headers: ["A"], rows: [{ A: 9 }] },
+    result: {
+      tables: [
+        {
+          id: "t4",
+          title: "Table 1",
+          source_chunk_id: "c4",
+          headers: ["A"],
+          rows: [{ A: 9 }],
+        },
+      ],
+    },
   },
   {
     id: "cur-figures-json",
@@ -245,10 +321,37 @@ assert(copied.includes('"figures"'), "JSON copy uses canonical result");
 assert(!copied.includes("[object Object]"), "JSON copy is not [object Object]");
 
 const tableCopy = buildCopyText({
+  extraction_type: "figures",
   output_format: "table",
   result: { headers: ["A", "B"], rows: [{ A: 1, B: "x" }] },
 });
 assert(tableCopy === "A\tB\n1\tx", "table copy is TSV from structured rows");
+
+const galleryCopy = buildCopyText({
+  extraction_type: "table",
+  output_format: "table",
+  result: {
+    tables: [
+      {
+        id: "t1",
+        title: "Revenue",
+        source_chunk_id: "c1",
+        headers: ["Year", "Amt"],
+        rows: [{ Year: "2024", Amt: "10" }],
+      },
+    ],
+  },
+});
+assert(galleryCopy.includes("# Revenue"), "gallery copy includes table title");
+assert(galleryCopy.includes("Year\tAmt"), "gallery copy includes headers");
+assert(
+  asTableGalleryPayload({ tables: [] })?.tables.length === 0,
+  "empty gallery narrows",
+);
+assert(
+  asTableGalleryPayload({ headers: ["A"], rows: [{ A: 1 }] })?.tables[0]?.headers[0] === "A",
+  "gallery wraps legacy flat table",
+);
 
 // --- empty table detection -------------------------------------------------
 assert(

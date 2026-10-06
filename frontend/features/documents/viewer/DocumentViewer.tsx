@@ -409,13 +409,23 @@ export function DocumentViewer({
     }
   }, [canonicalLoading, canonical, initialView, focusChunkId, focusPage]);
 
+  // Highlight/scroll miss must NOT eject the user from Knowledge View —
+  // otherwise deep-links (?chunk=&citation=) bounce Knowledge → Original in a loop.
   const handleKnowledgeNavFailed = useCallback(() => {
-    if (focusChunkId || (focusPage != null && focusPage > 0)) {
-      setViewMode("original");
-      return;
-    }
     onHighlightFailed?.();
-  }, [focusChunkId, focusPage, onHighlightFailed]);
+  }, [onHighlightFailed]);
+
+  const knowledgeNavFailedOnce = useRef(false);
+  useEffect(() => {
+    knowledgeNavFailedOnce.current = false;
+  }, [focusChunkId, focusCitationId, focusSnippet, focusLocator]);
+
+  const onKnowledgeNavFailed = useCallback(() => {
+    if (knowledgeNavFailedOnce.current) return;
+    knowledgeNavFailedOnce.current = true;
+    handleKnowledgeNavFailed();
+  }, [handleKnowledgeNavFailed]);
+
   const toc = useMemo(
     () =>
       buildToc(
@@ -857,7 +867,7 @@ export function DocumentViewer({
                 activeBlockId={activeBlockId}
                 fallbackBlockId={knowledgeFallbackBlockId}
                 onBlockVisible={setActiveBlockId}
-                onNavigationFailed={handleKnowledgeNavFailed}
+                onNavigationFailed={onKnowledgeNavFailed}
               />
             ) : canonicalLoading ? (
               <KnowledgeSkeleton />

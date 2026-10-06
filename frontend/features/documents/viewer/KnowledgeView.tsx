@@ -15,6 +15,7 @@
  * Database/Table: N/A (loads via /canonical)
  * Related Modules: DocumentViewer
  * Important Notes: Primary citation target — locator offsets are not changed.
+ *   Highlight miss is a soft failure; do not treat as "leave Knowledge View".
  * =============================================================================
  */
 
@@ -64,6 +65,7 @@ export function KnowledgeView({
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
+    if (!expectFocus) return;
 
     let cancelled = false;
     let retryTimer: number | null = null;
@@ -81,15 +83,28 @@ export function KnowledgeView({
       if (result.scrolledBlockId && result.scrolledBlockId !== activeBlockId) {
         onBlockVisible?.(result.scrolledBlockId);
       }
-      // DOM hosts may not exist on the first paint (flex layout / fonts).
-      if (!result.scrolledBlockId && expectFocus && attempt < 4) {
-        const delay = attempt === 0 ? 32 : attempt === 1 ? 120 : attempt === 2 ? 280 : 480;
+      if (result.scrolledBlockId) return;
+
+      // Wait for block hosts (large docs / fonts) before declaring miss.
+      const hasBlockHosts = Boolean(root.querySelector("[data-block-id]"));
+      if (attempt < (hasBlockHosts ? 4 : 6)) {
+        const delay =
+          attempt === 0
+            ? 40
+            : attempt === 1
+              ? 120
+              : attempt === 2
+                ? 250
+                : attempt === 3
+                  ? 400
+                  : attempt === 4
+                    ? 700
+                    : 1100;
         retryTimer = window.setTimeout(() => run(attempt + 1), delay);
         return;
       }
-      if (!result.scrolledBlockId && expectFocus) {
-        onNavigationFailed?.();
-      }
+      // Soft-fail: keep Knowledge View; parent only toasts (does not switch mode).
+      onNavigationFailed?.();
     };
 
     const raf = window.requestAnimationFrame(() => {

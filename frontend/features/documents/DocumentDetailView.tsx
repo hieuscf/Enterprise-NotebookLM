@@ -398,7 +398,9 @@ export function DocumentDetailView({
                 pushError(
                   focusSnippet
                     ? "Opened the source — exact text highlight was unavailable."
-                    : "Could not locate highlight in the document.",
+                    : resolvedPage
+                      ? "Opened the document page — exact text highlight was unavailable."
+                      : "Could not locate highlight in the document.",
                 )
               }
             />

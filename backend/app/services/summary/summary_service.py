@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
-from app.adapters.llm_result import StructuredLlmResult
+from app.adapters.llm_result import EmptyCompletionError, StructuredLlmResult
 from app.ai.tokens import count_tokens, split_text_by_tokens
 from app.core.config import Settings
 from app.core.logging import get_logger
@@ -248,10 +248,14 @@ class SummaryService:
                 target_language=row.target_language,
             )
         except SummaryServiceError as exc:
+            cause = exc.__cause__
             logger.warning(
                 "summary_generation_failed",
                 summary_id=str(row.id),
                 code=exc.code,
+                message=exc.message,
+                cause=str(cause) if cause else None,
+                cause_type=type(cause).__name__ if cause else None,
             )
             await self._summaries.mark_failed(summary_id=row.id)
             return await self._summaries.get_by_id(row.id)
@@ -398,6 +402,7 @@ class SummaryService:
             agent_triggered=False,
             prefer_strong=prefer_strong,
         )
+        max_tokens = self._max_output_tokens(style)
         budgeted_chunks = self._fit_chunks_to_context(
             chunks,
             model=model,
@@ -405,6 +410,7 @@ class SummaryService:
             topics=topics,
             document_title=document_title,
             target_language=target_language,
+            max_output_tokens=max_tokens,
         )
         system, user = build_summary_prompts(
             style=style,
@@ -415,29 +421,16 @@ class SummaryService:
         )
 
         started = time.perf_counter()
-        call_kwargs = {
-            "system": system,
-            "user": user,
-            "model": model,
-            "max_tokens": int(self._settings.summary_max_output_tokens),
-            "temperature": float(self._settings.chat_answer_temperature),
-            "top_p": float(self._settings.chat_answer_top_p),
-            "timeout_seconds": float(self._settings.summary_timeout_seconds),
-            "cost_estimator": lambda input_tokens, output_tokens: estimate_answer_cost_usd(
-                self._settings,
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            ),
-        }
         try:
-            if self._llm_call is not None:
-                llm = await self._llm_call(**call_kwargs)
-            else:
-                llm = await extract_structured_json_async(
-                    settings=self._settings,
-                    **call_kwargs,
-                )
+            llm = await self._call_summary_llm(
+                system=system,
+                user=user,
+                model=model,
+                max_tokens=max_tokens,
+                style=style,
+            )
+        except SummaryServiceError:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise SummaryServiceError(
                 "llm_failed",
@@ -486,6 +479,84 @@ class SummaryService:
             "latency_ms": latency_ms,
         }
 
+    def _max_output_tokens(self, style: SummaryType) -> int:
+        """Completion budget for one summary call.
+
+        Detailed / by_topic need a larger visible JSON answer. With gpt-5-class
+        reasoning models, hidden reasoning tokens share the same
+        ``max_completion_tokens`` budget — doubling for strong styles leaves
+        room for both reasoning and a long summary body.
+        """
+        base = max(256, int(self._settings.summary_max_output_tokens))
+        if style in _STRONG_STYLES:
+            return base * 2
+        return base
+
+    async def _call_summary_llm(
+        self,
+        *,
+        system: str,
+        user: str,
+        model: str,
+        max_tokens: int,
+        style: SummaryType,
+        max_attempts: int = 2,
+    ) -> StructuredLlmResult:
+        """Call chat LLM; retry once on EmptyCompletionError with a larger budget."""
+        last_exc: Exception | None = None
+        tokens = max_tokens
+        for attempt in range(max_attempts):
+            call_kwargs = {
+                "system": system,
+                "user": user,
+                "model": model,
+                "max_tokens": tokens,
+                "temperature": float(self._settings.chat_answer_temperature),
+                "top_p": float(self._settings.chat_answer_top_p),
+                "timeout_seconds": float(self._settings.summary_timeout_seconds),
+                "cost_estimator": lambda input_tokens, output_tokens: estimate_answer_cost_usd(
+                    self._settings,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                ),
+            }
+            try:
+                if self._llm_call is not None:
+                    return await self._llm_call(**call_kwargs)
+                return await extract_structured_json_async(
+                    settings=self._settings,
+                    **call_kwargs,
+                )
+            except EmptyCompletionError as exc:
+                last_exc = exc
+                logger.warning(
+                    "summary_empty_completion",
+                    style=style.value,
+                    model=exc.model,
+                    finish_reason=exc.finish_reason,
+                    output_tokens=exc.output_tokens,
+                    max_tokens=tokens,
+                    attempt=attempt + 1,
+                )
+                if attempt + 1 >= max_attempts:
+                    break
+                # Retry with a larger completion budget so reasoning + answer fit.
+                tokens = max(tokens * 2, max_tokens * 2)
+            except Exception as exc:  # noqa: BLE001
+                raise SummaryServiceError(
+                    "llm_failed",
+                    "Summary generation failed",
+                    status_code=502,
+                ) from exc
+
+        raise SummaryServiceError(
+            "empty_completion",
+            "Summary model returned an empty completion; try again or raise "
+            "SUMMARY_MAX_OUTPUT_TOKENS",
+            status_code=502,
+        ) from last_exc
+
     def _fit_chunks_to_context(
         self,
         chunks: list[ChunkHydrationRow],
@@ -495,11 +566,15 @@ class SummaryService:
         topics: list[TopicContextRow],
         document_title: str,
         target_language: TargetLanguage = TargetLanguage.vi,
+        max_output_tokens: int | None = None,
     ) -> list[ChunkHydrationRow]:
         context_window = model_context_window(self._settings, model)
-        reserve = int(self._settings.summary_prompt_reserve_tokens) + int(
-            self._settings.summary_max_output_tokens
+        completion_budget = (
+            int(max_output_tokens)
+            if max_output_tokens is not None
+            else self._max_output_tokens(style)
         )
+        reserve = int(self._settings.summary_prompt_reserve_tokens) + completion_budget
         max_source_tokens = max(512, context_window - reserve)
 
         overhead_system, overhead_user = build_summary_prompts(

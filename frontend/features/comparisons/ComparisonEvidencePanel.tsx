@@ -50,6 +50,7 @@ import {
   copyCitationText,
   documentTitleForSide,
   evidenceCountLabel,
+  evidenceNavigationSnippet,
   fallbackDocumentForSide,
   findingContext,
   flattenEvidenceItems,
@@ -565,6 +566,7 @@ function EvidenceBody({
       <SourceActions
         workspaceId={workspaceId}
         report={report}
+        clause={clause}
         groups={groups}
         documentMeta={documentMeta}
       />
@@ -721,7 +723,7 @@ function EvidenceCard({
     saveCitationFocus(workspaceId, {
       citationId: item.evidence.evidence_id || item.key,
       documentId,
-      textSnippet: item.excerpt ?? "",
+      textSnippet: evidenceNavigationSnippet(item.evidence, clause) ?? "",
       page: item.evidence.page_number ?? null,
       chunkId: item.evidence.chunk_id ?? null,
       versionId: versionId ?? null,
@@ -842,11 +844,13 @@ function CopyExcerptButton({
 function SourceActions({
   workspaceId,
   report,
+  clause,
   groups,
   documentMeta,
 }: {
   workspaceId: string;
   report: ContractComparisonReport | null;
+  clause: ContractClauseResult;
   groups: ReturnType<typeof groupedEvidence>;
   documentMeta: Record<string, DocumentMeta>;
 }) {
@@ -879,7 +883,7 @@ function SourceActions({
     saveCitationFocus(workspaceId, {
       citationId: item.evidence.evidence_id || item.key,
       documentId,
-      textSnippet: item.excerpt ?? "",
+      textSnippet: evidenceNavigationSnippet(item.evidence, clause) ?? "",
       page: item.evidence.page_number ?? null,
       chunkId: item.evidence.chunk_id ?? null,
       versionId: item.evidence.document_version_id || fallback.versionId,

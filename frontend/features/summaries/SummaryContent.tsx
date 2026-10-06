@@ -3,17 +3,17 @@
  * File: SummaryContent.tsx
  * Module/Service: Summary Service (Web App)
  * Layer: UI
- * Purpose: Render completed Summary by style (short/detailed/bullets/topics).
+ * Purpose: Render completed Summary content (markdown; legacy by_topic sections).
  * Responsibilities:
- *   - Paragraph / markdown / list / topic-section presentation
+ *   - Paragraph / markdown / topic-section presentation for history items
  * Dependencies:
  *   - react-markdown, remark-gfm (same as Chat AssistantBubble)
  * Public Exports:
  *   - SummaryContent
  * Database/Table: N/A
  * Related Modules: SummarySection
- * Important Notes: by_topic uses backend sections only — no FE topic clustering.
- *   bullet_points uses GFM markdown lists from content (contract: markdown list).
+ * Important Notes: New generations are short/detailed only. Legacy by_topic
+ *   still renders backend sections when opened from history.
  * =============================================================================
  */
 

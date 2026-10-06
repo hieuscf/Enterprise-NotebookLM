@@ -259,10 +259,8 @@ function evidenceViewerHref(workspaceId, evidence, fallbackDocumentId, fallbackV
   const page = evidence.page_number;
   if (typeof page === "number" && page > 0) {
     params.set("page", String(page));
-    params.set("view", "original");
-  } else {
-    params.set("view", "knowledge");
   }
+  params.set("view", "knowledge");
   const chunkId = asString(evidence.chunk_id);
   if (chunkId) params.set("chunk", chunkId);
   const versionId = asString(evidence.document_version_id) ?? asString(fallbackVersionId);
@@ -354,7 +352,7 @@ assert(evidenceForSide(critical, "NEW")[0].page_number === 15, "V2 evidence page
 const href = evidenceViewerHref("ws1", evidenceForSide(critical, "OLD")[0]);
 assert(href.includes("/workspaces/ws1/documents/d1"), "viewer document");
 assert(href.includes("page=14"), "viewer page");
-assert(href.includes("view=original"), "viewer original for page evidence");
+assert(href.includes("view=knowledge"), "viewer knowledge for page evidence");
 const exact = formatExactDifference(critical.exact_differences[0]);
 assert(exact.oldDisplay === "480,000,000" && exact.newDisplay === "600,000,000", "exact diff from backend");
 assert(exact.delta === "120000000" && exact.percent === "25%", "delta/percent not recalculated");

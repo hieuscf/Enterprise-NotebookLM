@@ -282,8 +282,8 @@ export function ExtractionSection({
         <div>
           <h2 className="text-h3 text-primary">Trích xuất thông tin</h2>
           <p className="mt-0.5 text-body-sm text-secondary">
-            Chọn loại, định dạng và ngôn ngữ đầu ra. Kết quả đã có cho phiên bản hiện tại
-            sẽ được dùng lại (không gọi AI lại).
+            Chọn loại, định dạng và ngôn ngữ đầu ra. Loại Bảng liệt kê bảng gốc trong
+            tài liệu (không gọi AI). Các loại khác dùng AI; kết quả đã có sẽ được dùng lại.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">

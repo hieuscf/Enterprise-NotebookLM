@@ -15,23 +15,31 @@
  * Database/Table: N/A
  * Related Modules: features/summaries/*, scripts/test-summary-ui.mjs
  * Important Notes: Selection never picks an old-version summary as "current".
+ *   UI selector only offers short + detailed; by_topic / bullet_points remain
+ *   in API types for history/reports of older generations.
  * =============================================================================
  */
 
 import type { Summary, SummaryStyle, SummaryStatus, TargetLanguage } from "@/types/summaries";
 
+/** Styles offered on /summaries for new generations. */
 export const SUMMARY_STYLE_OPTIONS: ReadonlyArray<{
   style: SummaryStyle;
   label: string;
 }> = [
   { style: "short", label: "Tóm tắt ngắn" },
   { style: "detailed", label: "Tóm tắt chi tiết" },
-  { style: "by_topic", label: "Theo chủ đề" },
-  { style: "bullet_points", label: "Gạch đầu dòng" },
 ];
 
+const STYLE_LABELS: Record<SummaryStyle, string> = {
+  short: "Tóm tắt ngắn",
+  detailed: "Tóm tắt chi tiết",
+  by_topic: "Theo chủ đề",
+  bullet_points: "Gạch đầu dòng",
+};
+
 export function styleLabel(style: SummaryStyle): string {
-  return SUMMARY_STYLE_OPTIONS.find((o) => o.style === style)?.label ?? style;
+  return STYLE_LABELS[style] ?? style;
 }
 
 export function statusLabel(status: SummaryStatus): string {

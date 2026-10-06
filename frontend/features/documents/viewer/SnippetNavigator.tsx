@@ -90,20 +90,23 @@ export function SnippetNavigator({
           handle.jumpToPage(pageHint);
           await handle.waitForPage(pageHint);
           if (cancelled) return;
-          // Try text-layer match on the hinted page without whole-page band.
-          const ok = snippet?.trim()
-            ? await handle.setHighlight({
-                pageNumber: pageHint,
-                snippet: snippet.trim(),
-              })
-            : false;
-          onLocated?.(null, false);
-          if (!ok) onHighlightFailed?.();
+          // Page open succeeded. Only report highlight failure when a snippet
+          // was supplied and the text-layer match missed.
+          if (snippet?.trim()) {
+            const ok = await handle.setHighlight({
+              pageNumber: pageHint,
+              snippet: snippet.trim(),
+            });
+            onLocated?.(null, false);
+            if (!ok) onHighlightFailed?.();
+          } else {
+            onLocated?.(null, false);
+          }
           return;
         }
 
         onLocated?.(null, false);
-        onHighlightFailed?.();
+        if (snippet?.trim()) onHighlightFailed?.();
       } catch {
         onHighlightFailed?.();
       }

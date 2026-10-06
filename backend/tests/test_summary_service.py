@@ -26,7 +26,7 @@ from typing import Any
 
 import pytest
 
-from app.adapters.llm_result import StructuredLlmResult
+from app.adapters.llm_result import EmptyCompletionError, StructuredLlmResult
 from app.core.config import Settings
 from app.models.artifacts import Summary
 from app.models.documents import Document, DocumentVersion
@@ -841,6 +841,58 @@ async def test_generate_summary_en_passes_english_prompt_and_preserves_citations
     assert "12%" in (row.content or "")
     assert "Output language: English" in captured["user"]
     assert "Output language: Vietnamese" not in captured["user"]
+
+
+@pytest.mark.asyncio
+async def test_detailed_summary_retries_empty_completion_with_larger_budget() -> None:
+    """gpt-5 empty completions must retry once with a larger max_tokens budget."""
+    workspace_id, document_id, user_id, document, version = _doc_bundle()
+    attempts: list[int] = []
+
+    async def _llm(**kwargs: Any) -> StructuredLlmResult:
+        attempts.append(int(kwargs["max_tokens"]))
+        if len(attempts) == 1:
+            raise EmptyCompletionError(
+                model=str(kwargs["model"]),
+                finish_reason="length",
+                output_tokens=int(kwargs["max_tokens"]),
+            )
+        return StructuredLlmResult(
+            data={"summary": "Detailed recovery summary."},
+            model=str(kwargs["model"]),
+            input_tokens=20,
+            output_tokens=40,
+            estimated_cost_usd=0.002,
+        )
+
+    svc = SummaryService(
+        settings=_settings(summary_max_output_tokens=100),
+        session=FakeSession(),  # type: ignore[arg-type]
+        documents=FakeDocumentRepo(document=document, version=version),  # type: ignore[arg-type]
+        retrieval=FakeRetrievalRepo(  # type: ignore[arg-type]
+            chunks=[
+                _chunk(
+                    workspace_id=workspace_id,
+                    document_id=document_id,
+                    version_id=version.id,
+                    content="Section A covers revenue, risk, and decisions.",
+                )
+            ]
+        ),
+        summaries=FakeSummaryRepo(),  # type: ignore[arg-type]
+        llm_call=_llm,
+        enqueue=False,
+    )
+    row = await svc.generate_summary(
+        workspace_id=workspace_id,
+        document_id=document_id,
+        style=SummaryStyle.detailed,
+        created_by=user_id,
+    )
+    assert row.status == SummaryStatus.completed
+    assert row.content == "Detailed recovery summary."
+    # Floor 256 → detailed 2x = 512; EmptyCompletionError retry doubles to 1024.
+    assert attempts == [512, 1024]
 
 
 @pytest.mark.asyncio

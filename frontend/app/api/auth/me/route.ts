@@ -7,7 +7,7 @@
  * Responsibilities:
  *   - Attach Bearer from cookie; optionally refresh once on 401
  * Dependencies:
- *   - lib/auth/backend, lib/auth/cookies
+ *   - lib/auth/backend, lib/auth/cookies, lib/auth/refresh
  * Public Exports:
  *   - GET
  * Database/Table: N/A
@@ -19,43 +19,14 @@
 import { NextResponse } from "next/server";
 
 import { backendFetch } from "@/lib/auth/backend";
-import {
-  clearAuthCookies,
-  getAccessToken,
-  getRefreshToken,
-  setAuthCookies,
-} from "@/lib/auth/cookies";
-import type { AuthToken, User } from "@/types/auth";
-
-async function tryRefresh(): Promise<string | null> {
-  const refreshToken = await getRefreshToken();
-  if (!refreshToken) {
-    await clearAuthCookies();
-    return null;
-  }
-
-  const upstream = await backendFetch("/auth/refresh", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!upstream.ok) {
-    await clearAuthCookies();
-    return null;
-  }
-  const tokens = (await upstream.json()) as AuthToken;
-  await setAuthCookies({
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_in: tokens.expires_in,
-  });
-  return tokens.access_token;
-}
+import { clearAuthCookies, getAccessToken } from "@/lib/auth/cookies";
+import { refreshAccessToken } from "@/lib/auth/refresh";
+import type { User } from "@/types/auth";
 
 export async function GET() {
   let access = await getAccessToken();
   if (!access) {
-    access = (await tryRefresh()) ?? undefined;
+    access = (await refreshAccessToken()) ?? undefined;
   }
   if (!access) {
     await clearAuthCookies();
@@ -70,7 +41,7 @@ export async function GET() {
   });
 
   if (upstream.status === 401) {
-    const refreshed = await tryRefresh();
+    const refreshed = await refreshAccessToken();
     if (!refreshed) {
       await clearAuthCookies();
       return NextResponse.json(
@@ -85,7 +56,6 @@ export async function GET() {
 
   const payload = await upstream.json().catch(() => ({}));
   if (!upstream.ok) {
-    await clearAuthCookies();
     return NextResponse.json(
       { code: "unauthorized", message: "Unauthorized" },
       { status: upstream.status },

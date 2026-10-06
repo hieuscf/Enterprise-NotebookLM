@@ -83,7 +83,9 @@ export function ChunkNavigator({
       });
       if (cancelled) return;
       onLocated?.(chunk);
-      if (!ok && !chunk.bounding_box && !snippet) {
+      // Chunk/page navigation already succeeded. Only toast when a provided
+      // snippet (or bbox) could not be painted.
+      if (!ok && snippet) {
         onHighlightFailed?.();
       }
     })();
