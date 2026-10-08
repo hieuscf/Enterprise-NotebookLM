@@ -70,6 +70,23 @@ export type DocumentChunkListResponse = {
 
 export type DocumentVersionStatus = "processing" | "ready" | "failed";
 
+export type AiAnalysisStatus =
+  | "not_analyzed"
+  | "queued"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "stale";
+
+export type DocumentAnalysis = {
+  document_id: string;
+  version_id: string;
+  status: AiAnalysisStatus;
+  analyzed_at: string | null;
+  error: string | null;
+  pipeline_run_id: string | null;
+};
+
 export type PreviewStatus = "pending" | "processing" | "completed" | "failed";
 export type PreviewType = "pdf" | "html" | "image";
 
@@ -82,6 +99,9 @@ export type DocumentVersion = {
   checksum_sha256: string;
   page_count: number | null;
   status: DocumentVersionStatus;
+  ai_analysis_status?: AiAnalysisStatus;
+  analyzed_at?: string | null;
+  analysis_error?: string | null;
   is_current: boolean;
   created_at: string;
   preview_status?: PreviewStatus;

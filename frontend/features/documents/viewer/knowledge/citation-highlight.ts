@@ -359,6 +359,7 @@ export function applyLocatorHighlights(
       if (!host) continue;
       const block = byId.get(range.block_id);
       const mapped = mapRangeForBlock(block, host, range.start, range.end);
+      if (mapped.end <= mapped.start) continue;
       const mark = highlightTextRange(host, mapped.start, mapped.end);
       if (mark && !firstMark) {
         firstMark = mark;
@@ -366,6 +367,19 @@ export function applyLocatorHighlights(
       }
       host.setAttribute("data-active-block", "");
       if (!matchedBlockId) matchedBlockId = range.block_id;
+    }
+
+    // Locator offsets can drift when Knowledge View strips list/heading markers.
+    // If the painted text does not agree with the citation snippet, discard and
+    // fall back to snippet matching so the bold span matches the quoted source.
+    if (
+      firstMark &&
+      highlightSnippet?.trim() &&
+      !highlightAgreesWithSnippet(root, highlightSnippet.trim())
+    ) {
+      clearCitationMarks(root);
+      firstMark = null;
+      matchedBlockId = null;
     }
   }
 
@@ -466,4 +480,31 @@ function mapRangeForBlock(
       ? displayHeadingText(content)
       : (host.textContent ?? content);
   return mapContentOffsetsToDisplay(content, display, start, end);
+}
+
+/**
+ * True when painted marks still look like the citation snippet (normalized).
+ * Catches wrong-offset locator paints before the user sees a mismatched bold span.
+ */
+function highlightAgreesWithSnippet(root: HTMLElement, snippet: string): boolean {
+  const marks = root.querySelectorAll("mark[data-citation-hl]");
+  if (!marks.length) return false;
+  let painted = "";
+  marks.forEach((el) => {
+    painted += `${el.textContent ?? ""} `;
+  });
+  const normPainted = normalizeForMatch(painted);
+  const normSnippet = normalizeForMatch(snippet);
+  if (!normPainted || !normSnippet) return false;
+  if (normPainted.includes(normSnippet) || normSnippet.includes(normPainted)) {
+    return true;
+  }
+  // Shared token overlap for slightly truncated citations.
+  const tokens = normSnippet.split(" ").filter((t) => t.length >= 3);
+  if (tokens.length < 3) return false;
+  let hit = 0;
+  for (const t of tokens) {
+    if (normPainted.includes(t)) hit += 1;
+  }
+  return hit / tokens.length >= 0.6;
 }

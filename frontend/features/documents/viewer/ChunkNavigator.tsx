@@ -69,13 +69,9 @@ export function ChunkNavigator({
       handle.jumpToPage(page);
       await handle.waitForPage(page);
       if (cancelled) return;
-      // Prefer citation snippet (sub-span); fall back to chunk bbox only.
-      const snippet =
-        highlightSnippet?.trim() &&
-        chunk.content &&
-        chunk.content.includes(highlightSnippet.trim())
-          ? highlightSnippet.trim()
-          : highlightSnippet?.trim() || null;
+      // Prefer citation snippet (sub-span) over whole-chunk bbox. PDF matcher
+      // handles whitespace/case drift — do not require strict string includes.
+      const snippet = highlightSnippet?.trim() || null;
       const ok = await handle.setHighlight({
         pageNumber: page,
         bbox: chunk.bounding_box,

@@ -156,11 +156,41 @@ function stripLeakedCitationUuids(content) {
   const uuid =
     "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
   return content
-    .replace(new RegExp(`\\[\\s*${uuid}(?:\\s*,\\s*${uuid})+\\s*\\]`, "g"), "")
+    .replace(new RegExp(`\\[\\s*${uuid}(?:\\s*[,;]\\s*${uuid})+\\s*\\]`, "g"), "")
     .replace(new RegExp(`\\[\\s*${uuid}\\s*\\]`, "g"), "")
     .replace(/[ \t]+([.,;:!?])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+function rewriteLeakedCitationMarkers(content, citations) {
+  const uuid =
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+  const map = new Map();
+  for (const c of citations) {
+    if (c.chunkId) map.set(c.chunkId.toLowerCase(), c.displayIndex);
+    if (c.id) map.set(c.id.toLowerCase(), c.displayIndex);
+  }
+  const listRe = new RegExp(`\\[\\s*(${uuid}(?:\\s*[,;]\\s*${uuid})+)\\s*\\]`, "g");
+  const oneRe = new RegExp(`\\[\\s*(${uuid})\\s*\\]`, "g");
+  const tokenRe = new RegExp(uuid, "gi");
+  let out = content.replace(listRe, (_m, body) => {
+    const indexes = [];
+    const seen = new Set();
+    let t;
+    tokenRe.lastIndex = 0;
+    while ((t = tokenRe.exec(body))) {
+      const idx = map.get(t[0].toLowerCase());
+      if (idx == null || seen.has(idx)) continue;
+      seen.add(idx);
+      indexes.push(idx);
+    }
+    return indexes.map((i) => `[${i}]`).join("");
+  });
+  out = out.replace(oneRe, (_m, id) => {
+    const idx = map.get(String(id).toLowerCase());
+    return idx != null ? `[${idx}]` : "";
+  });
+  return out.replace(/[ \t]+([.,;:!?])/g, "$1").replace(/[ \t]{2,}/g, " ").trim();
 }
 assert(citationDisplayIndex({ order_index: 0 }) === 1, "order_index 0 → display [1]");
 assert(citationDisplayIndex({ order_index: 2 }) === 3, "order_index 2 → display [3]");
@@ -175,6 +205,22 @@ assert(
     "Bên B phải báo cáo. [ed4461c9-c07b-4c33-af2a-ddf3ae376034, 6a15ed42-0217-4c94-8fe2-3fa9dfd4241f]",
   ) === "Bên B phải báo cáo.",
   "Frontend strips trailing UUID lists",
+);
+assert(
+  stripLeakedCitationUuids(
+    "text [1356b7b2-5b1b-4664-8c81-23a5fd17f5da; b793614b-3f35-4bd1-a8df-abb7fdc1b586]",
+  ).includes("1356b7b2") === false,
+  "Frontend strips semicolon UUID lists",
+);
+assert(
+  rewriteLeakedCitationMarkers(
+    "Claim [1356b7b2-5b1b-4664-8c81-23a5fd17f5da; b793614b-3f35-4bd1-a8df-abb7fdc1b586].",
+    [
+      { id: "c1", chunkId: "1356b7b2-5b1b-4664-8c81-23a5fd17f5da", displayIndex: 1 },
+      { id: "c2", chunkId: "b793614b-3f35-4bd1-a8df-abb7fdc1b586", displayIndex: 3 },
+    ],
+  ) === "Claim [1][3].",
+  "Frontend rewrites semicolon UUID lists to display indexes",
 );
 
 // --- formatRelativeTime ---------------------------------------------------

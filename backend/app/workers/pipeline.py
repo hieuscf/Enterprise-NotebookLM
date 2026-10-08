@@ -24,13 +24,20 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.db.sync_session import get_sync_session
-from app.models.enums import DocumentVersionStatus, PipelineStage, PipelineStatus
+from app.models.enums import (
+    AiAnalysisStatus,
+    PipelineStage,
+    PipelineStatus,
+    PreviewStatus,
+)
 from app.repositories.pipeline_sync import PipelineSyncRepository
 from app.workers.celery_app import celery_app
 from app.workers.stages import STAGE_HANDLERS, STAGE_ORDER, StageHandler
@@ -114,12 +121,30 @@ def execute_pipeline(
 
         document_version_id = version.id
         pipe.mark_run_running(run)
-        # Keep version in processing while stages run.
-        pipe.set_version_status(version, DocumentVersionStatus.processing)
+        # Document stays usable (status=ready). Only AI analysis moves.
+        pipe.set_ai_analysis(version, AiAnalysisStatus.processing)
         session.flush()
+
+        if not get_settings().ai_enabled:
+            message = "AI_DISABLED"
+            pipe.mark_run_failed(run, message)
+            pipe.set_ai_analysis(version, AiAnalysisStatus.failed, error=message)
+            session.commit()
+            return {
+                "pipeline_run_id": str(run.id),
+                "document_version_id": str(document_version_id),
+                "status": PipelineStatus.failed.value,
+                "stages": [],
+            }
 
         try:
             for stage in STAGE_ORDER:
+                if (
+                    stage == PipelineStage.preview_generation
+                    and version.preview_status == PreviewStatus.completed
+                ):
+                    completed_stages.append(stage.value)
+                    continue
                 handler = handlers.get(stage)
                 if handler is None:
                     raise DataPipelineError(f"No handler registered for stage '{stage.value}'")
@@ -136,9 +161,9 @@ def execute_pipeline(
                     if stage == PipelineStage.document_understanding:
                         page_count = metadata.get("page_count")
                         if isinstance(page_count, int):
-                            pipe.set_version_status(
+                            pipe.set_ai_analysis(
                                 version,
-                                DocumentVersionStatus.processing,
+                                AiAnalysisStatus.processing,
                                 page_count=page_count,
                             )
                     completed_stages.append(stage.value)
@@ -156,7 +181,11 @@ def execute_pipeline(
                         metadata=diagnostics if diagnostics else None,
                     )
                     pipe.mark_run_failed(run, user_message)
-                    pipe.set_version_status(version, DocumentVersionStatus.failed)
+                    pipe.set_ai_analysis(
+                        version,
+                        AiAnalysisStatus.failed,
+                        error=user_message,
+                    )
                     session.commit()
                     raise
                 except Exception as exc:
@@ -164,12 +193,20 @@ def execute_pipeline(
                     message = str(exc)
                     pipe.fail_stage(log, message)
                     pipe.mark_run_failed(run, message)
-                    pipe.set_version_status(version, DocumentVersionStatus.failed)
+                    pipe.set_ai_analysis(
+                        version,
+                        AiAnalysisStatus.failed,
+                        error=message,
+                    )
                     session.commit()
                     raise DataPipelineError(message) from exc
 
             pipe.mark_run_completed(run)
-            pipe.set_version_status(version, DocumentVersionStatus.ready)
+            pipe.set_ai_analysis(
+                version,
+                AiAnalysisStatus.ready,
+                analyzed_at=datetime.now(UTC),
+            )
             logger.info(
                 "pipeline_completed",
                 pipeline_run_id=str(run.id),
@@ -186,7 +223,7 @@ def execute_pipeline(
             raise
         except Exception as exc:
             pipe.mark_run_failed(run, str(exc))
-            pipe.set_version_status(version, DocumentVersionStatus.failed)
+            pipe.set_ai_analysis(version, AiAnalysisStatus.failed, error=str(exc))
             session.commit()
             raise
 
@@ -208,5 +245,5 @@ def _mark_terminal_failure(pipeline_run_id: uuid.UUID, error_message: str) -> No
         if run.status != PipelineStatus.failed:
             pipe.mark_run_failed(run, error_message)
         version = pipe.get_version(run.document_version_id)
-        if version is not None and version.status != DocumentVersionStatus.failed:
-            pipe.set_version_status(version, DocumentVersionStatus.failed)
+        if version is not None and version.ai_analysis_status != AiAnalysisStatus.failed:
+            pipe.set_ai_analysis(version, AiAnalysisStatus.failed, error=error_message)

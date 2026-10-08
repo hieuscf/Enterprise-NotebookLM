@@ -22,8 +22,15 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import DocumentVersionStatus, FileType, PreviewStatus, PreviewType
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    FileType,
+    PreviewStatus,
+    PreviewType,
+)
 from app.models.types import (
+    ai_analysis_status_enum,
     created_at_col,
     document_version_status_enum,
     file_type_enum,
@@ -88,8 +95,20 @@ class DocumentVersion(Base):
     status: Mapped[DocumentVersionStatus] = mapped_column(
         document_version_status_enum,
         nullable=False,
-        server_default=DocumentVersionStatus.processing.value,
+        server_default=DocumentVersionStatus.ready.value,
     )
+    # AI analysis is independent of document usability (status).
+    ai_analysis_status: Mapped[AiAnalysisStatus] = mapped_column(
+        ai_analysis_status_enum,
+        nullable=False,
+        server_default=AiAnalysisStatus.not_analyzed.value,
+        default=AiAnalysisStatus.not_analyzed,
+    )
+    analyzed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    analysis_error: Mapped[str | None] = mapped_column(String(4000), nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     parser: Mapped[str] = mapped_column(String(64), nullable=False, server_default="llamaparse")
     markdown_storage_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)

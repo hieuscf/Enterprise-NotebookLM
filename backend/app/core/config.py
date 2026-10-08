@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
+    # Master switch: core document/workspace flows must run when false.
+    # Provider adapters are only constructed through AI Gateway when true.
+    ai_enabled: bool = True
+
     otel_service_name: str = "enterprise-notebooklm-backend"
     otel_exporter_otlp_endpoint: str | None = None
     otel_console_exporter: bool = False

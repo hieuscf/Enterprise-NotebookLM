@@ -56,6 +56,16 @@ class DocumentVersionResponse(BaseModel):
         ),
     )
     status: Literal["processing", "ready", "failed"]
+    ai_analysis_status: Literal[
+        "not_analyzed",
+        "queued",
+        "processing",
+        "ready",
+        "failed",
+        "stale",
+    ] = "not_analyzed"
+    analyzed_at: datetime | None = None
+    analysis_error: str | None = None
     is_current: bool
     created_at: datetime
     preview_status: Literal["pending", "processing", "completed", "failed"] = "pending"

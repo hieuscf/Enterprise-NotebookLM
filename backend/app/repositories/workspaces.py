@@ -131,6 +131,10 @@ class WorkspaceRepository:
             workspace.name = name
         if description is not None:
             workspace.description = description
+        # Set updated_at in Python. Relying only on Column.onupdate=func.now()
+        # expires the attribute after flush; sync access in the response mapper
+        # then triggers async lazy-load → MissingGreenlet (HTTP 500).
+        workspace.updated_at = datetime.now(UTC)
         await self._session.flush()
         return workspace
 

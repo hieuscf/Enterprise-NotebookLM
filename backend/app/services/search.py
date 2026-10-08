@@ -69,6 +69,50 @@ class SearchService:
         self._retrieval_repo = retrieval_repo
         self._settings = settings or get_settings()
 
+    async def _basic_search(
+        self,
+        *,
+        workspace_id: UUID,
+        query: str,
+        top_k: int,
+        filters_model: SearchFilters | None,
+    ) -> list[RetrievalCandidate]:
+        """Postgres title/metadata search — no vector, graph, or LLM."""
+        file_type = None
+        if filters_model is not None and filters_model.file_type:
+            raw = filters_model.file_type
+            value = raw[0] if isinstance(raw, list) else raw
+            try:
+                file_type = FileType(str(value).lower())
+            except ValueError:
+                file_type = None
+        rows = await self._retrieval_repo.list_documents_metadata(
+            workspace_id,
+            file_type=file_type,
+            title_contains=query,
+            limit=max(1, top_k),
+        )
+        items: list[RetrievalCandidate] = []
+        for rank, row in enumerate(rows, start=1):
+            snippet = row.title or query
+            items.append(
+                RetrievalCandidate(
+                    workspace_id=workspace_id,
+                    document_id=row.document_id,
+                    document_title=row.title,
+                    text_snippet=snippet,
+                    retrieval_method="bm25",
+                    score=1.0,
+                    raw_score=1.0,
+                    rank=rank,
+                    chunk_id=None,
+                    entity_id=None,
+                    page_number=None,
+                    source_methods=["bm25"],
+                )
+            )
+        return items
+
     async def search(
         self,
         *,
@@ -109,27 +153,33 @@ class SearchService:
         fetch_k = body.top_k * 3 if has_filters or min_score > 0 else body.top_k
         fetch_k = max(fetch_k, body.top_k)
 
-        try:
-            result = await self._hybrid.retrieve(
-                workspace_id,
-                query,
-                top_k=fetch_k,
+        use_hybrid = self._settings.ai_enabled
+        result = None
+        items: list[RetrievalCandidate] = []
+        if use_hybrid:
+            try:
+                result = await self._hybrid.retrieve(
+                    workspace_id,
+                    query,
+                    top_k=fetch_k,
+                )
+                items = list(result.items)
+            except RetrievalUnavailableError as exc:
+                logger.warning(
+                    "search_retrieval_unavailable_fallback_basic",
+                    workspace_id=str(workspace_id),
+                    user_id=str(user_id),
+                    query=query[:200],
+                    error=str(exc),
+                )
+                items = []
+        if not items:
+            items = await self._basic_search(
+                workspace_id=workspace_id,
+                query=query,
+                top_k=body.top_k,
+                filters_model=filters_model,
             )
-        except RetrievalUnavailableError as exc:
-            logger.warning(
-                "search_retrieval_unavailable",
-                workspace_id=str(workspace_id),
-                user_id=str(user_id),
-                query=query[:200],
-                error=str(exc),
-            )
-            raise SearchServiceError(
-                "retrieval_unavailable",
-                "Search backends are temporarily unavailable",
-                status_code=503,
-            ) from exc
-
-        items = list(result.items)
         if has_filters and filters_model is not None:
             items = await self._apply_filters(workspace_id, items, filters_model)
 
@@ -174,7 +224,7 @@ class SearchService:
             filters=filters_dict,
             results_count=len(response_items),
             history_id=str(history_row.id),
-            latency=result.latency_ms,
+            latency=result.latency_ms if result is not None else 0,
         )
 
         return SearchResultResponse(

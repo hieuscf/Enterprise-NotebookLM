@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.enums import (
     AgentTriggerReason,
     AgentType,
+    AiAnalysisStatus,
     ChunkLayoutType,
     ComparisonStatus,
     ConfidenceLevel,
@@ -92,6 +93,7 @@ role_name_enum = pg_enum(RoleName, "role_name")
 platform_role_enum = pg_enum(PlatformRole, "platform_role")
 file_type_enum = pg_enum(FileType, "file_type")
 document_version_status_enum = pg_enum(DocumentVersionStatus, "document_version_status")
+ai_analysis_status_enum = pg_enum(AiAnalysisStatus, "ai_analysis_status")
 preview_status_enum = pg_enum(PreviewStatus, "preview_status")
 preview_type_enum = pg_enum(PreviewType, "preview_type")
 pipeline_status_enum = pg_enum(PipelineStatus, "pipeline_status")

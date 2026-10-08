@@ -23,7 +23,8 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 
-from app.adapters.chat_llm import extract_structured_json, resolve_chat_llm
+from app.adapters.chat_llm import resolve_chat_llm
+from app.integrations.ai.gateway import get_ai_gateway
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.models.enums import AgentTriggerReason, AgentType
@@ -125,7 +126,7 @@ class RewriteAgent:
                     timeout_seconds=float(self._settings.rewrite_agent_timeout_seconds),
                 )
             else:
-                result = extract_structured_json(
+                result = get_ai_gateway(self._settings).generate(
                     settings=self._settings,
                     system=_REWRITE_SYSTEM,
                     user=user_prompt,

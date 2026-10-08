@@ -39,7 +39,8 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
+from app.adapters.chat_llm import resolve_chat_llm
+from app.integrations.ai.gateway import get_ai_gateway
 from app.adapters.llm_result import StructuredLlmResult
 from app.ai.tokens import count_tokens
 from app.core.config import Settings
@@ -790,7 +791,7 @@ class ExtractionService:
             self._llm_call_count += 1
             if self._llm_call is not None:
                 return await self._llm_call(**call_kwargs)
-            return await extract_structured_json_async(
+            return await get_ai_gateway(self._settings).generate_async(
                 settings=self._settings,
                 **call_kwargs,
             )

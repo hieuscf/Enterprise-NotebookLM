@@ -22,9 +22,9 @@ import { cn } from "@/lib/utils";
 import type { DocumentVersionStatus } from "@/types/documents";
 
 const LABEL: Record<DocumentVersionStatus, string> = {
-  ready: "Ready",
+  ready: "Active",
   processing: "Processing",
-  failed: "Processing failed",
+  failed: "Unavailable",
 };
 
 type Props = {

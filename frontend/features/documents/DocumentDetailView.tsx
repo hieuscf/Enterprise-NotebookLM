@@ -19,7 +19,7 @@
 
 "use client";
 
-import { AlertCircle, ArrowLeft, Network, ScrollText, Wand2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, MessageSquare, Network, ScrollText, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -29,6 +29,7 @@ import { ToastStack } from "@/components/ui/toast";
 import { loadCitationFocus } from "@/features/chat/citation/citation-session";
 import { DocumentActionsMenu } from "@/features/documents/DocumentActionsMenu";
 import { DocumentExtentLabel } from "@/features/documents/DocumentExtentLabel";
+import { AiAnalysisStatusBadge } from "@/features/documents/AiAnalysisStatusBadge";
 import { DocumentStatusIndicator } from "@/features/documents/DocumentStatusIndicator";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { UploadJobCard } from "@/features/documents/UploadJobCard";
@@ -46,7 +47,10 @@ import {
   deleteDocument,
   documentContentUrl,
   getDocument,
+  getDocumentAnalysis,
+  requestDocumentAnalysis,
 } from "@/lib/api-client";
+import type { AiAnalysisStatus } from "@/types/documents";
 import { canDeleteDocuments, canUploadDocuments } from "@/lib/rbac";
 import { formatBytes } from "@/lib/upload-constraints";
 import { cn } from "@/lib/utils";
@@ -110,6 +114,9 @@ export function DocumentDetailView({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<AiAnalysisStatus | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   useEffect(() => {
     setResolvedChunkId(focusChunkId);
@@ -169,6 +176,60 @@ export function DocumentDetailView({
     () => versions.find((v) => v.is_current) ?? versions[0] ?? null,
     [versions],
   );
+
+  useEffect(() => {
+    setAnalysisStatus(currentVersion?.ai_analysis_status ?? null);
+    setAnalysisError(currentVersion?.analysis_error ?? null);
+  }, [currentVersion?.id, currentVersion?.ai_analysis_status, currentVersion?.analysis_error]);
+
+  useEffect(() => {
+    const versionId = currentVersion?.id;
+    const busy =
+      analysisStatus === "queued" || analysisStatus === "processing";
+    if (!versionId || !busy) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const snap = await getDocumentAnalysis(workspaceId, documentId, versionId);
+        if (cancelled) return;
+        setAnalysisStatus(snap.status);
+        setAnalysisError(snap.error);
+      } catch {
+        /* keep last known status */
+      }
+    };
+    const id = window.setInterval(() => void tick(), 2500);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [workspaceId, documentId, currentVersion?.id, analysisStatus]);
+
+  async function handleAnalyze() {
+    if (!currentVersion) return;
+    setAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const snap = await requestDocumentAnalysis(
+        workspaceId,
+        documentId,
+        currentVersion.id,
+      );
+      setAnalysisStatus(snap.status);
+      setAnalysisError(snap.error);
+      pushSuccess("AI analysis queued.");
+    } catch (err) {
+      const message =
+        err instanceof ApiClientError
+          ? err.message
+          : "Unable to start AI analysis.";
+      setAnalysisError(message);
+      pushError(message);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
 
   const { jobs, addJobs, removeJob, cancelJob } = useDocumentUploadQueue(
     workspaceId,
@@ -302,7 +363,12 @@ export function DocumentDetailView({
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {currentVersion ? (
-                        <DocumentStatusIndicator status={currentVersion.status} />
+                        <div className="flex flex-col items-end gap-1">
+                          <DocumentStatusIndicator status={currentVersion.status} />
+                          <AiAnalysisStatusBadge
+                            status={analysisStatus ?? currentVersion.ai_analysis_status}
+                          />
+                        </div>
                       ) : null}
                       <DocumentActionsMenu
                         canUploadVersion={canUpload}
@@ -326,6 +392,35 @@ export function DocumentDetailView({
                   </div>
 
                   <div className="mt-2 flex flex-wrap gap-1.5">
+                    {analysisStatus !== "ready" ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleAnalyze()}
+                        disabled={!canUpload || analyzing}
+                        className={cn(
+                          "inline-flex h-7 items-center gap-1.5 rounded-md border border-accent-primary/40 bg-accent-primary-soft px-2.5",
+                          "text-caption font-medium text-accent-primary hover:bg-accent-primary/15",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                        )}
+                      >
+                        <Sparkles className="h-3 w-3" aria-hidden />
+                        {analyzing ? "Starting…" : "Analyze for AI"}
+                      </button>
+                    ) : (
+                      <Link
+                        href={`/workspaces/${workspaceId}/chat`}
+                        className={cn(
+                          "inline-flex h-7 items-center gap-1.5 rounded-md border border-accent-primary/40 bg-accent-primary-soft px-2.5",
+                          "text-caption font-medium text-accent-primary hover:bg-accent-primary/15",
+                        )}
+                      >
+                        <MessageSquare className="h-3 w-3" aria-hidden />
+                        Chat
+                      </Link>
+                    )}
+                    {analysisError ? (
+                      <span className="self-center text-caption text-danger">{analysisError}</span>
+                    ) : null}
                     <Link
                       href={`/workspaces/${workspaceId}/summaries?documentId=${documentId}`}
                       className={cn(
@@ -347,7 +442,7 @@ export function DocumentDetailView({
                       Extract
                     </Link>
                     <Link
-                      href={`/workspaces/${workspaceId}/graph`}
+                      href={`/workspaces/${workspaceId}/graph?documentId=${documentId}`}
                       className={cn(
                         "inline-flex h-7 items-center gap-1.5 rounded-md border border-border-default px-2.5",
                         "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",

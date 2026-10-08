@@ -49,7 +49,61 @@ class PatternRule:
 
 
 # Default bilingual metadata rules — extend this tuple to add coverage.
+# Rule ``name`` should align with MetadataRegistry intents where possible so
+# classifier → metadata → handler whitelist stays in sync.
 DEFAULT_METADATA_RULES: tuple[PatternRule, ...] = (
+    PatternRule(
+        name="count_members",
+        priority=120,
+        regex=(
+            r"\b(how\s+many|number\s+of|count)\b.*\bmembers?\b",
+            r"\b(có\s+bao\s+nhiêu|có\s+mấy|bao\s+nhiêu|số\s+lượng|tổng\s+số|đếm)\b.*"
+            r"\b(thành\s+viên|thanh\s+vien|member)\b",
+        ),
+        keywords=(
+            "how many members",
+            "count members",
+            "number of members",
+            "có bao nhiêu thành viên",
+            "bao nhiêu thành viên",
+            "số lượng thành viên",
+        ),
+    ),
+    PatternRule(
+        name="count_pages",
+        priority=110,
+        regex=(
+            r"\b(how\s+many|count|number\s+of)\b.{0,40}\bpages?\b",
+            r"\b(có\s+bao\s+nhiêu|có\s+mấy|bao\s+nhiêu|số\s+lượng|tổng\s+số)\b"
+            r".{0,40}\btrang\b",
+            r"\b(pages?|trang)\b.{0,40}\b(how\s+many|count|bao\s+nhiêu)\b",
+        ),
+        keywords=(
+            "how many pages",
+            "count pages",
+            "number of pages",
+            "bao nhiêu trang",
+            "có bao nhiêu trang",
+            "có mấy trang",
+            "số trang",
+            "tổng số trang",
+        ),
+    ),
+    PatternRule(
+        name="count_chunks",
+        priority=105,
+        regex=(
+            r"\b(how\s+many|count|number\s+of)\b.{0,40}\bchunks?\b",
+            r"\b(có\s+bao\s+nhiêu|có\s+mấy|bao\s+nhiêu|số\s+lượng)\b.{0,40}\bchunks?\b",
+        ),
+        keywords=(
+            "how many chunks",
+            "count chunks",
+            "number of chunks",
+            "bao nhiêu chunk",
+            "có bao nhiêu chunk",
+        ),
+    ),
     PatternRule(
         name="count_documents",
         priority=100,
@@ -139,15 +193,21 @@ DEFAULT_METADATA_RULES: tuple[PatternRule, ...] = (
     ),
     PatternRule(
         name="workspace_stats",
-        priority=70,
+        priority=75,
         regex=(
             r"\b(statistics|stats|thống\s+kê|thong\s+ke)\b",
-            r"\b(workspace)\b.*\b(info|information|files|documents)\b",
+            r"\b(workspace)\b.*\b(info|information|files|documents|stats|statistics)\b",
+            r"\b(count|thống\s+kê)\b.{0,40}\b(file\s+type|loại\s+file|kiểu\s+file|loại)\b",
         ),
         keywords=(
             "thống kê",
+            "thống kê theo loại file",
+            "thống kê loại file",
             "workspace stats",
+            "workspace statistics",
+            "file type stats",
             "document statistics",
+            "stats by file type",
         ),
     ),
 )

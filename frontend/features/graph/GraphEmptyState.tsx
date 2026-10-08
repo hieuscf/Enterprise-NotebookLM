@@ -12,7 +12,7 @@
  *   - GraphEmptyState, GraphLoadingState, GraphErrorState
  * Database/Table: N/A
  * Related Modules: features/graph/KnowledgeGraphView.tsx
- * Important Notes: Avoid full-screen spinners; prefer editorial messaging.
+ * Important Notes: Soft surfaces, rounded cards, and clear CTAs.
  * =============================================================================
  */
 
@@ -27,27 +27,26 @@ export function GraphLoadingState({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex h-full min-h-[320px] flex-col items-center justify-center gap-4 px-6 text-center",
+        "flex h-full min-h-[320px] flex-col items-center justify-center gap-5 px-6 text-center",
         className,
       )}
       role="status"
       aria-live="polite"
     >
-      <div className="flex gap-1.5" aria-hidden>
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="h-1.5 w-8 animate-pulse rounded-full bg-accent-secondary/25"
-            style={{ animationDelay: `${i * 160}ms` }}
-          />
-        ))}
-      </div>
+      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent-secondary-soft">
+        <Network className="h-5 w-5 text-accent-secondary animate-pulse" aria-hidden />
+      </span>
       <div>
         <p className="text-h3 text-primary">Đang xây dựng đồ thị tri thức…</p>
-        <ul className="mt-3 space-y-1 text-body-sm text-secondary">
-          <li>Phân tích thực thể</li>
-          <li>Ánh xạ quan hệ</li>
-          <li>Tổ chức chủ đề</li>
+        <ul className="mt-4 inline-flex flex-wrap items-center justify-center gap-2">
+          {["Phân tích thực thể", "Ánh xạ quan hệ", "Tổ chức chủ đề"].map((step) => (
+            <li
+              key={step}
+              className="rounded-full border border-border-default bg-surface px-3 py-1 text-body-sm text-secondary shadow-xs"
+            >
+              {step}
+            </li>
+          ))}
         </ul>
       </div>
     </div>
@@ -68,16 +67,16 @@ export function GraphEmptyState({
         className,
       )}
     >
-      <span className="flex h-12 w-12 items-center justify-center rounded-md bg-accent-secondary-soft">
-        <Network className="h-5 w-5 text-accent-secondary" aria-hidden />
+      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-secondary-soft shadow-sm">
+        <Network className="h-6 w-6 text-accent-secondary" aria-hidden />
       </span>
-      <h2 className="mt-4 text-h2 text-primary">Chưa có đồ thị tri thức</h2>
+      <h2 className="mt-5 text-h2 text-primary">Chưa có đồ thị tri thức</h2>
       <p className="mt-2 max-w-sm text-body-sm text-secondary">
         Tải tài liệu lên để xây dựng đồ thị tri thức cho workspace này.
       </p>
       <Link
         href={`/workspaces/${workspaceId}/upload`}
-        className="mt-5 inline-flex cursor-pointer items-center gap-2 rounded-md bg-accent-primary px-4 py-2 text-body-sm font-medium text-white transition-colors hover:bg-accent-primary-hover"
+        className="mt-6 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-accent-primary px-4 py-2.5 text-body-sm font-medium text-white shadow-sm transition-colors hover:bg-accent-primary-hover"
       >
         <UploadCloud className="h-4 w-4" aria-hidden />
         Tải lên tài liệu
@@ -103,10 +102,10 @@ export function GraphErrorState({
       )}
       role="alert"
     >
-      <span className="flex h-12 w-12 items-center justify-center rounded-md bg-danger-soft">
-        <AlertCircle className="h-5 w-5 text-danger" aria-hidden />
+      <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-danger-soft shadow-sm">
+        <AlertCircle className="h-6 w-6 text-danger" aria-hidden />
       </span>
-      <h2 className="mt-4 text-h2 text-primary">
+      <h2 className="mt-5 text-h2 text-primary">
         Không thể tải đồ thị tri thức.
       </h2>
       <p className="mt-2 max-w-sm text-body-sm text-secondary">
@@ -116,7 +115,7 @@ export function GraphErrorState({
         <button
           type="button"
           onClick={onRetry}
-          className="mt-5 cursor-pointer rounded-md border border-border-default bg-surface px-4 py-2 text-body-sm font-medium text-secondary hover:bg-elevated hover:text-primary"
+          className="mt-6 cursor-pointer rounded-lg border border-border-default bg-surface px-4 py-2.5 text-body-sm font-medium text-secondary shadow-xs transition-colors hover:bg-elevated hover:text-primary"
         >
           Thử lại
         </button>

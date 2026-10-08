@@ -356,6 +356,25 @@ async def test_patch_workspace_viewer_403(
 
 
 @pytest.mark.asyncio
+async def test_workspace_repo_update_sets_updated_at() -> None:
+    """Regression: PATCH must not lazy-load expired updated_at (MissingGreenlet)."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    repo = WorkspaceRepository(session)
+    before = datetime(2026, 1, 1, tzinfo=UTC)
+    ws = _make_workspace(name="Old", description="d")
+    ws.updated_at = before
+
+    updated = await repo.update(ws, name="New", description=None)
+
+    assert updated.name == "New"
+    assert updated.updated_at >= before
+    assert updated.updated_at.tzinfo is not None
+    session.flush.assert_awaited_once()
+
+
 async def test_patch_workspace_admin_200(
     client: AsyncClient,
     current_user: CurrentUser,

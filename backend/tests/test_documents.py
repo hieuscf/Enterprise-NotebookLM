@@ -34,7 +34,13 @@ from app.db.session import get_db_session
 from app.dependencies.auth import CurrentUser, get_current_user
 from app.main import app
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType, PipelineStatus, RoleName
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    FileType,
+    PipelineStatus,
+    RoleName,
+)
 from app.models.pipeline import PipelineRun
 from app.repositories.workspace_members import WorkspaceMemberRepository
 from app.services.documents import (
@@ -166,7 +172,8 @@ class FakeDocRepo:
         file_size_bytes: int,
         checksum_sha256: str,
         is_current: bool,
-        status: DocumentVersionStatus = DocumentVersionStatus.processing,
+        status: DocumentVersionStatus = DocumentVersionStatus.ready,
+        ai_analysis_status: AiAnalysisStatus = AiAnalysisStatus.not_analyzed,
     ) -> DocumentVersion:
         ver = DocumentVersion(
             id=uuid.uuid4(),
@@ -178,6 +185,7 @@ class FakeDocRepo:
             checksum_sha256=checksum_sha256,
             page_count=None,
             status=status,
+            ai_analysis_status=ai_analysis_status,
             is_current=is_current,
             created_at=datetime.now(UTC),
         )
@@ -269,10 +277,15 @@ async def test_upload_creates_document_version_and_pipeline_run(monkeypatch) -> 
     pipeline = FakePipelineRepo()
     service = _wire_service(session, storage, docs, pipeline)
 
-    enqueued: list[str] = []
+    preview_enqueued: list[str] = []
+    pipeline_enqueued: list[str] = []
+    monkeypatch.setattr(
+        "app.workers.previews.generate_preview.delay",
+        lambda version_id: preview_enqueued.append(version_id),
+    )
     monkeypatch.setattr(
         "app.workers.pipeline.run_pipeline.delay",
-        lambda run_id: enqueued.append(run_id),
+        lambda run_id: pipeline_enqueued.append(run_id),
     )
 
     ws = uuid.uuid4()
@@ -288,23 +301,23 @@ async def test_upload_creates_document_version_and_pipeline_run(monkeypatch) -> 
 
     assert len(docs.documents) == 1
     assert len(docs.versions) == 1
-    assert len(pipeline.runs) == 1
+    assert len(pipeline.runs) == 0
     assert session.committed is True
 
     doc = result.document
     ver = result.version
-    run = result.pipeline_run
+    assert result.pipeline_run is None
     assert doc.current_version_id == ver.id
     assert ver.version_number == 1
     assert ver.is_current is True
-    assert ver.status == DocumentVersionStatus.processing
+    assert ver.status == DocumentVersionStatus.ready
+    assert ver.ai_analysis_status == AiAnalysisStatus.not_analyzed
     assert ver.page_count is None
     assert ver.checksum_sha256 == hashlib.sha256(payload).hexdigest()
     assert ver.storage_path == (f"workspaces/{ws}/documents/{doc.id}/v1/q1.pdf")
-    assert run.document_version_id == ver.id
-    assert run.status == PipelineStatus.pending
     assert ver.storage_path in storage.objects
-    assert enqueued == [str(run.id)]
+    assert preview_enqueued == [str(ver.id)]
+    assert pipeline_enqueued == []
 
 
 @pytest.mark.asyncio
@@ -314,7 +327,7 @@ async def test_upload_version_2_clears_is_current_on_v1(monkeypatch) -> None:
     docs = FakeDocRepo()
     pipeline = FakePipelineRepo()
     service = _wire_service(session, storage, docs, pipeline)
-    monkeypatch.setattr("app.workers.pipeline.run_pipeline.delay", lambda _rid: None)
+    monkeypatch.setattr("app.workers.previews.generate_preview.delay", lambda _vid: None)
 
     ws = uuid.uuid4()
     user = uuid.uuid4()
@@ -341,7 +354,9 @@ async def test_upload_version_2_clears_is_current_on_v1(monkeypatch) -> None:
     assert v2.is_current is True
     assert v2.version_number == 2
     assert first.document.current_version_id == v2.id
-    assert len(pipeline.runs) == 2
+    assert len(pipeline.runs) == 0
+    assert v1.ai_analysis_status == AiAnalysisStatus.not_analyzed
+    assert v2.ai_analysis_status == AiAnalysisStatus.not_analyzed
     assert v2.storage_path.endswith("/v2/a.txt")
 
 

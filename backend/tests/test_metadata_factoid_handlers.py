@@ -194,6 +194,27 @@ async def test_metadata_unsupported_downgrades_to_complex() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "repo_call"),
+    [
+        ("Tài liệu này có bao nhiêu trang?", "count_pages"),
+        ("How many pages are in the workspace?", "count_pages"),
+        ("How many chunks?", "count_chunks"),
+        ("Có bao nhiêu thành viên?", "count_members"),
+        ("Thống kê theo loại file", "stats_by_file_type"),
+        ("workspace stats", "stats_by_file_type"),
+    ],
+)
+async def test_metadata_gap_intents_resolve(query: str, repo_call: str) -> None:
+    repo = FakeMetadataRepo()
+    handler = MetadataHandler(repository=repo)  # type: ignore[arg-type]
+    result = await handler.handle(workspace_id=WS, query_text=query)
+    assert result.route_type == RouteType.metadata
+    assert result.answer is not None
+    assert any(repo_call in c for c in repo.calls)
+
+
+@pytest.mark.asyncio
 async def test_metadata_never_calls_llm_or_retrieval() -> None:
     repo = FakeMetadataRepo()
     handler = MetadataHandler(repository=repo)  # type: ignore[arg-type]

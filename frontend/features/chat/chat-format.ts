@@ -13,7 +13,8 @@
  *   - types/chat, types/citations
  * Public Exports:
  *   - formatRelativeTime, sessionTitleLabel, buildChatCitationHref
- *   - citationDisplayIndex, stripLeakedCitationUuids, conversationDayLabel
+ *   - citationDisplayIndex, stripLeakedCitationUuids, rewriteLeakedCitationMarkers,
+ *     conversationDayLabel
  * Database/Table: N/A
  * Related Modules: features/chat/SessionSidebar, CitationChip, SourcePanel
  * Important Notes: Prefer chunk_id like Search deep-links; citation id is fallback.
@@ -89,24 +90,84 @@ export function citationDisplayIndex(citation: Pick<Citation, "order_index">): n
 
 const CITATION_UUID =
   "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+/** Comma or semicolon lists — models often emit `[uuid; uuid]`. */
 const BRACKETED_UUID_LIST = new RegExp(
-  `\\[\\s*${CITATION_UUID}(?:\\s*,\\s*${CITATION_UUID})+\\s*\\]`,
+  `\\[\\s*(${CITATION_UUID}(?:\\s*[,;]\\s*${CITATION_UUID})+)\\s*\\]`,
   "g",
 );
-const BRACKETED_UUID = new RegExp(`\\[\\s*${CITATION_UUID}\\s*\\]`, "g");
+const BRACKETED_UUID = new RegExp(`\\[\\s*(${CITATION_UUID})\\s*\\]`, "g");
+const UUID_TOKEN = new RegExp(CITATION_UUID, "gi");
 
-/**
- * Defense-in-depth: strip leftover bracketed UUIDs (and UUID lists) from
- * answer prose. Backend should already rewrite/remove these before persist.
- */
-export function stripLeakedCitationUuids(content: string): string {
+export type CitationMarkerLookup = {
+  id: string;
+  chunkId?: string | null;
+  displayIndex: number;
+};
+
+function buildCitationIndexMap(
+  citations: CitationMarkerLookup[],
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const c of citations) {
+    if (c.chunkId) map.set(c.chunkId.toLowerCase(), c.displayIndex);
+    if (c.id) map.set(c.id.toLowerCase(), c.displayIndex);
+  }
+  return map;
+}
+
+function cleanupAfterCitationRewrite(content: string): string {
   return content
-    .replace(BRACKETED_UUID_LIST, "")
-    .replace(BRACKETED_UUID, "")
     .replace(/[ \t]+([.,;:!?])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .trim();
+}
+
+/**
+ * Defense-in-depth: strip leftover bracketed UUIDs (and UUID lists) from
+ * answer prose. Backend should already rewrite/remove these before persist.
+ * Accepts comma and semicolon separators.
+ */
+export function stripLeakedCitationUuids(content: string): string {
+  return cleanupAfterCitationRewrite(
+    content
+      .replace(BRACKETED_UUID_LIST, "")
+      .replace(BRACKETED_UUID, ""),
+  );
+}
+
+/**
+ * Rewrite leaked `[uuid]` / `[uuid; uuid]` markers to presentation `[n]` chips
+ * when the id matches a verified citation (chunk_id or citation id). Unknown
+ * markers are removed. Fixes persisted answers the backend did not sanitize.
+ */
+export function rewriteLeakedCitationMarkers(
+  content: string,
+  citations: CitationMarkerLookup[],
+): string {
+  if (!content) return "";
+  const indexById = buildCitationIndexMap(citations);
+
+  const rewriteList = (_full: string, body: string): string => {
+    const indexes: number[] = [];
+    const seen = new Set<number>();
+    UUID_TOKEN.lastIndex = 0;
+    let token: RegExpExecArray | null;
+    while ((token = UUID_TOKEN.exec(body)) !== null) {
+      const idx = indexById.get(token[0].toLowerCase());
+      if (idx == null || seen.has(idx)) continue;
+      seen.add(idx);
+      indexes.push(idx);
+    }
+    return indexes.map((i) => `[${i}]`).join("");
+  };
+
+  let out = content.replace(BRACKETED_UUID_LIST, rewriteList);
+  out = out.replace(BRACKETED_UUID, (_full, uuid: string) => {
+    const idx = indexById.get(String(uuid).toLowerCase());
+    return idx != null ? `[${idx}]` : "";
+  });
+  return cleanupAfterCitationRewrite(out);
 }
 
 /** Local calendar day key YYYY-MM-DD for grouping sessions. */

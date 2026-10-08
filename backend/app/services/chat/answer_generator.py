@@ -32,7 +32,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
+from app.adapters.chat_llm import resolve_chat_llm
+from app.integrations.ai.gateway import get_ai_gateway
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.services.chat.complex_query_pipeline import AnswerGenerationResult
@@ -173,7 +174,7 @@ class PromptAnswerGenerator:
             if self._llm_call is not None:
                 llm = await self._llm_call(**call_kwargs)
             else:
-                llm = await extract_structured_json_async(
+                llm = await get_ai_gateway(settings).generate_async(
                     settings=settings,
                     **call_kwargs,
                 )

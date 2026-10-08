@@ -36,7 +36,8 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
+from app.adapters.chat_llm import resolve_chat_llm
+from app.integrations.ai.gateway import get_ai_gateway
 from app.adapters.llm_result import StructuredLlmResult
 from app.ai.tokens import count_tokens
 from app.core.config import Settings
@@ -153,19 +154,19 @@ class ComparisonService:
                 workspace_id=workspace_id,
                 document_id=document_id,
             )
-            # Fail fast when neither summary nor chunks exist (worker would fail anyway).
-            ctx = await self._build_document_context(
-                workspace_id=workspace_id,
-                document=document,
-                version=version,
-                focus=focus_term,
-            )
-            if not self._context_has_content(ctx):
-                raise ComparisonServiceError(
-                    "insufficient_context",
-                    f"Document {document.id} has no summary or chunks to compare",
-                    status_code=409,
+            if self._settings.ai_enabled:
+                ctx = await self._build_document_context(
+                    workspace_id=workspace_id,
+                    document=document,
+                    version=version,
+                    focus=focus_term,
                 )
+                if not self._context_has_content(ctx):
+                    raise ComparisonServiceError(
+                        "insufficient_context",
+                        f"Document {document.id} has no summary or chunks to compare",
+                        status_code=409,
+                    )
             resolved.append((document, version))
 
         derived_title = title
@@ -279,15 +280,21 @@ class ComparisonService:
 
         focus_term = (row.focus or "").strip() or None
         try:
-            contexts = await self._gather_contexts(
-                workspace_id=row.workspace_id,
-                document_ids=document_ids,
-                focus=focus_term,
-            )
-            result_payload = await self._run_comparison_llm(
-                contexts=contexts,
-                focus=focus_term,
-            )
+            if not self._settings.ai_enabled:
+                result_payload = await self._run_deterministic_comparison(
+                    workspace_id=row.workspace_id,
+                    document_ids=document_ids,
+                )
+            else:
+                contexts = await self._gather_contexts(
+                    workspace_id=row.workspace_id,
+                    document_ids=document_ids,
+                    focus=focus_term,
+                )
+                result_payload = await self._run_comparison_llm(
+                    contexts=contexts,
+                    focus=focus_term,
+                )
             result_payload = await self._attach_contract_comparison(
                 result_payload,
                 workspace_id=row.workspace_id,
@@ -1213,6 +1220,60 @@ class ComparisonService:
             )
             return payload
 
+    async def _run_deterministic_comparison(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_ids: list[uuid.UUID],
+    ) -> dict[str, Any]:
+        """Metadata/version diff when AI is off — no LLM, no chunks required."""
+        rows: list[tuple[Document, DocumentVersion]] = []
+        for document_id in document_ids:
+            document, version = await self._require_ready_current_version(
+                workspace_id=workspace_id,
+                document_id=document_id,
+            )
+            rows.append((document, version))
+
+        similarities: list[str] = []
+        differences: list[str] = []
+        file_types = {doc.file_type.value for doc, _ in rows}
+        if len(file_types) == 1:
+            similarities.append(f"All documents have file type {next(iter(file_types))}.")
+        else:
+            differences.append(
+                "File types differ: "
+                + ", ".join(f"{doc.title}={doc.file_type.value}" for doc, _ in rows)
+            )
+
+        checksums = {ver.checksum_sha256 for _, ver in rows}
+        if len(checksums) == 1:
+            similarities.append("File checksums are identical.")
+        else:
+            differences.append("File checksums differ between documents.")
+
+        sizes = {ver.file_size_bytes for _, ver in rows}
+        if len(sizes) == 1:
+            similarities.append(f"File size is {next(iter(sizes))} bytes for all documents.")
+        else:
+            differences.append(
+                "File sizes differ: "
+                + ", ".join(
+                    f"{doc.title}={ver.file_size_bytes} bytes" for doc, ver in rows
+                )
+            )
+
+        titles = [doc.title for doc, _ in rows]
+        if len(set(titles)) == 1:
+            similarities.append(f"Titles match: {titles[0]}.")
+        else:
+            differences.append("Titles differ: " + " vs ".join(titles))
+
+        parsed = parse_comparison_result(
+            {"similarities": similarities, "differences": differences}
+        )
+        return comparison_result_to_dict(parsed)
+
     async def _run_comparison_llm(
         self,
         *,
@@ -1259,7 +1320,7 @@ class ComparisonService:
             if self._llm_call is not None:
                 llm = await self._llm_call(**call_kwargs)
             else:
-                llm = await extract_structured_json_async(
+                llm = await get_ai_gateway(self._settings).generate_async(
                     settings=self._settings,
                     **call_kwargs,
                 )

@@ -57,6 +57,17 @@ def test_strips_trailing_bracketed_uuid_list() -> None:
     assert out == "Bên B phải báo cáo định kỳ."
 
 
+def test_rewrites_semicolon_uuid_list_to_display_indexes() -> None:
+    raw = (
+        f"Nội dung hỗ trợ "
+        f"[{CID_1}; {CID_2}]."
+    )
+    out = rewrite_inline_citation_markers(raw, [CID_1, CID_2])
+    assert CID_1 not in out
+    assert CID_2 not in out
+    assert out == "Nội dung hỗ trợ [1][2]."
+
+
 def test_uuid_list_strip_does_not_block_inline_index_rewrite() -> None:
     raw = (
         f"Yêu cầu báo cáo [{CID_1}]. "
@@ -67,3 +78,4 @@ def test_uuid_list_strip_does_not_block_inline_index_rewrite() -> None:
     assert CID_2 not in out
     assert "Yêu cầu báo cáo [1]." in out
     assert f"[{CID_1}, {CID_2}]" not in out
+    assert "[1][2]" in out

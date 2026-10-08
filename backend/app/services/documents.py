@@ -4,8 +4,9 @@
 # Layer: Service
 # Purpose: Upload, versioning, checksum, MinIO store, enqueue pipeline (FR2/UC2).
 # Responsibilities:
-#   - Chunked SHA-256 + MinIO upload; create documents/versions/pipeline_runs
-#   - Version history + set-current (ready-only); enqueue run_pipeline
+#   - Chunked SHA-256 + MinIO upload; create documents/versions
+#   - Version history + set-current (stored/ready); preview-only enqueue
+#   - Does NOT enqueue AI analysis — see AnalysisService
 # Dependencies:
 #   - app.repositories.documents, pipeline; app.adapters.minio_storage
 #   - app.workers.pipeline.run_pipeline
@@ -40,7 +41,12 @@ from app.ai.canonical_locator import (
 )
 from app.core.logging import get_logger
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType, PreviewStatus
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    FileType,
+    PreviewStatus,
+)
 from app.models.pipeline import PipelineRun
 from app.repositories.documents import DocumentRepository
 from app.repositories.pipeline import PipelineRepository
@@ -115,7 +121,7 @@ class DocumentPage:
 class UploadResult:
     document: Document
     version: DocumentVersion
-    pipeline_run: PipelineRun
+    pipeline_run: PipelineRun | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -667,7 +673,7 @@ class DocumentIngestionService:
                 content_type=CONTENT_TYPES[file_type],
             )
 
-            # 3) document_versions (processing, is_current, page_count=null)
+            # 3) document_versions — stored and usable; AI analysis is NOT started.
             version = await self._docs.create_version(
                 document_id=document.id,
                 uploaded_by=uploaded_by,
@@ -676,16 +682,13 @@ class DocumentIngestionService:
                 file_size_bytes=spooled.file_size_bytes,
                 checksum_sha256=spooled.checksum_sha256,
                 is_current=True,
+                status=DocumentVersionStatus.ready,
+                ai_analysis_status=AiAnalysisStatus.not_analyzed,
             )
 
             # 4) documents.current_version_id
             document.current_version_id = version.id
             await self._session.flush()
-
-            # 5) pipeline_runs pending
-            run = await self._pipeline.create_run(version.id)
-
-            # Single DB transaction boundary (request session commits after enqueue prep)
             await self._session.commit()
         except Exception:
             if storage_path is not None:
@@ -694,8 +697,8 @@ class DocumentIngestionService:
         finally:
             spooled.stream.close()
 
-        self._enqueue_pipeline(run.id)
-        return UploadResult(document=document, version=version, pipeline_run=run)
+        self._enqueue_preview(version.id)
+        return UploadResult(document=document, version=version, pipeline_run=None)
 
     async def upload_new_version(
         self,
@@ -744,11 +747,11 @@ class DocumentIngestionService:
                 file_size_bytes=spooled.file_size_bytes,
                 checksum_sha256=spooled.checksum_sha256,
                 is_current=True,
+                status=DocumentVersionStatus.ready,
+                ai_analysis_status=AiAnalysisStatus.not_analyzed,
             )
             document.current_version_id = version.id
             await self._session.flush()
-
-            run = await self._pipeline.create_run(version.id)
             await self._session.commit()
         except Exception:
             if storage_path is not None:
@@ -757,8 +760,8 @@ class DocumentIngestionService:
         finally:
             spooled.stream.close()
 
-        self._enqueue_pipeline(run.id)
-        return UploadResult(document=document, version=version, pipeline_run=run)
+        self._enqueue_preview(version.id)
+        return UploadResult(document=document, version=version, pipeline_run=None)
 
     async def set_current_version(
         self,
@@ -797,14 +800,14 @@ class DocumentIngestionService:
             )
         return run
 
-    def _enqueue_pipeline(self, pipeline_run_id: uuid.UUID) -> None:
+    def _enqueue_preview(self, document_version_id: uuid.UUID) -> None:
+        """Non-AI preview for the document viewer — never starts LlamaParse/RAG."""
         if not self._enqueue:
             return
-        # Late import avoids circular import with Celery app at module load.
-        from app.workers.pipeline import run_pipeline
+        from app.workers.previews import generate_preview
 
-        run_pipeline.delay(str(pipeline_run_id))
-        logger.info("pipeline_enqueued", pipeline_run_id=str(pipeline_run_id))
+        generate_preview.delay(str(document_version_id))
+        logger.info("preview_enqueued", document_version_id=str(document_version_id))
 
     def _layout_block_summaries(self, version: DocumentVersion) -> list[dict[str, Any]]:
         """Compact blocks from ``layout_metadata`` (no MinIO round-trip)."""

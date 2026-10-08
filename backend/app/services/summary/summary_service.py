@@ -31,7 +31,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.chat_llm import extract_structured_json_async, resolve_chat_llm
+from app.adapters.chat_llm import resolve_chat_llm
+from app.integrations.ai.gateway import get_ai_gateway
 from app.adapters.llm_result import EmptyCompletionError, StructuredLlmResult
 from app.ai.tokens import count_tokens, split_text_by_tokens
 from app.core.config import Settings
@@ -370,6 +371,16 @@ class SummaryService:
         target_language: TargetLanguage = TargetLanguage.vi,
     ) -> dict[str, Any]:
         """Run LLM generation for a pinned source_version_id (no Summary insert)."""
+        if not self._settings.ai_enabled:
+            version = await self._documents.get_version(
+                workspace_id, document_id, source_version_id
+            )
+            return self._deterministic_summary(
+                document_title=document_title,
+                version=version,
+                style=style,
+            )
+
         chunks = await self._retrieval.list_chunks_for_document(
             workspace_id,
             document_id,
@@ -479,6 +490,40 @@ class SummaryService:
             "latency_ms": latency_ms,
         }
 
+    def _deterministic_summary(
+        self,
+        *,
+        document_title: str,
+        version: Any,
+        style: SummaryType,
+    ) -> dict[str, Any]:
+        """Metadata / structural overview when AI is disabled."""
+        page_count = getattr(version, "page_count", None)
+        size = getattr(version, "file_size_bytes", None)
+        checksum = getattr(version, "checksum_sha256", None)
+        version_number = getattr(version, "version_number", None)
+        lines = [
+            f"Document: {document_title}",
+            f"Version: {version_number}",
+            f"Size: {size} bytes" if size is not None else "Size: unknown",
+            f"Pages/sections: {page_count}" if page_count is not None else "Pages/sections: unknown",
+            f"SHA-256: {checksum}" if checksum else "SHA-256: unknown",
+            "AI natural-language summary is disabled (AI_ENABLED=false).",
+        ]
+        content = "\n".join(lines)
+        sections = None
+        if style == SummaryType.by_topic:
+            sections = [{"title": "Overview", "content": content}]
+        return {
+            "content": content,
+            "sections": sections,
+            "model_used": "deterministic",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": Decimal("0"),
+            "latency_ms": 0,
+        }
+
     def _max_output_tokens(self, style: SummaryType) -> int:
         """Completion budget for one summary call.
 
@@ -524,7 +569,7 @@ class SummaryService:
             try:
                 if self._llm_call is not None:
                     return await self._llm_call(**call_kwargs)
-                return await extract_structured_json_async(
+                return await get_ai_gateway(self._settings).generate_async(
                     settings=self._settings,
                     **call_kwargs,
                 )

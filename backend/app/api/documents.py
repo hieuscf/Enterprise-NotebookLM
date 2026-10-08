@@ -36,6 +36,8 @@ from app.models.enums import FileType
 from app.models.pipeline import PipelineRun, PipelineStageLog
 from app.schemas.canonical import CanonicalDocumentResponse
 from app.schemas.common import ErrorResponse
+from app.integrations.ai.exceptions import AIGatewayError
+from app.schemas.analysis import DocumentAnalysisResponse
 from app.schemas.documents import (
     DocumentChunkListResponse,
     DocumentListResponse,
@@ -44,6 +46,7 @@ from app.schemas.documents import (
     PipelineRunResponse,
     PipelineStageLogResponse,
 )
+from app.services.analysis import AnalysisService, AnalysisServiceError
 from app.services.documents import (
     DocumentIngestionError,
     DocumentIngestionService,
@@ -58,6 +61,12 @@ def get_document_service(
     storage: MinioStorageAdapter = Depends(get_minio_storage),
 ) -> DocumentIngestionService:
     return DocumentIngestionService(session, storage)
+
+
+def get_analysis_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> AnalysisService:
+    return AnalysisService(session)
 
 
 def _doc_response(doc: Document) -> DocumentResponse:
@@ -82,6 +91,9 @@ def _version_response(ver: DocumentVersion) -> DocumentVersionResponse:
         checksum_sha256=ver.checksum_sha256,
         page_count=ver.page_count,
         status=ver.status.value,  # type: ignore[arg-type]
+        ai_analysis_status=ver.ai_analysis_status.value,  # type: ignore[arg-type]
+        analyzed_at=ver.analyzed_at,
+        analysis_error=ver.analysis_error,
         is_current=ver.is_current,
         created_at=ver.created_at,
         preview_status=ver.preview_status.value,  # type: ignore[arg-type]
@@ -489,3 +501,85 @@ async def get_pipeline_status(
     except DocumentIngestionError as exc:
         raise _http_error(exc) from exc
     return _pipeline_response(run)
+
+
+def _analysis_http_error(exc: AnalysisServiceError | AIGatewayError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail=ErrorResponse(code=exc.code, message=exc.message).model_dump(),
+    )
+
+
+def _analysis_response(snapshot) -> DocumentAnalysisResponse:
+    ver = snapshot.version
+    run = snapshot.pipeline_run
+    return DocumentAnalysisResponse(
+        document_id=ver.document_id,
+        version_id=ver.id,
+        status=ver.ai_analysis_status.value,  # type: ignore[arg-type]
+        analyzed_at=ver.analyzed_at,
+        error=ver.analysis_error,
+        pipeline_run_id=run.id if run is not None else None,
+    )
+
+
+@router.get(
+    "/{workspaceId}/documents/{documentId}/versions/{versionId}/analysis",
+    response_model=DocumentAnalysisResponse,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+    },
+)
+async def get_document_analysis(
+    workspaceId: uuid.UUID,
+    documentId: uuid.UUID,
+    versionId: uuid.UUID,
+    access: WorkspaceAccess = Depends(require_workspace_member_rl),
+    service: AnalysisService = Depends(get_analysis_service),
+) -> DocumentAnalysisResponse:
+    """Return AI analysis status. Does not trigger analysis."""
+    del workspaceId
+    try:
+        snapshot = await service.get_status(
+            workspace_id=access.workspace_id,
+            document_id=documentId,
+            version_id=versionId,
+        )
+    except AnalysisServiceError as exc:
+        raise _analysis_http_error(exc) from exc
+    return _analysis_response(snapshot)
+
+
+@router.post(
+    "/{workspaceId}/documents/{documentId}/versions/{versionId}/analysis",
+    response_model=DocumentAnalysisResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"model": ErrorResponse},
+        status.HTTP_403_FORBIDDEN: {"model": ErrorResponse},
+        status.HTTP_404_NOT_FOUND: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ErrorResponse},
+    },
+)
+async def request_document_analysis(
+    workspaceId: uuid.UUID,
+    documentId: uuid.UUID,
+    versionId: uuid.UUID,
+    access: WorkspaceAccess = Depends(require_workspace_editor_rl),
+    service: AnalysisService = Depends(get_analysis_service),
+) -> DocumentAnalysisResponse:
+    """Enqueue on-demand AI analysis. Idempotent if already READY or in-flight."""
+    del workspaceId
+    try:
+        snapshot = await service.request_analysis(
+            workspace_id=access.workspace_id,
+            document_id=documentId,
+            version_id=versionId,
+        )
+    except (AnalysisServiceError, AIGatewayError) as exc:
+        raise _analysis_http_error(exc) from exc
+    return _analysis_response(snapshot)

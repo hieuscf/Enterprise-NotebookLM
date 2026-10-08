@@ -162,6 +162,11 @@ METADATA_SAMPLES = [
     "Who uploaded this file",
     "Liệt kê các PDF",
     "Hiển thị workspace",
+    "Tài liệu này có bao nhiêu trang?",
+    "How many pages",
+    "How many chunks?",
+    "Có bao nhiêu thành viên?",
+    "Thống kê theo loại file",
 ]
 
 

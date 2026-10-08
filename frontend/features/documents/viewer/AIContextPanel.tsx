@@ -326,7 +326,7 @@ export function AIContextPanel({
                 in the Knowledge Graph.
               </p>
               <Link
-                href={`/workspaces/${workspaceId}/graph`}
+                href={`/workspaces/${workspaceId}/graph?documentId=${documentId}`}
                 className="mt-2 inline-flex items-center gap-1.5 text-caption font-medium text-accent-primary hover:underline"
               >
                 <Network className="h-3.5 w-3.5" aria-hidden />

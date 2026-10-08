@@ -23,7 +23,7 @@ import { useMemo, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { stripLeakedCitationUuids } from "@/features/chat/chat-format";
+import { rewriteLeakedCitationMarkers } from "@/features/chat/chat-format";
 import type { CitationViewModel } from "@/features/chat/citation/citation-types";
 import { injectCitationNodes } from "@/features/chat/citation/injectCitationNodes";
 import { cn } from "@/lib/utils";
@@ -48,6 +48,19 @@ export function AnswerContent({
     for (const c of citations) map.set(c.displayIndex, c);
     return map;
   }, [citations]);
+
+  const displayContent = useMemo(
+    () =>
+      rewriteLeakedCitationMarkers(
+        content,
+        citations.map((c) => ({
+          id: c.id,
+          chunkId: c.chunkId,
+          displayIndex: c.displayIndex,
+        })),
+      ),
+    [content, citations],
+  );
 
   const components = useMemo(() => {
     const wrap =
@@ -77,7 +90,7 @@ export function AnswerContent({
       )}
     >
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
-        {stripLeakedCitationUuids(content)}
+        {displayContent}
       </Markdown>
     </div>
   );

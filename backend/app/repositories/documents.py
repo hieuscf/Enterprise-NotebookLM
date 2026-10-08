@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType
+from app.models.enums import AiAnalysisStatus, DocumentVersionStatus, FileType
 
 
 class DocumentRepository:
@@ -170,7 +170,8 @@ class DocumentRepository:
         file_size_bytes: int,
         checksum_sha256: str,
         is_current: bool,
-        status: DocumentVersionStatus = DocumentVersionStatus.processing,
+        status: DocumentVersionStatus = DocumentVersionStatus.ready,
+        ai_analysis_status: AiAnalysisStatus = AiAnalysisStatus.not_analyzed,
     ) -> DocumentVersion:
         version = DocumentVersion(
             document_id=document_id,
@@ -180,8 +181,22 @@ class DocumentRepository:
             file_size_bytes=file_size_bytes,
             checksum_sha256=checksum_sha256,
             status=status,
+            ai_analysis_status=ai_analysis_status,
             is_current=is_current,
         )
         self._session.add(version)
         await self._session.flush()
         return version
+
+    async def count_analyzed_versions(self, workspace_id: uuid.UUID) -> int:
+        """Count versions in this workspace whose AI analysis is READY."""
+        stmt = (
+            select(func.count())
+            .select_from(DocumentVersion)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                Document.workspace_id == workspace_id,
+                DocumentVersion.ai_analysis_status == AiAnalysisStatus.ready,
+            )
+        )
+        return int((await self._session.execute(stmt)).scalar_one())

@@ -27,7 +27,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.models.documents import DocumentVersion
-from app.models.enums import DocumentVersionStatus, PipelineStage, PipelineStatus
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    PipelineStage,
+    PipelineStatus,
+)
 from app.models.pipeline import PipelineRun, PipelineStageLog
 from app.workers.pipeline import execute_pipeline
 from app.workers.stages import STAGE_ORDER
@@ -75,6 +80,23 @@ class _FakeStore:
         page_count: int | None = None,
     ) -> None:
         version.status = status
+        if page_count is not None:
+            version.page_count = page_count
+
+    def set_ai_analysis(
+        self,
+        version: DocumentVersion,
+        status: AiAnalysisStatus,
+        *,
+        error: str | None = None,
+        analyzed_at: datetime | None = None,
+        page_count: int | None = None,
+    ) -> None:
+        version.ai_analysis_status = status
+        if error is not None:
+            version.analysis_error = error[:4000]
+        if analyzed_at is not None:
+            version.analyzed_at = analyzed_at
         if page_count is not None:
             version.page_count = page_count
 
@@ -132,7 +154,8 @@ def _make_run_and_version() -> tuple[PipelineRun, DocumentVersion]:
         file_size_bytes=10,
         checksum_sha256="abc",
         page_count=None,
-        status=DocumentVersionStatus.processing,
+        status=DocumentVersionStatus.ready,
+        ai_analysis_status=AiAnalysisStatus.not_analyzed,
         is_current=True,
         created_at=datetime.now(UTC),
     )
@@ -183,6 +206,7 @@ def test_stub_pipeline_completes_all_stages() -> None:
     assert result["stages"] == [s.value for s in STAGE_ORDER]
     assert run.status == PipelineStatus.completed
     assert version.status == DocumentVersionStatus.ready
+    assert version.ai_analysis_status == AiAnalysisStatus.ready
     assert len(store.stage_logs) == len(STAGE_ORDER)
     assert all(log.status == PipelineStatus.completed for log in store.stage_logs)
     assert [log.stage for log in store.stage_logs] == list(STAGE_ORDER)
@@ -219,7 +243,8 @@ def test_stage_failure_stops_pipeline_and_skips_later_stages() -> None:
     assert "graph_extraction" not in call_log
     assert "indexing" not in call_log
     assert run.status == PipelineStatus.failed
-    assert version.status == DocumentVersionStatus.failed
+    assert version.status == DocumentVersionStatus.ready
+    assert version.ai_analysis_status == AiAnalysisStatus.failed
     assert run.error_message == "simulated embedding failure"
 
     assert len(store.stage_logs) == failed_index + 1
@@ -251,8 +276,9 @@ def test_transient_error_fails_stage_but_does_not_mark_version_failed() -> None:
         )
 
     assert store.stage_logs[0].status == PipelineStatus.failed
-    # Version stays processing so a retry can continue; Celery marks failed at end.
-    assert version.status == DocumentVersionStatus.processing
+    # Document stays usable; analysis remains processing so Celery can retry.
+    assert version.status == DocumentVersionStatus.ready
+    assert version.ai_analysis_status == AiAnalysisStatus.processing
     assert run.status == PipelineStatus.running
     assert len(store.stage_logs) == 1
 

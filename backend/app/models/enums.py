@@ -54,6 +54,17 @@ class DocumentVersionStatus(enum.StrEnum):
     failed = "failed"
 
 
+class AiAnalysisStatus(enum.StrEnum):
+    """AI analysis lifecycle — independent of document_versions.status."""
+
+    not_analyzed = "not_analyzed"
+    queued = "queued"
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+    stale = "stale"
+
+
 class PreviewStatus(enum.StrEnum):
     pending = "pending"
     processing = "processing"

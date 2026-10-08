@@ -363,6 +363,18 @@ class QueryOrchestrator:
         llm_calls_count: int | None,
         model_used: str | None,
     ) -> QueryExecutionResult:
+        from app.integrations.ai.exceptions import AIGatewayError
+        from app.integrations.ai.gateway import get_ai_gateway
+
+        if self._settings is not None:
+            gateway = get_ai_gateway(self._settings)
+            if not gateway.is_enabled():
+                raise AIGatewayError(
+                    "AI_CAPABILITY_UNAVAILABLE",
+                    "Chat generation is unavailable because AI is disabled",
+                    status_code=503,
+                )
+
         if self._complex_pipeline is not None and message_id is not None:
             pipeline_result = await self._complex_pipeline.run(
                 workspace_id=workspace_id,

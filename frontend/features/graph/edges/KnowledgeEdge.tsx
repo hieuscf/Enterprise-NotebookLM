@@ -3,10 +3,10 @@
  * File: KnowledgeEdge.tsx
  * Module/Service: Knowledge Graph (Web App)
  * Layer: UI
- * Purpose: Thin curved relationship edges with optional labels / path highlight.
+ * Purpose: Relationship edges with subtle arrows and on-demand labels.
  * Responsibilities:
- *   - Smooth Bézier path with low default weight
- *   - Emphasize selected / path edges; fade unrelated
+ *   - Smooth or orthogonal path depending on layout mode
+ *   - Emphasize selected / hovered / important edges; fade unrelated
  *   - Show relation label on hover / path / explicit toggle
  * Dependencies:
  *   - @xyflow/react, graph-style
@@ -24,6 +24,7 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  getSmoothStepPath,
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
@@ -36,6 +37,9 @@ export type KnowledgeEdgeData = {
   relation: string;
   emphasis: "path" | "selected" | "dimmed" | "default";
   showLabel: boolean;
+  /** Structured views use orthogonal steps; explore keeps curves. */
+  routing?: "smoothstep" | "bezier";
+  important?: boolean;
 };
 
 export type KnowledgeFlowEdge = Edge<KnowledgeEdgeData, "knowledge">;
@@ -51,27 +55,30 @@ export function KnowledgeEdge({
   data,
   selected,
   markerEnd,
-  interactionWidth = 20,
+  interactionWidth = 24,
 }: EdgeProps<KnowledgeFlowEdge>) {
   const [hovered, setHovered] = useState(false);
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const pathArgs = {
     sourceX,
     sourceY,
     targetX,
     targetY,
     sourcePosition,
     targetPosition,
-  });
+  };
+  const [edgePath, labelX, labelY] =
+    data?.routing === "bezier"
+      ? getBezierPath(pathArgs)
+      : getSmoothStepPath({ ...pathArgs, borderRadius: 16, offset: 20 });
 
   const emphasis = data?.emphasis ?? "default";
   const isPath = selected || emphasis === "path" || emphasis === "selected";
   const isDimmed = emphasis === "dimmed";
-  const showLabel =
-    Boolean(data?.showLabel) || isPath || (hovered && !isDimmed);
+  const showLabel = Boolean(data?.showLabel) || isPath || (hovered && !isDimmed);
+  const isImportant = Boolean(data?.important);
 
   return (
     <>
-      {/* Wider invisible hit area for hover / click */}
       <path
         d={edgePath}
         fill="none"
@@ -86,12 +93,13 @@ export function KnowledgeEdge({
         path={edgePath}
         markerEnd={markerEnd}
         style={{
-          stroke: isPath || hovered
-            ? "var(--accent-secondary)"
-            : "var(--border-strong)",
-          strokeWidth: isPath || hovered ? 1.75 : 1,
+          stroke:
+            isPath || hovered || isImportant
+              ? "var(--accent-secondary)"
+              : "var(--border-strong)",
+          strokeWidth: isPath || hovered || isImportant ? 1.75 : 1,
           strokeDasharray: isPath ? "5 4" : undefined,
-          opacity: isDimmed ? 0.18 : isPath || hovered ? 1 : 0.55,
+          opacity: isDimmed ? 0.15 : isPath || hovered || isImportant ? 1 : 0.48,
           transition:
             "stroke 180ms ease, opacity 180ms ease, stroke-width 180ms ease",
           pointerEvents: "none",
@@ -101,7 +109,9 @@ export function KnowledgeEdge({
         <EdgeLabelRenderer>
           <div
             className={cn(
-              "nodrag nopan pointer-events-none absolute rounded-sm border border-border-default bg-surface px-1.5 py-0.5 text-[10px] font-medium text-secondary shadow-xs",
+              "nodrag nopan pointer-events-none absolute rounded-full border border-border-default bg-surface px-2 py-0.5 text-[10px] font-medium text-secondary shadow-xs",
+              (isPath || hovered) &&
+                "border-accent-secondary/30 text-accent-secondary",
               isDimmed && "opacity-0",
             )}
             style={{

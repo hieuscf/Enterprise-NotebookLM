@@ -27,7 +27,8 @@
 
 import { AlertCircle, Clock, X } from "lucide-react";
 
-import { PipelineStatusTracker } from "@/features/documents/PipelineStatusTracker";
+import { AiAnalysisStatusBadge } from "@/features/documents/AiAnalysisStatusBadge";
+import { DocumentStatusIndicator } from "@/features/documents/DocumentStatusIndicator";
 import type { UploadJob } from "@/hooks/useDocumentUploadQueue";
 import { cn } from "@/lib/utils";
 
@@ -38,15 +39,19 @@ type Props = {
   onDismiss: (clientId: string) => void;
 };
 
-export function UploadJobCard({ workspaceId, job, onCancel, onDismiss }: Props) {
+export function UploadJobCard({ workspaceId: _workspaceId, job, onCancel, onDismiss }: Props) {
   if (job.status === "processing" && job.version) {
     return (
-      <PipelineStatusTracker
-        workspaceId={workspaceId}
-        documentId={job.version.document_id}
-        versionId={job.version.id}
-        fileName={job.title}
-      />
+      <div className="flex flex-col gap-2 rounded-lg border border-border-default bg-surface p-4">
+        <p className="min-w-0 truncate text-body-sm font-medium text-primary">{job.title}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <DocumentStatusIndicator status={job.version.status} />
+          <AiAnalysisStatusBadge status={job.version.ai_analysis_status ?? "not_analyzed"} />
+        </div>
+        <p className="text-caption text-secondary">
+          File stored. AI analysis is optional — open the document and choose Analyze for AI.
+        </p>
+      </div>
     );
   }
 

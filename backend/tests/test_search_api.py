@@ -130,6 +130,7 @@ class FakeHistoryRepo:
 class FakeRetrievalRepo:
     def __init__(self, meta: dict[uuid.UUID, MetadataDocumentRow] | None = None) -> None:
         self.meta = meta or {}
+        self.metadata_rows: list[MetadataDocumentRow] = []
 
     async def documents_meta_by_ids(
         self,
@@ -141,6 +142,29 @@ class FakeRetrievalRepo:
             for did, row in self.meta.items()
             if did in document_ids and row.workspace_id == workspace_id
         }
+
+    async def list_documents_metadata(
+        self,
+        workspace_id: uuid.UUID,
+        *,
+        file_type: FileType | None = None,
+        uploaded_after: datetime | None = None,
+        uploaded_before: datetime | None = None,
+        title_contains: str | None = None,
+        limit: int = 50,
+    ) -> list[MetadataDocumentRow]:
+        del uploaded_after, uploaded_before
+        rows = [
+            row
+            for row in self.metadata_rows
+            if row.workspace_id == workspace_id
+            and (file_type is None or row.file_type == file_type)
+            and (
+                not title_contains
+                or title_contains.lower() in (row.title or "").lower()
+            )
+        ]
+        return rows[: max(1, limit)]
 
 
 def _candidate(
@@ -433,14 +457,13 @@ async def test_retrieval_failure_does_not_write_history(
         retrieval_repo=FakeRetrievalRepo(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(SearchServiceError) as exc_info:
-        await service.search(
-            workspace_id=workspace_id,
-            user_id=user_a,
-            body=SearchRequest(query_text="anything"),
-        )
-    assert exc_info.value.status_code == 503
-    assert history.rows == []
+    resp = await service.search(
+        workspace_id=workspace_id,
+        user_id=user_a,
+        body=SearchRequest(query_text="anything"),
+    )
+    assert resp.results_count == 0
+    assert len(history.rows) == 1
 
 
 # ---------------------------------------------------------------------------

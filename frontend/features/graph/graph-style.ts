@@ -10,7 +10,7 @@
  * Dependencies:
  *   - types/knowledge-graph
  * Public Exports:
- *   - nodeTypeLabel, relationLabel, nodeTypeStyles
+ *   - nodeTypeLabel, relationLabel, nodeTypeStyles, NODE_METRICS, GROUP_METRICS
  * Database/Table: N/A
  * Related Modules: features/graph/nodes/KnowledgeNode.tsx
  * Important Notes: Keep differentiation subtle — no rainbow graph.
@@ -57,6 +57,28 @@ export const nodeTypeStyles: Record<KnowledgeGraphNodeType, NodeVisualStyle> = {
     chip: "bg-elevated text-secondary",
   },
 };
+
+/** Fixed card sizes shared by the structured layout and node renderer. */
+export const NODE_METRICS = {
+  root: { width: 200, height: 84 },
+  primary: { width: 168, height: 76 },
+  secondary: { width: 152, height: 70 },
+} as const;
+
+export type NodeProminence = keyof typeof NODE_METRICS;
+
+export const GROUP_METRICS = {
+  padX: 14,
+  padTop: 34,
+  padBottom: 12,
+  memberGap: 12,
+  columnGap: 32,
+  rootGap: 64,
+  overflowHeight: 30,
+  componentGap: 16,
+  componentWidth: 188,
+  componentHeight: 58,
+} as const;
 
 export function nodeTypeLabel(type: KnowledgeGraphNodeType): string {
   switch (type) {

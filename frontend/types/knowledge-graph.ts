@@ -12,7 +12,7 @@
  * Public Exports:
  *   - KnowledgeGraphNodeType, KnowledgeGraphRelationKind, CitationReference,
  *     KnowledgeGraphNode, KnowledgeGraphEdge, KnowledgeGraphPayload,
- *     KnowledgeGraphViewMode, KnowledgeGraphFilters
+ *     KnowledgeGraphViewMode, KnowledgeGraphLayoutMode, KnowledgeGraphFilters
  * Database/Table: entities, entity_relations, topics, topic_chunks (conceptual)
  * Related Modules: features/graph/*
  * Important Notes: No dedicated OpenAPI graph-read endpoint yet — UI uses this
@@ -90,12 +90,17 @@ export type KnowledgeGraphViewMode =
   | "entities"
   | "documents";
 
+/** Presentation-only. Does not change stored graph data. */
+export type KnowledgeGraphLayoutMode = "structured" | "focus" | "explore";
+
 export type KnowledgeGraphFilters = {
   nodeTypes: Record<KnowledgeGraphNodeType, boolean>;
   relations: Record<string, boolean>;
+  /** Visible hop distance from the focus node. UI offers 1–3. */
   depth: number;
   scope: "workspace" | "all_documents";
   viewMode: KnowledgeGraphViewMode;
+  layoutMode: KnowledgeGraphLayoutMode;
 };
 
 export const DEFAULT_NODE_TYPE_FILTERS: Record<KnowledgeGraphNodeType, boolean> =
@@ -103,7 +108,7 @@ export const DEFAULT_NODE_TYPE_FILTERS: Record<KnowledgeGraphNodeType, boolean> 
     topic: true,
     entity: true,
     document: true,
-    concept: false,
+    concept: true,
   };
 
 export const DEFAULT_RELATION_FILTERS: Record<string, boolean> = {

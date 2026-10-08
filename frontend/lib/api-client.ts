@@ -39,6 +39,7 @@ import type {
   Document,
   DocumentChunkListResponse,
   DocumentListResponse,
+  DocumentAnalysis,
   DocumentVersion,
   FileType,
   PipelineRun,
@@ -462,6 +463,27 @@ export async function getPipelineStatus(
 ): Promise<PipelineRun> {
   return apiJson<PipelineRun>(
     `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}/pipeline-status`,
+  );
+}
+
+export async function getDocumentAnalysis(
+  workspaceId: string,
+  documentId: string,
+  versionId: string,
+): Promise<DocumentAnalysis> {
+  return apiJson<DocumentAnalysis>(
+    `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}/analysis`,
+  );
+}
+
+export async function requestDocumentAnalysis(
+  workspaceId: string,
+  documentId: string,
+  versionId: string,
+): Promise<DocumentAnalysis> {
+  return apiJson<DocumentAnalysis>(
+    `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}/analysis`,
+    { method: "POST" },
   );
 }
 

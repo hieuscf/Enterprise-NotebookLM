@@ -8,7 +8,7 @@
  *   - Match snippet against page.getTextContent() items (exact → CI → normalized)
  *   - Return CSS-percentage HighlightRect[] for multi-line spans
  * Dependencies:
- *   - HighlightOverlay.HighlightRect; citation-snippet-match.normalizeSnippet
+ *   - HighlightOverlay.HighlightRect
  * Public Exports:
  *   - findSnippetRectsInTextContent
  * Database/Table: N/A
@@ -18,7 +18,6 @@
  * =============================================================================
  */
 
-import { normalizeSnippet } from "@/features/chat/citation/citation-snippet-match";
 import type { HighlightRect } from "@/features/documents/viewer/HighlightOverlay";
 
 type TextItemLike = {
@@ -95,24 +94,16 @@ export function findSnippetRectsInTextContent(
   // Merge adjacent spans on roughly the same line into fewer rects.
   const lines: CharSpan[][] = [];
   let current: CharSpan[] = [];
-  let lastBottom = -Infinity;
   for (const span of hitSpans) {
-    if (current.length === 0 || Math.abs(span.top - lastBottom) < span.bottom - span.top) {
-      // Same visual line if vertical centers are close.
-      if (
-        current.length > 0 &&
-        Math.abs(span.top - current[0].top) > (span.bottom - span.top) * 0.7
-      ) {
-        lines.push(current);
-        current = [span];
-      } else {
-        current.push(span);
-      }
-    } else {
+    if (
+      current.length > 0 &&
+      Math.abs(span.top - current[0].top) > (span.bottom - span.top) * 0.7
+    ) {
       lines.push(current);
       current = [span];
+    } else {
+      current.push(span);
     }
-    lastBottom = span.top;
   }
   if (current.length) lines.push(current);
 
@@ -135,28 +126,114 @@ export function findSnippetRectsInTextContent(
   return rects;
 }
 
+function snippetVariants(snippet: string): string[] {
+  const base = (snippet || "").trim();
+  if (!base) return [];
+  const out: string[] = [];
+  const push = (value: string) => {
+    const v = value.replace(/\s+/g, " ").trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  push(base);
+  push(base.replace(/^[-*+•]\s+/, ""));
+  push(base.replace(/^\d+[.)]\s+/, ""));
+  push(base.replace(/^>\s+/, ""));
+  for (const cur of [...out]) {
+    push(cur.replace(/^[“”"']+/, "").replace(/[“”"']+$/, ""));
+  }
+  return out;
+}
+
 function locateSnippet(
   haystack: string,
   snippet: string,
 ): { start: number; length: number } | null {
-  const exact = haystack.indexOf(snippet);
-  if (exact >= 0) return { start: exact, length: snippet.length };
+  const variants = snippetVariants(snippet);
+  let best: { start: number; length: number } | null = null;
 
-  const ci = haystack.toLowerCase().indexOf(snippet.toLowerCase());
-  if (ci >= 0) return { start: ci, length: snippet.length };
+  for (const needle of variants) {
+    const exact = haystack.indexOf(needle);
+    if (exact >= 0) {
+      const hit = { start: exact, length: needle.length };
+      if (!best || hit.length > best.length) best = hit;
+      continue;
+    }
 
-  // Normalized whitespace match — map back approximately via ratio.
-  const normHay = normalizeSnippet(haystack);
-  const normSnip = normalizeSnippet(snippet);
-  if (!normSnip || normSnip.length < 8) return null;
-  const normIdx = normHay.indexOf(normSnip);
-  if (normIdx < 0) return null;
+    const ci = haystack.toLowerCase().indexOf(needle.toLowerCase());
+    if (ci >= 0) {
+      const hit = { start: ci, length: needle.length };
+      if (!best || hit.length > best.length) best = hit;
+      continue;
+    }
 
-  const ratio = haystack.length / Math.max(1, normHay.length);
-  const start = Math.max(0, Math.floor(normIdx * ratio));
-  const length = Math.max(snippet.length, Math.ceil(normSnip.length * ratio));
-  if (start >= haystack.length) return null;
-  return { start, length: Math.min(length, haystack.length - start) };
+    // Normalized whitespace match with accurate original-index mapping.
+    // Never use length-ratio approximation — that paints the wrong span.
+    const { norm: normHay, map } = normalizedIndexMap(haystack);
+    const normNeedle = normalizeForMatch(needle);
+    if (!normNeedle || normNeedle.length < 8 || map.length === 0) continue;
+    const nidx = normHay.indexOf(normNeedle);
+    if (nidx < 0) continue;
+    const start = map[nidx] ?? 0;
+    const endIdx = Math.min(map.length - 1, nidx + normNeedle.length - 1);
+    const end = (map[endIdx] ?? start) + 1;
+    if (end <= start) continue;
+    const hit = { start, length: end - start };
+    if (!best || hit.length > best.length) best = hit;
+  }
+
+  // Progressive prefix when the full citation is slightly longer than the page line.
+  if (!best && variants[0] && variants[0].length > 40) {
+    const primary = variants[0];
+    for (let len = primary.length; len >= 32; len -= 8) {
+      let head = primary.slice(0, len).trim();
+      if (len < primary.length) {
+        const cut = Math.max(head.lastIndexOf(" "), head.lastIndexOf("."));
+        if (cut >= 32) head = head.slice(0, cut).trim();
+      }
+      if (head.length < 32) continue;
+      const hit = locateSnippet(haystack, head);
+      if (hit) return hit;
+    }
+  }
+
+  return best;
+}
+
+function normalizeForMatch(value: string): string {
+  return (value || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizedIndexMap(value: string): { norm: string; map: number[] } {
+  const map: number[] = [];
+  let norm = "";
+  let prevSpace = true;
+  for (let i = 0; i < value.length; i += 1) {
+    let ch = value[i] ?? "";
+    if (ch === "\u2018" || ch === "\u2019") ch = "'";
+    if (ch === "\u201c" || ch === "\u201d") ch = '"';
+    if (ch === "\u00a0" || /\s/.test(ch)) {
+      if (!prevSpace && norm.length > 0) {
+        norm += " ";
+        map.push(i);
+      }
+      prevSpace = true;
+      continue;
+    }
+    norm += ch.toLowerCase();
+    map.push(i);
+    prevSpace = false;
+  }
+  while (norm.endsWith(" ")) {
+    norm = norm.slice(0, -1);
+    map.pop();
+  }
+  return { norm, map };
 }
 
 function clampPct(n: number, min = 0, max = 100): number {

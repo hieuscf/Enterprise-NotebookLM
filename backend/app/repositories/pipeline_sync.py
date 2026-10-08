@@ -23,7 +23,12 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.documents import DocumentVersion
-from app.models.enums import DocumentVersionStatus, PipelineStage, PipelineStatus
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    PipelineStage,
+    PipelineStatus,
+)
 from app.models.pipeline import PipelineRun, PipelineStageLog
 
 
@@ -68,6 +73,26 @@ class PipelineSyncRepository:
         page_count: int | None = None,
     ) -> None:
         version.status = status
+        if page_count is not None:
+            version.page_count = page_count
+        self._session.flush()
+
+    def set_ai_analysis(
+        self,
+        version: DocumentVersion,
+        status: AiAnalysisStatus,
+        *,
+        error: str | None = None,
+        analyzed_at: datetime | None = None,
+        page_count: int | None = None,
+    ) -> None:
+        version.ai_analysis_status = status
+        if error is not None:
+            version.analysis_error = error[:4000]
+        elif status != AiAnalysisStatus.failed:
+            version.analysis_error = None
+        if analyzed_at is not None:
+            version.analyzed_at = analyzed_at
         if page_count is not None:
             version.page_count = page_count
         self._session.flush()

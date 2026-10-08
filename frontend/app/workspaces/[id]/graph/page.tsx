@@ -20,9 +20,17 @@ import { KnowledgeGraphView } from "@/features/graph/KnowledgeGraphView";
 
 type PageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ documentId?: string; nodeId?: string }>;
 };
 
-export default async function KnowledgeGraphPage({ params }: PageProps) {
+export default async function KnowledgeGraphPage({ params, searchParams }: PageProps) {
   const { id } = await params;
-  return <KnowledgeGraphView workspaceId={id} />;
+  const query = await searchParams;
+  return (
+    <KnowledgeGraphView
+      workspaceId={id}
+      openedDocumentId={query.documentId ?? null}
+      openedNodeId={query.nodeId ?? null}
+    />
+  );
 }

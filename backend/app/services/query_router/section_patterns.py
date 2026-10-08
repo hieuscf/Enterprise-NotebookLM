@@ -87,6 +87,18 @@ _DOCUMENT_LISTING_RE = re.compile(
     r"\b(tài\s+liệu|documents?|files?|pdfs?|workspace|hóa\s+đơn|invoices?)\b",
     re.IGNORECASE | re.UNICODE,
 )
+# Workspace metadata counts/stats — must not be treated as heading titles.
+_METADATA_WORKSPACE_QUERY_RE = re.compile(
+    r"("
+    r"(?:(?:có\s+)?(?:bao\s+nhiêu|mấy)|how\s+many|number\s+of|count)"
+    r".{0,40}"
+    r"(?:thành\s+viên|members?|chunks?|pages?|trang|"
+    r"tài\s+liệu|documents?|files?|pdfs?)"
+    r"|"
+    r"(?:thống\s+kê|thong\s+ke|statistics|\bstats\b)"
+    r")",
+    re.IGNORECASE | re.UNICODE,
+)
 _SECTION_OBJECT_RE = re.compile(
     r"(mục|phần|chương|subsection|heading|sự\s+kiện|nội\s+dung)",
     re.IGNORECASE | re.UNICODE,
@@ -293,7 +305,11 @@ def _is_outline_query(normalized: str) -> bool:
 
 
 def _looks_like_heading_title(original: str, normalized: str) -> bool:
-    if _COMPLEX_MARKERS_RE.search(normalized) or _DOCUMENT_LISTING_RE.search(normalized):
+    if (
+        _COMPLEX_MARKERS_RE.search(normalized)
+        or _DOCUMENT_LISTING_RE.search(normalized)
+        or _METADATA_WORKSPACE_QUERY_RE.search(normalized)
+    ):
         return False
     tokens = normalized.split()
     letters = [c for c in original if c.isalpha()]

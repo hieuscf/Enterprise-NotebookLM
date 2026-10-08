@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+scripts/.tmp-graph-layout.cjs
+scripts/.tmp-map-offsets.cjs
 
 # next.js
 /.next/

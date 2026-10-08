@@ -5,7 +5,7 @@
 # Purpose: Keep answer prose free of internal citation/chunk UUIDs.
 # Responsibilities:
 #   - Rewrite [chunk-uuid] markers to presentation indexes [1], [2], …
-#   - Strip unrecognized bracketed UUIDs and trailing [uuid, uuid] dumps
+#   - Rewrite known UUID lists to adjacent [n][m] chips; strip unknowns
 # Dependencies:
 #   - N/A (pure string helpers)
 # Public Exports:
@@ -30,12 +30,15 @@ _UUID = (
 )
 # Bracketed UUID as commonly emitted by the LLM next to claims.
 _BRACKETED_UUID = re.compile(rf"\[\s*({_UUID})\s*\]")
-# LLM dump of citation_ids, e.g. [uuid, uuid] at the end of the answer.
-_BRACKETED_UUID_LIST = re.compile(rf"\[\s*{_UUID}(?:\s*,\s*{_UUID})+\s*\]")
+# LLM dump of citation_ids — comma and/or semicolon separators.
+_BRACKETED_UUID_LIST = re.compile(
+    rf"\[\s*({_UUID}(?:\s*[,;]\s*{_UUID})+)\s*\]"
+)
 # Collapse whitespace left by removals: "word  ." / "word ."
 _SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([.,;:!?])")
 _MULTI_SPACE = re.compile(r"[ \t]{2,}")
 _MULTI_NEWLINE = re.compile(r"\n{3,}")
+_UUID_TOKEN = re.compile(_UUID, re.IGNORECASE)
 
 
 def rewrite_inline_citation_markers(
@@ -46,19 +49,34 @@ def rewrite_inline_citation_markers(
 
     ``chunk_ids_in_order`` must match the verified citation order that will be
     persisted (order_index 0 → display ``[1]``). Bracketed UUID *lists*
-    (``[uuid, uuid]``) are stripped entirely — they are not inline markers.
+    (``[uuid, uuid]`` / ``[uuid; uuid]``) become adjacent ``[n][m]`` when
+    known, otherwise they are stripped.
     """
     text = (answer or "").strip()
     if not text:
         return ""
-
-    text = _BRACKETED_UUID_LIST.sub("", text)
 
     index_by_id = {
         str(cid).strip().lower(): i + 1
         for i, cid in enumerate(chunk_ids_in_order)
         if str(cid).strip()
     }
+
+    def _rewrite_list(match: re.Match[str]) -> str:
+        body = match.group(1)
+        indexes: list[int] = []
+        seen: set[int] = set()
+        for token in _UUID_TOKEN.findall(body):
+            idx = index_by_id.get(token.lower())
+            if idx is None or idx in seen:
+                continue
+            seen.add(idx)
+            indexes.append(idx)
+        if not indexes:
+            return ""
+        return "".join(f"[{i}]" for i in indexes)
+
+    text = _BRACKETED_UUID_LIST.sub(_rewrite_list, text)
 
     def _replace(match: re.Match[str]) -> str:
         cid = match.group(1).lower()

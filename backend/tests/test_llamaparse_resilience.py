@@ -37,7 +37,13 @@ from app.clients.llamaparse_client import (
 from app.core.resilience import CircuitBreakerOpenError, get_circuit_breaker_metrics
 from app.core.resilience.metrics import reset_circuit_breaker_metrics_for_tests
 from app.models.documents import Document, DocumentVersion
-from app.models.enums import DocumentVersionStatus, FileType, PipelineStage, PipelineStatus
+from app.models.enums import (
+    AiAnalysisStatus,
+    DocumentVersionStatus,
+    FileType,
+    PipelineStage,
+    PipelineStatus,
+)
 from app.models.pipeline import PipelineRun, PipelineStageLog
 from app.services.document_understanding import DocumentUnderstandingService, LlamaParseDocumentParser
 from app.workers.pipeline import execute_pipeline
@@ -228,6 +234,25 @@ class _PipelineFakeStore:
         page_count: int | None = None,
     ) -> None:
         version.status = status
+        if page_count is not None:
+            version.page_count = page_count
+
+    def set_ai_analysis(
+        self,
+        version: DocumentVersion,
+        status: AiAnalysisStatus,
+        *,
+        error: str | None = None,
+        analyzed_at: datetime | None = None,
+        page_count: int | None = None,
+    ) -> None:
+        version.ai_analysis_status = status
+        if error is not None:
+            version.analysis_error = error[:4000]
+        if analyzed_at is not None:
+            version.analyzed_at = analyzed_at
+        if page_count is not None:
+            version.page_count = page_count
 
     def start_stage(self, pipeline_run_id: uuid.UUID, stage: PipelineStage) -> PipelineStageLog:
         log = PipelineStageLog(

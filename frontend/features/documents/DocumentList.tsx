@@ -31,6 +31,7 @@ import { useMemo, useState } from "react";
 
 import { DocumentEmptyState } from "@/features/documents/DocumentEmptyState";
 import { DocumentExtentLabel } from "@/features/documents/DocumentExtentLabel";
+import { AiAnalysisStatusBadge } from "@/features/documents/AiAnalysisStatusBadge";
 import { DocumentStatusIndicator } from "@/features/documents/DocumentStatusIndicator";
 import { FileTypeIcon } from "@/features/documents/FileTypeIcon";
 import { AppShell } from "@/features/shell/AppShell";
@@ -315,7 +316,10 @@ export function DocumentList({ workspaceId }: Props) {
                             ) : versionState.error || !version ? (
                               <span className="text-caption text-tertiary">—</span>
                             ) : (
-                              <DocumentStatusIndicator status={version.status} />
+                              <div className="flex flex-col items-start gap-1">
+                                <DocumentStatusIndicator status={version.status} />
+                                <AiAnalysisStatusBadge status={version.ai_analysis_status} />
+                              </div>
                             )}
                           </div>
 

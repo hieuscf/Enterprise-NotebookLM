@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.logging import get_logger
+from app.integrations.ai.exceptions import AIGatewayError
 from app.models.enums import ConfidenceLevel, FinishReason, MessageRole, RouteType
 from app.repositories.chat_messages import ChatMessageRepository
 from app.repositories.chat_sessions import ChatSessionRepository
@@ -161,6 +162,22 @@ class MessageProcessingService:
                 assistant_message_id=assistant_msg.id,
                 chat_history=history,
             )
+        except AIGatewayError as exc:
+            logger.warning(
+                "chat_ai_unavailable",
+                session_id=str(session_id),
+                code=exc.code,
+                detail=exc.message,
+            )
+            await self._fail_assistant_message(assistant_msg.id)
+            raise ChatServiceError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        except ChatServiceError:
+            await self._fail_assistant_message(assistant_msg.id)
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "chat_handle_query_failed",

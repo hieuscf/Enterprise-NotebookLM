@@ -75,6 +75,9 @@ export function displayHeadingText(content: string): string {
 /**
  * Map locator offsets (into `block.content`) onto the text actually rendered.
  * Stays inside one block — never searches the rest of the document.
+ *
+ * List / heading / quote renderers strip markers, so raw content offsets must
+ * not be applied blindly to `textContent` (that paints the wrong span).
  */
 export function mapContentOffsetsToDisplay(
   content: string,
@@ -93,21 +96,173 @@ export function mapContentOffsetsToDisplay(
     if (exact >= 0) {
       return { start: exact, end: exact + cited.length };
     }
-    const stripped = cited.replace(HEADING_MARKER_RE, "").replace(/^>\s?/gm, "");
-    if (stripped && stripped !== cited) {
+
+    const candidates = [
+      cited.replace(HEADING_MARKER_RE, "").replace(/^>\s?/gm, ""),
+      cited.replace(LIST_ITEM_RE, "").replace(/\n(?:\s*)(?:[-*+]|\d+[.)])\s+/g, "\n"),
+      cited
+        .replace(HEADING_MARKER_RE, "")
+        .replace(/^>\s?/gm, "")
+        .replace(LIST_ITEM_RE, "")
+        .replace(/\n(?:\s*)(?:[-*+]|\d+[.)])\s+/g, "\n"),
+    ];
+    for (const stripped of candidates) {
+      if (!stripped || stripped === cited) continue;
       const idx = displayText.indexOf(stripped);
       if (idx >= 0) {
         return { start: idx, end: idx + stripped.length };
       }
+      const soft = findNormalizedSpan(displayText, stripped);
+      if (soft) return soft;
     }
+
+    const softCited = findNormalizedSpan(displayText, cited);
+    if (softCited) return softCited;
   }
+
+  // Align content → display by walking both strings and skipping presentation-only markers.
+  const mapped = mapViaPresentationAlignment(content, displayText, start, end);
+  if (mapped) return mapped;
 
   const prefixLen = Math.max(0, content.length - displayText.length);
   if (content.endsWith(displayText) && prefixLen > 0) {
     return clampRange(displayText.length, start - prefixLen, end - prefixLen);
   }
 
-  return clampRange(displayText.length, start, end);
+  // Last resort: do not trust raw content offsets on a transformed display —
+  // clamp only if lengths are close enough that the span is still meaningful.
+  if (Math.abs(content.length - displayText.length) <= 4) {
+    return clampRange(displayText.length, start, end);
+  }
+  return { start: 0, end: 0 };
+}
+
+/** Whitespace/punctuation-tolerant span search with accurate original offsets. */
+function findNormalizedSpan(
+  haystack: string,
+  needle: string,
+): { start: number; end: number } | null {
+  const { norm: normHay, map } = normalizedIndexMap(haystack);
+  const normNeedle = normalizeForMatch(needle);
+  if (!normNeedle || normNeedle.length < 4 || map.length === 0) return null;
+  const nidx = normHay.indexOf(normNeedle);
+  if (nidx < 0) return null;
+  const start = map[nidx] ?? 0;
+  const endIdx = Math.min(map.length - 1, nidx + normNeedle.length - 1);
+  const end = (map[endIdx] ?? start) + 1;
+  return end > start ? { start, end } : null;
+}
+
+function normalizeForMatch(value: string): string {
+  return (value || "")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizedIndexMap(value: string): { norm: string; map: number[] } {
+  const map: number[] = [];
+  let norm = "";
+  let prevSpace = true;
+  for (let i = 0; i < value.length; i += 1) {
+    let ch = value[i] ?? "";
+    if (ch === "\u2018" || ch === "\u2019") ch = "'";
+    if (ch === "\u201c" || ch === "\u201d") ch = '"';
+    if (ch === "\u00a0" || /\s/.test(ch)) {
+      if (!prevSpace && norm.length > 0) {
+        norm += " ";
+        map.push(i);
+      }
+      prevSpace = true;
+      continue;
+    }
+    norm += ch.toLowerCase();
+    map.push(i);
+    prevSpace = false;
+  }
+  while (norm.endsWith(" ")) {
+    norm = norm.slice(0, -1);
+    map.pop();
+  }
+  return { norm, map };
+}
+
+/**
+ * Walk content and display in lockstep, skipping list/heading/quote markers
+ * that are present in Canonical content but absent from rendered text.
+ */
+function mapViaPresentationAlignment(
+  content: string,
+  displayText: string,
+  start: number,
+  end: number,
+): { start: number; end: number } | null {
+  if (!content || !displayText || end <= start) return null;
+
+  let di = 0;
+  let displayStart = -1;
+  let displayEnd = -1;
+  let i = 0;
+
+  const skipContentMarkers = (at: number): number => {
+    let p = at;
+    // ATX heading at line start
+    const head = content.slice(p).match(/^(#{1,6})[ \t]+/);
+    if (head && (p === 0 || content[p - 1] === "\n")) {
+      return p + head[0].length;
+    }
+    // List marker at line start
+    const list = content.slice(p).match(/^(\s*)(?:[-*+]|\d+[.)])\s+/);
+    if (list && (p === 0 || content[p - 1] === "\n")) {
+      return p + list[0].length;
+    }
+    // Blockquote marker
+    const quote = content.slice(p).match(/^>\s?/);
+    if (quote && (p === 0 || content[p - 1] === "\n")) {
+      return p + quote[0].length;
+    }
+    return p;
+  };
+
+  while (i < content.length && di < displayText.length) {
+    i = skipContentMarkers(i);
+    if (i >= content.length) break;
+
+    const c = content[i] ?? "";
+    const d = displayText[di] ?? "";
+
+    if (/\s/.test(c) && /\s/.test(d)) {
+      if (i >= start && displayStart < 0) displayStart = di;
+      if (i < end) displayEnd = di + 1;
+      // Collapse whitespace runs on both sides.
+      while (i < content.length && /\s/.test(content[i] ?? "")) i += 1;
+      while (di < displayText.length && /\s/.test(displayText[di] ?? "")) di += 1;
+      continue;
+    }
+
+    if (c.toLowerCase() === d.toLowerCase()) {
+      if (i >= start && displayStart < 0) displayStart = di;
+      if (i < end) displayEnd = di + 1;
+      i += 1;
+      di += 1;
+      continue;
+    }
+
+    // Content has an extra character (marker remnant / punctuation) — skip it.
+    if (!/\s/.test(c) && (i < content.length - 1)) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+
+  if (displayStart >= 0 && displayEnd > displayStart) {
+    return clampRange(displayText.length, displayStart, displayEnd);
+  }
+  return null;
 }
 
 function clampRange(len: number, start: number, end: number): { start: number; end: number } {
