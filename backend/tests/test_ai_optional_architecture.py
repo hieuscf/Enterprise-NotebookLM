@@ -80,6 +80,7 @@ class FakeDocRepo:
     def __init__(self) -> None:
         self.documents: dict[uuid.UUID, Document] = {}
         self.versions: dict[uuid.UUID, DocumentVersion] = {}
+        self.events: list[dict] = []
 
     async def create_document(self, *, workspace_id, title, file_type) -> Document:
         doc = Document(
@@ -144,6 +145,9 @@ class FakeDocRepo:
         )
         self.versions[ver.id] = ver
         return ver
+
+    async def add_version_event(self, **kwargs) -> None:
+        self.events.append(kwargs)
 
     async def count_analyzed_versions(self, workspace_id) -> int:
         return sum(

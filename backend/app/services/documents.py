@@ -5,7 +5,8 @@
 # Purpose: Upload, versioning, checksum, MinIO store, enqueue pipeline (FR2/UC2).
 # Responsibilities:
 #   - Chunked SHA-256 + MinIO upload; create documents/versions
-#   - Version history + set-current (stored/ready); preview-only enqueue
+#   - Version history + set-current / rollback; preview-only enqueue
+#   - Record upload and rollback on document_version_events
 #   - Does NOT enqueue AI analysis — see AnalysisService
 # Dependencies:
 #   - app.repositories.documents, pipeline; app.adapters.minio_storage
@@ -219,12 +220,14 @@ class DocumentIngestionService:
         page: int,
         page_size: int,
         file_type: FileType | None = None,
+        query: str | None = None,
     ) -> DocumentPage:
         items, total = await self._docs.list_documents(
             workspace_id,
             page=page,
             page_size=page_size,
             file_type=file_type,
+            query=query,
         )
         return DocumentPage(items=items, page=page, page_size=page_size, total=total)
 
@@ -688,6 +691,19 @@ class DocumentIngestionService:
 
             # 4) documents.current_version_id
             document.current_version_id = version.id
+            await self._docs.add_version_event(
+                workspace_id=workspace_id,
+                document_id=document.id,
+                document_version_id=version.id,
+                actor_id=uploaded_by,
+                event_type="uploaded",
+                summary=f"Tải lên phiên bản v{version.version_number}",
+                payload={
+                    "version_number": version.version_number,
+                    "file_size_bytes": version.file_size_bytes,
+                    "checksum_sha256": version.checksum_sha256,
+                },
+            )
             await self._session.flush()
             await self._session.commit()
         except Exception:
@@ -708,13 +724,24 @@ class DocumentIngestionService:
         uploaded_by: uuid.UUID,
         filename: str,
         file_chunks: AsyncIterator[bytes],
+        change_note: str | None = None,
     ) -> UploadResult:
         document = await self.get_document(workspace_id, document_id)
         file_type = detect_file_type(filename)
         if file_type != document.file_type:
             raise DocumentIngestionError(
                 "file_type_mismatch",
-                f"Expected {document.file_type.value}, got {file_type.value}",
+                (
+                    f"File phải cùng loại với tài liệu ({document.file_type.value}), "
+                    f"nhận được {file_type.value}"
+                ),
+                status_code=400,
+            )
+        note = (change_note or "").strip() or None
+        if note is not None and len(note) > 2000:
+            raise DocumentIngestionError(
+                "invalid_note",
+                "Change note exceeds 2000 characters",
                 status_code=400,
             )
 
@@ -750,7 +777,26 @@ class DocumentIngestionService:
                 status=DocumentVersionStatus.ready,
                 ai_analysis_status=AiAnalysisStatus.not_analyzed,
             )
+            if note is not None:
+                version.change_note = note
             document.current_version_id = version.id
+            summary = f"Cập nhật tài liệu thành phiên bản v{version.version_number}"
+            if note:
+                summary = f"{summary}: {note[:160]}"
+            await self._docs.add_version_event(
+                workspace_id=workspace_id,
+                document_id=document.id,
+                document_version_id=version.id,
+                actor_id=uploaded_by,
+                event_type="uploaded",
+                summary=summary,
+                payload={
+                    "version_number": version.version_number,
+                    "file_size_bytes": version.file_size_bytes,
+                    "checksum_sha256": version.checksum_sha256,
+                    "change_note": note,
+                },
+            )
             await self._session.flush()
             await self._session.commit()
         except Exception:
@@ -769,6 +815,7 @@ class DocumentIngestionService:
         workspace_id: uuid.UUID,
         document_id: uuid.UUID,
         version_id: uuid.UUID,
+        actor_id: uuid.UUID | None = None,
     ) -> Document:
         document = await self.get_document(workspace_id, document_id)
         version = await self.get_version(workspace_id, document_id, version_id)
@@ -781,7 +828,46 @@ class DocumentIngestionService:
                 ),
                 status_code=400,
             )
-        return await self._docs.set_current_version(document, version)
+        previous_id = document.current_version_id
+        updated = await self._docs.set_current_version(document, version)
+        if actor_id is not None and previous_id != version.id:
+            await self._docs.add_version_event(
+                workspace_id=workspace_id,
+                document_id=document.id,
+                document_version_id=version.id,
+                actor_id=actor_id,
+                event_type="rolled_back",
+                summary=f"Khôi phục phiên bản v{version.version_number} làm bản hiện hành",
+                payload={
+                    "from_version_id": str(previous_id) if previous_id else None,
+                    "to_version_id": str(version.id),
+                    "version_number": version.version_number,
+                },
+            )
+        return updated
+
+    async def rollback_version(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        version_id: uuid.UUID,
+        actor_id: uuid.UUID,
+    ) -> Document:
+        """Restore an older ready version as the document's current version."""
+        version = await self.get_version(workspace_id, document_id, version_id)
+        if version.is_current:
+            raise DocumentIngestionError(
+                "already_current",
+                "This version is already the current version",
+                status_code=400,
+            )
+        return await self.set_current_version(
+            workspace_id=workspace_id,
+            document_id=document_id,
+            version_id=version_id,
+            actor_id=actor_id,
+        )
 
     async def get_pipeline_status(
         self,

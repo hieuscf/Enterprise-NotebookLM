@@ -20,6 +20,8 @@
  *   - listAdminUsers, createAdminUser, deleteAdminUser
  *   - uploadDocumentXhr, uploadDocumentVersionXhr, getPipelineStatus
  *   - listDocuments, getDocument, listDocumentVersions, getDocumentVersion, setCurrentVersion
+ *   - listWorkspaceVersions, listVersionHistory, rollbackDocumentVersion,
+ *     updateVersionClassification
  *   - ApiClientError, parseApiError
  * Database/Table: N/A
  * Related Modules: types/auth, types/workspaces, types/documents, hooks/useAuth
@@ -44,6 +46,11 @@ import type {
   FileType,
   PipelineRun,
 } from "@/types/documents";
+import type {
+  VersionCatalogResponse,
+  VersionClassificationInput,
+  VersionEventListResponse,
+} from "@/types/versions";
 import type {
   AddMemberInput,
   MemberCandidate,
@@ -489,14 +496,15 @@ export async function requestDocumentAnalysis(
 
 /**
  * Uploads a replacement version for an existing document via XHR (progress
- * events). No `title` field — POST .../versions only accepts `file` per the
- * OpenAPI contract; the document keeps its original title.
+ * events). No `title` field — the document keeps its original title.
+ * Optional `changeNote` is stored on the new version.
  */
 export function uploadDocumentVersionXhr(
   workspaceId: string,
   documentId: string,
   file: File,
   onProgress?: UploadProgressHandler,
+  changeNote?: string,
 ): { promise: Promise<DocumentVersion>; abort: () => void } {
   let currentXhr: XMLHttpRequest | null = null;
 
@@ -504,6 +512,7 @@ export function uploadDocumentVersionXhr(
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append("file", file);
+    if (changeNote?.trim()) formData.append("change_note", changeNote.trim());
 
     const promise = new Promise<{ status: number; body: unknown }>((resolve, reject) => {
       xhr.open(
@@ -562,13 +571,19 @@ export function uploadDocumentVersionXhr(
 
 export async function listDocuments(
   workspaceId: string,
-  options?: { page?: number; pageSize?: number; fileType?: FileType | null },
+  options?: {
+    page?: number;
+    pageSize?: number;
+    fileType?: FileType | null;
+    query?: string;
+  },
 ): Promise<DocumentListResponse> {
   const params = new URLSearchParams({
     page: String(options?.page ?? 1),
     page_size: String(options?.pageSize ?? 20),
   });
   if (options?.fileType) params.set("file_type", options.fileType);
+  if (options?.query?.trim()) params.set("q", options.query.trim());
   return apiJson<DocumentListResponse>(
     `/workspaces/${workspaceId}/documents?${params.toString()}`,
   );
@@ -663,5 +678,70 @@ export async function setCurrentVersion(
   return apiJson<Document>(
     `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}/set-current`,
     { method: "POST" },
+  );
+}
+
+export async function listWorkspaceVersions(
+  workspaceId: string,
+  params: {
+    page: number;
+    pageSize: number;
+    query?: string;
+    tag?: string | null;
+    documentId?: string | null;
+  },
+): Promise<VersionCatalogResponse> {
+  const search = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.pageSize),
+  });
+  if (params.query?.trim()) search.set("q", params.query.trim());
+  if (params.tag) search.set("tag", params.tag);
+  if (params.documentId) search.set("document_id", params.documentId);
+  return apiJson<VersionCatalogResponse>(
+    `/workspaces/${workspaceId}/versions?${search.toString()}`,
+  );
+}
+
+export async function listVersionHistory(
+  workspaceId: string,
+  params: {
+    page: number;
+    pageSize: number;
+    query?: string;
+    documentId?: string | null;
+  },
+): Promise<VersionEventListResponse> {
+  const search = new URLSearchParams({
+    page: String(params.page),
+    page_size: String(params.pageSize),
+  });
+  if (params.query?.trim()) search.set("q", params.query.trim());
+  if (params.documentId) search.set("document_id", params.documentId);
+  return apiJson<VersionEventListResponse>(
+    `/workspaces/${workspaceId}/versions/history?${search.toString()}`,
+  );
+}
+
+export async function rollbackDocumentVersion(
+  workspaceId: string,
+  documentId: string,
+  versionId: string,
+): Promise<Document> {
+  return apiJson<Document>(
+    `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}/rollback`,
+    { method: "POST" },
+  );
+}
+
+export async function updateVersionClassification(
+  workspaceId: string,
+  documentId: string,
+  versionId: string,
+  body: VersionClassificationInput,
+): Promise<DocumentVersion> {
+  return apiJson<DocumentVersion>(
+    `/workspaces/${workspaceId}/documents/${documentId}/versions/${versionId}`,
+    { method: "PATCH", body: JSON.stringify(body) },
   );
 }

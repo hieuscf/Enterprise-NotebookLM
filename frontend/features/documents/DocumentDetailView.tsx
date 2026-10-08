@@ -19,7 +19,7 @@
 
 "use client";
 
-import { AlertCircle, ArrowLeft, MessageSquare, Network, ScrollText, Sparkles, Wand2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, History, MessageSquare, Network, ScrollText, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -440,6 +440,16 @@ export function DocumentDetailView({
                     >
                       <Wand2 className="h-3 w-3" aria-hidden />
                       Extract
+                    </Link>
+                    <Link
+                      href={`/workspaces/${workspaceId}/versions?documentId=${documentId}`}
+                      className={cn(
+                        "inline-flex h-7 items-center gap-1.5 rounded-md border border-border-default px-2.5",
+                        "text-caption font-medium text-secondary hover:bg-elevated hover:text-primary",
+                      )}
+                    >
+                      <History className="h-3 w-3" aria-hidden />
+                      Phiên bản
                     </Link>
                     <Link
                       href={`/workspaces/${workspaceId}/graph?documentId=${documentId}`}

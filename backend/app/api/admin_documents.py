@@ -83,6 +83,13 @@ def _version_response(ver: DocumentVersion) -> DocumentVersionResponse:
         status=ver.status.value,  # type: ignore[arg-type]
         is_current=ver.is_current,
         created_at=ver.created_at,
+        change_note=getattr(ver, "change_note", None),
+        tags=[item for item in (getattr(ver, "tags", None) or []) if isinstance(item, str)],
+        classification_metadata={
+            str(key): item
+            for key, item in (getattr(ver, "classification_metadata", None) or {}).items()
+            if isinstance(item, str)
+        },
         preview_status=ver.preview_status.value,  # type: ignore[arg-type]
         preview_type=ver.preview_type.value if ver.preview_type else None,  # type: ignore[arg-type]
         preview_generated_at=ver.preview_generated_at,

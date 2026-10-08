@@ -104,6 +104,9 @@ export type DocumentVersion = {
   analysis_error?: string | null;
   is_current: boolean;
   created_at: string;
+  change_note?: string | null;
+  tags?: string[];
+  classification_metadata?: Record<string, string>;
   preview_status?: PreviewStatus;
   preview_type?: PreviewType | null;
   preview_generated_at?: string | null;

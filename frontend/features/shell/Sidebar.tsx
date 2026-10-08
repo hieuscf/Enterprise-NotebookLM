@@ -17,10 +17,12 @@
  * Database/Table: N/A
  * Related Modules: features/shell/AppShell.tsx
  * Important Notes: "home", "workspaces", "members", "upload", "documents",
- *   "search", "graph", "chat", "summaries", "extractions", "comparisons",
+ *   "search", "versions", "chat", "summaries", "extractions", "comparisons",
  *   "reports", "settings" (when a workspaceId is in context) and "admin"
  *   (entry into the dedicated Admin Console at /admin) are real routes today.
  *   Everything else must stay visibly disabled — never link to a page that 404s.
+ *   "graph" remains a valid active key for the knowledge-graph route, which is
+ *   no longer listed in this navigation bar.
  * =============================================================================
  */
 
@@ -30,12 +32,12 @@ import {
   FileBarChart2,
   FileText,
   GitCompare,
+  History,
   Home,
   Layers,
   LogOut,
   type LucideIcon,
   MessageSquare,
-  Network,
   ScrollText,
   Search,
   Settings,
@@ -60,6 +62,7 @@ export type SidebarActiveKey =
   | "documents"
   | "search"
   | "graph"
+  | "versions"
   | "chat"
   | "summaries"
   | "extractions"
@@ -82,6 +85,7 @@ type NavItem = {
     | "documents"
     | "search"
     | "graph"
+    | "versions"
     | "chat"
     | "summaries"
     | "extractions"
@@ -124,10 +128,10 @@ const NAV_GROUPS: NavGroup[] = [
         badge: "Chọn workspace",
       },
       {
-        key: "graph",
-        label: "Đồ thị tri thức",
-        icon: Network,
-        contextual: "graph",
+        key: "versions",
+        label: "Phiên bản",
+        icon: History,
+        contextual: "versions",
         badge: "Chọn workspace",
       },
     ],
@@ -220,6 +224,8 @@ function resolveContextualHref(
       return `/workspaces/${workspaceId}/search`;
     case "graph":
       return `/workspaces/${workspaceId}/graph`;
+    case "versions":
+      return `/workspaces/${workspaceId}/versions`;
     case "chat":
       return `/workspaces/${workspaceId}/chat`;
     case "summaries":

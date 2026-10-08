@@ -101,6 +101,7 @@ class FakeDocRepo:
     def __init__(self) -> None:
         self.documents: dict[uuid.UUID, Document] = {}
         self.versions: dict[uuid.UUID, DocumentVersion] = {}
+        self.events: list[dict[str, Any]] = []
 
     async def create_document(
         self,
@@ -197,6 +198,9 @@ class FakeDocRepo:
         version.is_current = True
         document.current_version_id = version.id
         return document
+
+    async def add_version_event(self, **kwargs: Any) -> None:
+        self.events.append(kwargs)
 
 
 class FakePipelineRepo:
@@ -347,8 +351,13 @@ async def test_upload_version_2_clears_is_current_on_v1(monkeypatch) -> None:
         uploaded_by=user,
         filename="a.txt",
         file_chunks=_chunks_from_bytes(b"version-two"),
+        change_note="Sửa điều 3",
     )
     v2 = second.version
+    assert v2.change_note == "Sửa điều 3"
+    assert docs.events[-1]["event_type"] == "uploaded"
+    assert "v2" in docs.events[-1]["summary"]
+    assert "Sửa điều 3" in docs.events[-1]["summary"]
     # Re-read v1 from store (same object mutated by clear_current_flags)
     assert docs.versions[v1.id].is_current is False
     assert v2.is_current is True
@@ -518,3 +527,22 @@ async def test_api_set_current_processing_returns_400(
 
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "version_not_ready"
+
+
+def test_content_disposition_keeps_vietnamese_filename_latin1_safe() -> None:
+    from urllib.parse import quote
+
+    from starlette.responses import Response
+
+    from app.api.documents import _content_disposition
+
+    filename = "Hợp đồng thử.pdf"
+    header = _content_disposition("inline", filename)
+    header.encode("latin-1")
+    Response(
+        content=b"%PDF",
+        media_type="application/pdf",
+        headers={"Content-Disposition": header},
+    )
+    assert header.startswith('inline; filename="')
+    assert f"filename*=UTF-8''{quote(filename, safe='')}" in header

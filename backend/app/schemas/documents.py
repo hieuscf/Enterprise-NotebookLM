@@ -9,6 +9,7 @@
 #   - Pydantic, app.models.enums
 # Public Exports:
 #   - DocumentResponse, DocumentListResponse, DocumentVersionResponse
+#   - VersionCatalogResponse, VersionEventListResponse, VersionClassificationUpdate
 #   - PipelineStageLogResponse, PipelineRunResponse
 # Database/Table: documents, document_versions, pipeline_runs, pipeline_stage_logs
 # Related Modules: app.api.documents, docs/Enterprise_notebooklm_openapi.yaml
@@ -68,9 +69,78 @@ class DocumentVersionResponse(BaseModel):
     analysis_error: str | None = None
     is_current: bool
     created_at: datetime
+    change_note: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    classification_metadata: dict[str, str] = Field(default_factory=dict)
     preview_status: Literal["pending", "processing", "completed", "failed"] = "pending"
     preview_type: Literal["pdf", "html", "image"] | None = None
     preview_generated_at: datetime | None = None
+
+
+class VersionClassificationUpdate(BaseModel):
+    """Partial update. Omitted fields stay unchanged; empty list/object clears them."""
+
+    tags: list[str] | None = None
+    classification_metadata: dict[str, str] | None = None
+    change_note: str | None = Field(default=None, max_length=2000)
+
+
+class VersionCatalogItemResponse(BaseModel):
+    id: UUID
+    document_id: UUID
+    document_title: str
+    file_type: Literal["pdf", "docx", "xlsx", "pptx", "txt"]
+    uploaded_by: UUID
+    uploader_name: str | None = None
+    uploader_email: str | None = None
+    version_number: int
+    file_size_bytes: int
+    checksum_sha256: str
+    page_count: int | None = None
+    status: Literal["processing", "ready", "failed"]
+    ai_analysis_status: Literal[
+        "not_analyzed",
+        "queued",
+        "processing",
+        "ready",
+        "failed",
+        "stale",
+    ] = "not_analyzed"
+    analyzed_at: datetime | None = None
+    is_current: bool
+    created_at: datetime
+    change_note: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    classification_metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class VersionCatalogResponse(BaseModel):
+    items: list[VersionCatalogItemResponse]
+    page: int
+    page_size: int
+    total: int
+    available_tags: list[str] = Field(default_factory=list)
+
+
+class VersionEventResponse(BaseModel):
+    id: UUID
+    document_id: UUID
+    document_version_id: UUID
+    document_title: str
+    version_number: int
+    actor_id: UUID
+    actor_name: str | None = None
+    event_type: Literal["uploaded", "rolled_back", "tags_updated", "metadata_updated"]
+    summary: str
+    payload: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class VersionEventListResponse(BaseModel):
+    items: list[VersionEventResponse]
+    page: int
+    page_size: int
+    total: int
 
 
 class PipelineStageLogResponse(BaseModel):

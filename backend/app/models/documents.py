@@ -8,8 +8,8 @@
 # Dependencies:
 #   - app.db.base, app.models.enums, app.models.types
 # Public Exports:
-#   - Document, DocumentVersion
-# Database/Table: documents, document_versions
+#   - Document, DocumentVersion, DocumentVersionEvent
+# Database/Table: documents, document_versions, document_version_events
 # Related Modules: database-design-enterprise-notebooklm.md §1
 # Important Notes: documents.current_version_id uses use_alter for circular FK.
 # =============================================================================
@@ -71,6 +71,7 @@ class DocumentVersion(Base):
     __tablename__ = "document_versions"
     __table_args__ = (
         Index("ix_document_versions_document_id_is_current", "document_id", "is_current"),
+        Index("ix_document_versions_tags_gin", "tags", postgresql_using="gin"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -110,6 +111,20 @@ class DocumentVersion(Base):
     )
     analysis_error: Mapped[str | None] = mapped_column(String(4000), nullable=True)
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # User-facing classification. Independent of layout_metadata (parser artifact).
+    change_note: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    tags: Mapped[list] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    classification_metadata: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
     parser: Mapped[str] = mapped_column(String(64), nullable=False, server_default="llamaparse")
     markdown_storage_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     layout_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -126,4 +141,48 @@ class DocumentVersion(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    created_at: Mapped[datetime] = created_at_col()
+
+
+class DocumentVersionEvent(Base):
+    """Append-only edit history for a document version (upload, rollback, tags)."""
+
+    __tablename__ = "document_version_events"
+    __table_args__ = (
+        Index(
+            "ix_document_version_events_workspace_created",
+            "workspace_id",
+            "created_at",
+        ),
+        Index(
+            "ix_document_version_events_document_created",
+            "document_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    document_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    actor_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(String(2000), nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = created_at_col()

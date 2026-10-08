@@ -5,11 +5,12 @@
 # Purpose: Data access for documents + document_versions (FR2).
 # Responsibilities:
 #   - CRUD documents scoped by workspace_id; version history; set-current
+#   - Workspace version catalog, classification labels, edit-history events
 # Dependencies:
-#   - SQLAlchemy AsyncSession, app.models.documents
+#   - SQLAlchemy AsyncSession, app.models.documents, app.models.identity
 # Public Exports:
 #   - DocumentRepository
-# Database/Table: documents, document_versions
+# Database/Table: documents, document_versions, document_version_events
 # Related Modules: app.services.documents
 # Important Notes: Always filter by workspace_id; versions own storage_path.
 # =============================================================================
@@ -17,12 +18,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import String, cast, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.documents import Document, DocumentVersion
+from app.models.documents import Document, DocumentVersion, DocumentVersionEvent
 from app.models.enums import AiAnalysisStatus, DocumentVersionStatus, FileType
+from app.models.identity import User
 
 
 class DocumentRepository:
@@ -51,10 +54,13 @@ class DocumentRepository:
         page: int,
         page_size: int,
         file_type: FileType | None = None,
+        query: str | None = None,
     ) -> tuple[list[Document], int]:
         filters = [Document.workspace_id == workspace_id]
         if file_type is not None:
             filters.append(Document.file_type == file_type)
+        if query:
+            filters.append(Document.title.ilike(f"%{query}%"))
 
         count_stmt = select(func.count()).select_from(Document).where(*filters)
         total = int((await self._session.execute(count_stmt)).scalar_one())
@@ -105,6 +111,10 @@ class DocumentRepository:
         )
         version.is_current = True
         document.current_version_id = version.id
+        # Set updated_at in Python. Column.onupdate=func.now() expires the
+        # attribute after flush; sync access in _doc_response then lazy-loads
+        # and raises MissingGreenlet (HTTP 500 on rollback / set-current).
+        document.updated_at = datetime.now(UTC)
         await self._session.flush()
         return document
 
@@ -200,3 +210,173 @@ class DocumentRepository:
             )
         )
         return int((await self._session.execute(stmt)).scalar_one())
+
+    async def add_version_event(
+        self,
+        *,
+        workspace_id: uuid.UUID,
+        document_id: uuid.UUID,
+        document_version_id: uuid.UUID,
+        actor_id: uuid.UUID,
+        event_type: str,
+        summary: str,
+        payload: dict | None = None,
+    ) -> DocumentVersionEvent:
+        event = DocumentVersionEvent(
+            workspace_id=workspace_id,
+            document_id=document_id,
+            document_version_id=document_version_id,
+            actor_id=actor_id,
+            event_type=event_type,
+            summary=summary,
+            payload=payload,
+        )
+        self._session.add(event)
+        await self._session.flush()
+        return event
+
+    async def apply_version_labels(
+        self,
+        version: DocumentVersion,
+        *,
+        tags: list[str] | None = None,
+        classification_metadata: dict | None = None,
+        change_note: str | None = None,
+        update_note: bool = False,
+    ) -> DocumentVersion:
+        if tags is not None:
+            version.tags = tags
+        if classification_metadata is not None:
+            version.classification_metadata = classification_metadata
+        if update_note:
+            version.change_note = change_note
+        await self._session.flush()
+        return version
+
+    def _catalog_filters(
+        self,
+        workspace_id: uuid.UUID,
+        *,
+        document_id: uuid.UUID | None,
+        tag: str | None,
+        query: str | None,
+    ) -> list:
+        filters: list = [Document.workspace_id == workspace_id]
+        if document_id is not None:
+            filters.append(Document.id == document_id)
+        if tag:
+            filters.append(DocumentVersion.tags.contains([tag]))
+        if query:
+            like = f"%{query}%"
+            filters.append(
+                or_(
+                    Document.title.ilike(like),
+                    DocumentVersion.change_note.ilike(like),
+                    cast(DocumentVersion.tags, String).ilike(like),
+                )
+            )
+        return filters
+
+    async def list_workspace_versions(
+        self,
+        workspace_id: uuid.UUID,
+        *,
+        page: int,
+        page_size: int,
+        document_id: uuid.UUID | None = None,
+        tag: str | None = None,
+        query: str | None = None,
+    ) -> tuple[list[tuple[DocumentVersion, Document, str | None, str | None]], int]:
+        filters = self._catalog_filters(
+            workspace_id,
+            document_id=document_id,
+            tag=tag,
+            query=query,
+        )
+        count_stmt = (
+            select(func.count())
+            .select_from(DocumentVersion)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(*filters)
+        )
+        total = int((await self._session.execute(count_stmt)).scalar_one())
+        list_stmt = (
+            select(DocumentVersion, Document, User.full_name, User.email)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .outerjoin(User, User.id == DocumentVersion.uploaded_by)
+            .where(*filters)
+            .order_by(DocumentVersion.created_at.desc(), DocumentVersion.version_number.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = (await self._session.execute(list_stmt)).all()
+        return [(row[0], row[1], row[2], row[3]) for row in rows], total
+
+    async def list_workspace_tags(self, workspace_id: uuid.UUID) -> list[str]:
+        stmt = (
+            select(DocumentVersion.tags)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(Document.workspace_id == workspace_id)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        found: set[str] = set()
+        for raw in rows:
+            if isinstance(raw, list):
+                for item in raw:
+                    if isinstance(item, str) and item.strip():
+                        found.add(item)
+        return sorted(found, key=str.casefold)
+
+    async def list_version_events(
+        self,
+        workspace_id: uuid.UUID,
+        *,
+        page: int,
+        page_size: int,
+        document_id: uuid.UUID | None = None,
+        query: str | None = None,
+    ) -> tuple[list[tuple[DocumentVersionEvent, str, int, str | None]], int]:
+        filters = [
+            DocumentVersionEvent.workspace_id == workspace_id,
+            Document.workspace_id == workspace_id,
+        ]
+        if document_id is not None:
+            filters.append(DocumentVersionEvent.document_id == document_id)
+        if query:
+            like = f"%{query}%"
+            filters.append(
+                or_(
+                    DocumentVersionEvent.summary.ilike(like),
+                    Document.title.ilike(like),
+                )
+            )
+        total = int(
+            (
+                await self._session.execute(
+                    select(func.count())
+                    .select_from(DocumentVersionEvent)
+                    .join(Document, Document.id == DocumentVersionEvent.document_id)
+                    .where(*filters)
+                )
+            ).scalar_one()
+        )
+        list_stmt = (
+            select(
+                DocumentVersionEvent,
+                Document.title,
+                DocumentVersion.version_number,
+                User.full_name,
+            )
+            .join(Document, Document.id == DocumentVersionEvent.document_id)
+            .join(
+                DocumentVersion,
+                DocumentVersion.id == DocumentVersionEvent.document_version_id,
+            )
+            .outerjoin(User, User.id == DocumentVersionEvent.actor_id)
+            .where(*filters)
+            .order_by(DocumentVersionEvent.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = (await self._session.execute(list_stmt)).all()
+        return [(row[0], row[1], row[2], row[3]) for row in rows], total

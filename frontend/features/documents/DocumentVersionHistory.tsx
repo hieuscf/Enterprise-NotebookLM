@@ -155,7 +155,7 @@ export function DocumentVersionHistory({
                       v{version.version_number}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 text-caption text-tertiary">
+                      <div className="flex flex-wrap items-center gap-1.5 text-caption text-tertiary">
                         <Clock className="h-3 w-3 shrink-0" aria-hidden />
                         {formatDateTime(version.created_at)}
                         <span aria-hidden>·</span>
@@ -164,6 +164,21 @@ export function DocumentVersionHistory({
                         <span aria-hidden>·</span>
                         {formatBytes(version.file_size_bytes)}
                       </div>
+                      {version.change_note ? (
+                        <p className="mt-1 truncate text-caption text-secondary">{version.change_note}</p>
+                      ) : null}
+                      {version.tags && version.tags.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {version.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-full bg-elevated px-2 py-0.5 text-caption text-secondary"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
 
                     {version.is_current ? (

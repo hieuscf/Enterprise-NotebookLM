@@ -24,7 +24,7 @@ from app.models.artifacts import (
     Summary,
 )
 from app.models.chat import ChatMessage, ChatSession, MessageGeneration
-from app.models.documents import Document, DocumentVersion
+from app.models.documents import Document, DocumentVersion, DocumentVersionEvent
 from app.models.identity import Role, User, Workspace, WorkspaceMember
 from app.models.knowledge import (
     DocumentChunk,
@@ -45,6 +45,7 @@ __all__ = [
     "WorkspaceMember",
     "Document",
     "DocumentVersion",
+    "DocumentVersionEvent",
     "PipelineRun",
     "PipelineStageLog",
     "Embedding",
